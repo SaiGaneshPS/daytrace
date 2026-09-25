@@ -1,5 +1,7 @@
-# DT-3 fills in the real GitHub usernames.
-# Everything defaults to you; Apple-only folders go to the teammate.
-# *        @your-github-username
-# /ios/    @teammate-github-username
-# /mac/    @teammate-github-username
+# Who gets asked to review what. The last matching line wins.
+# Everything defaults to SaiGaneshPS; the Mac/iPhone-only parts go to snoween.
+*                                   @SaiGaneshPS
+/ios/                               @snoween
+/mac/                               @snoween
+/hub/daytrace_hub/tracker/macos.py  @snoween
+/docs/setup-mac.md                  @snoween

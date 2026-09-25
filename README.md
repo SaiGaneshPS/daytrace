@@ -20,33 +20,23 @@ there is no cloud server, and the AI runs on your own machine.
 
 | Folder | What lives there | Owner |
 |---|---|---|
-| `hub/` | Python hub: API, storage, trackers, stats, AI, nudges | You |
+| `hub/` | Python hub: API, storage, trackers, stats, AI, nudges | You (macOS tracker: Teammate) |
 | `dashboard/` | Vite + React + TypeScript PWA | You |
 | `android/` | Kotlin collector app (sideloaded APK) | You |
 | `browser-extension/` | Active-website collector (domain only) | You |
 | `ios/` | iPhone Shortcuts: setup guide, payloads, exported shortcuts | Teammate |
 | `mac/` | Mac bridge for full iPhone Screen Time | Teammate |
-| `docs/` | Architecture, API contract, setup guides, demo script | Both |
+| `docs/` | Architecture, API contract, setup guides, demo script | You (Mac setup guide: Teammate) |
 | `scripts/` | Dev helpers and the Notion sync script | You |
 
 **Rule:** the folder and file layout is fixed. Changing it needs its own ticket.
 
 ## Quick start
 
-See [docs/setup-windows.md](docs/setup-windows.md) or [docs/setup-mac.md](docs/setup-mac.md).
-
-```bash
-# hub
-cd hub
-python -m venv .venv
-.venv/Scripts/python -m pip install -e ".[dev]"   # macOS/Linux: .venv/bin/python
-.venv/Scripts/python -m pytest
-
-# dashboard (from the repo root)
-cd ../dashboard
-npm ci
-npm run build
-```
+1. Set up your machine: [docs/setup-windows.md](docs/setup-windows.md) or [docs/setup-mac.md](docs/setup-mac.md).
+2. Set up each part you work on: [hub](hub/README.md), [dashboard](dashboard/README.md),
+   [android](android/README.md).
+3. Before pushing, run the checks in [CONTRIBUTING.md](CONTRIBUTING.md#before-you-push).
 
 ## Working on it
 
