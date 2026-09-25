@@ -1,9 +1,55 @@
-# DT-6: hub tests on Windows and Linux, macOS on demand. Placeholder from DT-1 (manual trigger only).
+# DT-6: hub lint + tests on Windows, macOS and Linux (proves the hub runs on any OS).
+# Runs on every PR (no path filter) so the required "hub" check always reports.
 name: hub
+
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  placeholder:
+  test:
+    name: hub (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: hub/pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: python -m ruff check .
+      - name: Test
+        run: python -m pytest -q
+
+  # Single check name for branch protection, green only when every OS passed.
+  hub:
+    name: hub
+    needs: test
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Implemented in DT-6"
+      - name: All operating systems passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Hub tests failed or were cancelled on at least one OS: ${{ needs.test.result }}"
+            exit 1
+          fi

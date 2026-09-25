@@ -1,9 +1,51 @@
-# DT-6 / DT-25: Android debug build, signed release on tags. Placeholder from DT-1 (manual trigger only).
+# DT-6: Android debug build + APK artifact. DT-25 adds the signed release on `android-v*` tags.
+# Skips (and passes) until DT-19 has committed the Gradle wrapper.
 name: android
+
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  placeholder:
+  build:
+    name: android
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Implemented in DT-6 / DT-25"
+      - uses: actions/checkout@v7
+      - name: Is the Gradle wrapper there yet?
+        id: wrapper
+        run: |
+          if [ -f android/gradlew ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::android/gradlew is added in DT-19; skipping the Android build until then."
+          fi
+      - if: steps.wrapper.outputs.ready == 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - if: steps.wrapper.outputs.ready == 'true'
+        uses: gradle/actions/setup-gradle@v6
+      - if: steps.wrapper.outputs.ready == 'true'
+        name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - if: steps.wrapper.outputs.ready == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: daytrace-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

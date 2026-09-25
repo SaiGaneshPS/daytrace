@@ -1,9 +1,35 @@
-# DT-6: dashboard type-check and build. Placeholder from DT-1 (manual trigger only).
+# DT-6: dashboard type-check and production build.
+# Runs on every PR (no path filter) so the required "dashboard" check always reports.
 name: dashboard
+
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dashboard-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  placeholder:
+  build:
+    name: dashboard
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
     steps:
-      - run: echo "Implemented in DT-6"
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Type-check and build
+        run: npm run build
