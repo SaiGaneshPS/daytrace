@@ -6,7 +6,7 @@ name: android
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [development]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: android-${{ github.ref }}
-  # Cancel superseded PR runs only; every commit on main gets a full run.
+  # Cancel superseded PR runs only; every commit on development gets a full run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
