@@ -1,3 +1,7 @@
 {
-  "$comment": "Example request body for DT-26. DT-9 fills it in and tests it against the schema."
+  "device_id": "iphone-1",
+  "kind": "app_open",
+  "source": "shortcuts",
+  "start": "2026-09-25T14:03:10-04:00",
+  "app": "Instagram"
 }

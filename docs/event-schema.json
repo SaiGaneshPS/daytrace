@@ -1,6 +1,162 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "DT-9 fills in the full Event schema.",
+  "$id": "https://github.com/SaiGaneshPS/daytrace/blob/development/docs/event-schema.json",
   "title": "Daytrace event",
-  "type": "object"
+  "description": "One thing that happened on one device. Every collector (desktop tracker, Android, iPhone Shortcuts, Mac bridge, browser extension) sends events in this shape. Two rules JSON Schema cannot express are enforced by the hub models (hub/daytrace_hub/models.py): end is never before start, and dates must exist (no February 30).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["device_id", "kind", "source", "start"],
+  "properties": {
+    "device_id": {
+      "description": "ID of the sending device, given at pairing time (for example windows-desk, android-1, iphone-1, iphone-via-mac). Must match the device the token belongs to.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$"
+    },
+    "seq": {
+      "description": "Per-device auto-increment number from collectors that keep a local store. (device_id, seq) is unique, so resending is safe. Stateless collectors (iPhone Shortcuts) leave it out; the hub then deduplicates by content.",
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "external_id": {
+      "description": "Stable ID from the source system (Health Connect record ID, calendar instance ID, or a derived key such as steps:2026-09-25). An event with the same (device_id, external_id) replaces the stored one, so updated totals win.",
+      "type": ["string", "null"],
+      "pattern": "^[!-~]{1,200}$"
+    },
+    "kind": {
+      "description": "What happened. Span kinds need an end time; point kinds must not have one.",
+      "enum": [
+        "app_session", "window", "web", "afk", "sleep", "steps", "calendar_event",
+        "app_open", "app_close", "screen_on", "screen_off", "meal"
+      ]
+    },
+    "source": {
+      "description": "Which collector produced the event.",
+      "enum": [
+        "tracker", "usagestats", "shortcuts", "health_connect", "healthkit", "calendar",
+        "browser", "screentime_bridge", "manual", "seed"
+      ]
+    },
+    "start": { "$ref": "#/$defs/timestamp" },
+    "end": {
+      "anyOf": [ { "$ref": "#/$defs/timestamp" }, { "type": "null" } ]
+    },
+    "app": {
+      "description": "Human-readable app name (Instagram, Visual Studio Code). For web events, the browser name.",
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "app_id": {
+      "description": "Platform identifier: Android package, Windows exe name, macOS bundle ID.",
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "title": {
+      "description": "Window or calendar title. The hub may store [redacted] instead (see redaction rules).",
+      "type": ["string", "null"],
+      "maxLength": 500
+    },
+    "category": {
+      "description": "Optional hint. The hub assigns the category from its own mapping when this is null.",
+      "enum": ["social", "video", "work", "study", "comms", "games", "health", "other", null]
+    },
+    "data": {
+      "description": "Kind-specific extra fields (see the rules below).",
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["app_session", "window", "web", "afk", "sleep", "steps", "calendar_event"] } } },
+      "then": { "required": ["end"], "properties": { "end": { "$ref": "#/$defs/timestamp" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "enum": ["app_open", "app_close", "screen_on", "screen_off", "meal"] } } },
+      "then": { "properties": { "end": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "steps" } } },
+      "then": {
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["count"],
+            "properties": { "count": { "type": "integer", "minimum": 0 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "sleep" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "stage": { "enum": ["in_bed", "asleep", "awake", "core", "deep", "rem"] },
+              "measured": {
+                "description": "true when it comes from a wearable or phone sensor (Health Connect, HealthKit). Sleep inferred from phone use is added by the hub and marked estimated.",
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "meal" } } },
+      "then": {
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "object",
+            "anyOf": [ { "required": ["text"] }, { "required": ["items"] } ],
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S" },
+              "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 30,
+                "items": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "\\S" }
+              },
+              "meal_type": { "enum": ["breakfast", "lunch", "dinner", "snack"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "web" } } },
+      "then": {
+        "required": ["data"],
+        "properties": {
+          "title": { "type": "null" },
+          "app_id": {
+            "description": "Only the browser's own identifier (msedge.exe), never a URL.",
+            "anyOf": [ { "type": "null" }, { "type": "string", "pattern": "^[^\\s/]{1,200}$" } ]
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["domain"],
+            "properties": {
+              "domain": {
+                "description": "Host only (youtube.com, localhost, 192.168.1.20), never a full URL or page title. The hub stores it in lowercase.",
+                "type": "string",
+                "pattern": "^(?!.*[\\r\\n])(?=.{1,253}$)(((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|\\[[0-9A-Fa-f:.]{2,45}\\]|([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)$"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "timestamp": {
+      "description": "ISO 8601 date-time with a time zone offset (Z or +hh:mm). Seconds and up to 9 fractional digits are optional; T and Z may be lowercase. Times without an offset are rejected.",
+      "type": "string",
+      "pattern": "^(?!.*[\\r\\n])[1-9][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\\.[0-9]{1,9})?)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+    }
+  }
 }

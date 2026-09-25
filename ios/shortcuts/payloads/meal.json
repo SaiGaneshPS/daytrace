@@ -1,3 +1,7 @@
 {
-  "$comment": "Example request body for DT-28. DT-9 fills it in and tests it against the schema."
+  "device_id": "iphone-1",
+  "kind": "meal",
+  "source": "shortcuts",
+  "start": "2026-09-25T20:15:00-04:00",
+  "data": { "text": "two rotis and dal" }
 }
