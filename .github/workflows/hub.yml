@@ -1,4 +1,4 @@
-# DT-6: hub lint + tests on Windows, macOS and Linux (proves the hub runs on any OS).
+# DT-6: hub lint, tests on Windows/macOS/Linux, and a packaging check (proves the hub runs on any OS).
 # Runs on every PR (no path filter) so the required "hub" check always reports.
 name: hub
 
@@ -13,43 +13,98 @@ permissions:
 
 concurrency:
   group: hub-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs only; every commit on main gets a full run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  lint:
+    name: hub lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Same ruff version as the dev extra in hub/pyproject.toml (single source of truth).
+      - name: Install ruff (version pinned in hub/pyproject.toml)
+        run: python -m pip install "$(grep -oE 'ruff==[0-9.]+' hub/pyproject.toml)"
+      - name: Lint
+        run: python -m ruff check hub
+
   test:
-    name: hub (${{ matrix.os }})
+    name: hub (${{ matrix.os }}, py${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          - os: ubuntu-latest
+            python: "3.13"
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: hub
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: hub/pyproject.toml
       - name: Install
         run: python -m pip install -e ".[dev]"
-      - name: Lint
-        run: python -m ruff check .
       - name: Test
         run: python -m pytest -q
 
-  # Single check name for branch protection, green only when every OS passed.
+  # Installs the built wheel (not the editable source tree), so missing package data fails here.
+  package:
+    name: hub package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # "./hub", not "hub": a bare name makes pip download an unrelated PyPI package called "hub".
+      - name: Build the wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist ./hub
+      - name: Install the wheel in a clean virtual environment
+        run: |
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/python -m pip install dist/*.whl
+      - name: Check the installed package from outside the source tree
+        working-directory: /tmp
+        run: |
+          /tmp/wheel-venv/bin/daytrace-hub --version
+          /tmp/wheel-venv/bin/python - <<'EOF'
+          from importlib.resources import files
+          pkg = files("daytrace_hub")
+          for name in ("migrations/0001_init.sql", "data/categories.json", "data/redaction_rules.json"):
+              assert pkg.joinpath(name).is_file(), f"missing from the wheel: {name}"
+          print("package data OK")
+          EOF
+
+  # Single check name for branch protection: green only when lint, every OS and the wheel passed.
   hub:
     name: hub
-    needs: test
+    needs: [lint, test, package]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: All operating systems passed
+      - name: Every hub job passed
         run: |
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Hub tests failed or were cancelled on at least one OS: ${{ needs.test.result }}"
+          echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} package=${{ needs.package.result }}"
+          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ] || [ "${{ needs.package.result }}" != "success" ]; then
             exit 1
           fi

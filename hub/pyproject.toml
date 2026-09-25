@@ -26,7 +26,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5"]
+# ruff is pinned exactly: CI reads this pin, so a new ruff release can't break PRs by itself.
+dev = ["pytest>=8", "ruff==0.16.9"]
 
 [project.scripts]
 daytrace-hub = "daytrace_hub.__main__:main"

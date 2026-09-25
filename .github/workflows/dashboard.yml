@@ -13,17 +13,21 @@ permissions:
 
 concurrency:
   group: dashboard-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs only; every commit on main gets a full run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: dashboard
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "24"

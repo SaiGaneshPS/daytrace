@@ -1,5 +1,6 @@
 # DT-6: Android debug build + APK artifact. DT-25 adds the signed release on `android-v*` tags.
-# Skips (and passes) until DT-19 has committed the Gradle wrapper.
+# Until DT-19 replaces the placeholder Gradle files, the build job is skipped (a skipped job counts as passing).
+# After that, a missing or non-executable Gradle wrapper fails the check instead of being skipped.
 name: android
 
 on:
@@ -13,39 +14,62 @@ permissions:
 
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs only; every commit on main gets a full run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
-    name: android
+  detect:
+    name: android setup check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
     steps:
       - uses: actions/checkout@v7
-      - name: Is the Gradle wrapper there yet?
-        id: wrapper
+        with:
+          persist-credentials: false
+      - name: Placeholder Gradle files (before DT-19) or a real, executable wrapper (after)?
+        id: check
         run: |
-          if [ -f android/gradlew ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
+          if grep -q "DT-19: replaced with" android/settings.gradle.kts; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::android/gradlew is added in DT-19; skipping the Android build until then."
+            echo "::notice::Gradle files are still the DT-1 placeholders; the Android build starts once DT-19 lands."
+            exit 0
           fi
-      - if: steps.wrapper.outputs.ready == 'true'
-        uses: actions/setup-java@v6
+          if [ ! -f android/gradlew ]; then
+            echo "::error::android/gradlew is missing. The Gradle wrapper must be committed (DT-19)."
+            exit 1
+          fi
+          if [ ! -x android/gradlew ]; then
+            echo "::error::android/gradlew is not executable in git. Run: git update-index --chmod=+x android/gradlew"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: android
+    needs: detect
+    if: needs.detect.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "21"
-      - if: steps.wrapper.outputs.ready == 'true'
-        uses: gradle/actions/setup-gradle@v6
-      - if: steps.wrapper.outputs.ready == 'true'
-        name: Build debug APK
-        working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-      - if: steps.wrapper.outputs.ready == 'true'
-        uses: actions/upload-artifact@v7
+      # Third-party action pinned to a commit (v6.3.0).
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v7
         with:
           name: daytrace-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 14

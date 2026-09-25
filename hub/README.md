@@ -7,9 +7,13 @@ Python 3.12 + FastAPI + SQLite. Runs on Windows, macOS and Linux.
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"   # macOS/Linux: .venv/bin/python
+.venv/Scripts/python -m ruff check .
 .venv/Scripts/python -m pytest
 .venv/Scripts/python -m daytrace_hub --help
 ```
+
+CI (`.github/workflows/hub.yml`) runs the same lint and tests on Windows, macOS and Linux, and also installs
+the built wheel to catch missing package data (`migrations/*.sql`, `data/*.json`).
 
 ## Module map (which ticket fills which file)
 
