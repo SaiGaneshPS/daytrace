@@ -25,7 +25,8 @@ Run from the **repo root**:
 
 | Part | Windows (PowerShell) | macOS / Linux |
 |---|---|---|
-| Hub | `hub\.venv\Scripts\python.exe -m pytest hub` | `hub/.venv/bin/python -m pytest hub` |
+| Hub lint | `hub\.venv\Scripts\python.exe -m ruff check hub` | `hub/.venv/bin/python -m ruff check hub` |
+| Hub tests | `hub\.venv\Scripts\python.exe -m pytest hub` | `hub/.venv/bin/python -m pytest hub` |
 | Dashboard | `npm --prefix dashboard run build` | `npm --prefix dashboard run build` |
 | Android (after DT-19) | `android\gradlew.bat -p android assembleDebug` | `./android/gradlew -p android assembleDebug` |
 
