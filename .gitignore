@@ -24,6 +24,7 @@ captures/
 # Secrets and keys (never commit)
 *.jks
 *.keystore
+keystore.properties
 *.pem
 *.key
 *.p12
