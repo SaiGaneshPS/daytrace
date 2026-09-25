@@ -4,7 +4,8 @@
 
 1. Pick a ticket on the [Notion board](https://app.notion.com/p/2f1d4a21e5748062b721ee456b9738c1?v=2f1d4a21e574812cadd0000cd05757ea)
    (team members only) and move it to **In progress**.
-2. Create a branch from an up-to-date `main`, named `DT-<id>-short-slug`, for example `DT-11-ingest-api`.
+2. Create a branch from an up-to-date `development` (the default branch), named `DT-<id>-short-slug`,
+   for example `DT-11-ingest-api`.
 3. Only touch the files the ticket lists. The repo layout is fixed (DT-1); changing it needs its own ticket.
 4. Open a PR titled `DT-<id>: short summary`. One ticket per PR. Fill in the PR template.
 5. **Every PR is reviewed for bugs before it is merged.** Post the findings on the PR, fix them on the same
@@ -13,11 +14,26 @@
 6. CI must pass. Once DT-5 is in place, the PR title moves the Notion ticket automatically
    (opened: In review, merged: Done).
 7. Merge with **Squash and merge** (the only merge method the repo allows). The squash commit takes the PR
-   title, so `main` gets one `DT-<id>: ...` commit per ticket.
+   title, so `development` gets one `DT-<id>: ...` commit per ticket.
 
-`main` is protected: nobody can push to it directly (admins included), force-pushes and deletion are
+`development` is protected: nobody can push to it directly (admins included), force-pushes and deletion are
 blocked, and a PR is required. No approval count is required, because GitHub never lets authors approve their
 own PRs and most tickets have a single owner. The bug review in step 5 is the gate instead.
+
+The required checks (`hub`, `dashboard`, `android setup check`, `android`) are **strict**: a PR can only merge
+when its branch is up to date with `development`. If GitHub says *"This branch is out-of-date with the base
+branch"*, press **Update branch** (or merge `development` into your branch) and wait for CI again.
+
+### Cloned before the rename to `development`?
+
+The default branch used to be called `main`. Switch an older clone over once:
+
+```bash
+git branch -m main development
+git fetch origin --prune
+git branch -u origin/development development
+git remote set-head origin -a
+```
 
 ## Before you push
 

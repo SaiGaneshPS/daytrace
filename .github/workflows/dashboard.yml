@@ -5,15 +5,16 @@ name: dashboard
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [development]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: dashboard-${{ github.ref }}
-  # Cancel superseded PR runs only; every commit on main gets a full run.
+  # PR runs share one group per branch, so a new push cancels the superseded run.
+  # Push and manual runs get one group per commit, so every commit on development gets its own run.
+  group: dashboard-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
