@@ -2,7 +2,7 @@
   "events": [
     {
       "device_id": "iphone-1",
-      "seq": 1790307600000,
+      "external_id": "sleep:2026-09-24T23:40-04:00",
       "kind": "sleep",
       "source": "healthkit",
       "start": "2026-09-24T23:40:00-04:00",
@@ -11,7 +11,7 @@
     },
     {
       "device_id": "iphone-1",
-      "seq": 1790308800000,
+      "external_id": "steps:2026-09-25",
       "kind": "steps",
       "source": "healthkit",
       "start": "2026-09-25T00:00:00-04:00",
@@ -20,7 +20,7 @@
     },
     {
       "device_id": "iphone-1",
-      "seq": 1790362800000,
+      "external_id": "cal:2026-09-25T15:00-04:00:Study-algorithms",
       "kind": "calendar_event",
       "source": "calendar",
       "start": "2026-09-25T15:00:00-04:00",

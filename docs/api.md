@@ -11,9 +11,10 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 
 | Topic | Rule |
 |---|---|
-| Base URL | `http://<hub-host>:<port>/api/v1` (HTTPS once DT-47 lands). Ports: personal `8765` (this computer only), shared-dev `8766`, demo `8767`. |
+| Base URL | `http://<hub-host>:<port>/api/v1` (HTTPS once DT-47 lands). |
+| Profiles and ports | personal `8765`: your real data, reachable from your own home Wi-Fi (your phone syncs here) but never over Tailscale. shared-dev `8766`: seed and test data, the only port your teammate reaches over Tailscale. demo `8767`: seeded demo data. |
 | Body format | JSON, UTF-8. |
-| Times | ISO 8601 with an offset, for example `2026-09-25T14:03:10-04:00`. Times without an offset are rejected. |
+| Times | ISO 8601 with an offset, for example `2026-09-25T14:03:10-04:00`. Seconds and up to 9 fractional digits are optional, `T` and `Z` may be lowercase. Times without an offset, Unix numbers and impossible dates are rejected. |
 | Days | `YYYY-MM-DD`, interpreted in the time zone given by `tz` (an IANA name such as `America/Toronto`). Default: the hub computer's time zone. |
 | Auth | `Authorization: Bearer <token>`. Devices get a token when they pair (DT-12); the dashboard on phones pairs as a `viewer`. |
 | Local only | Endpoints marked *local only* accept requests only from the hub computer itself (`127.0.0.1` / `::1`). |
@@ -22,17 +23,17 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 ### Errors
 
 ```json
-{ "error": { "code": "invalid_event", "message": "steps events need data.count as a whole number of 0 or more", "details": [] } }
+{ "error": { "code": "batch_too_large", "message": "at most 500 events per request", "details": [] } }
 ```
 
 | Status | `code` | When |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON or query parameters, wrong confirmation phrase |
+| 400 | `bad_request` | Malformed JSON, a body that is not one event or `{"events": [...]}`, bad query parameters, wrong confirmation phrase |
 | 401 | `unauthorized` | Missing, unknown or revoked token |
 | 403 | `local_only` | A local-only endpoint was called from another machine |
 | 404 | `not_found` | Unknown device, tab or resource |
-| 413 | `batch_too_large` | More than 500 events in one request |
-| 422 | `invalid_event` | An event breaks the schema or the model rules (details list each problem) |
+| 413 | `batch_too_large` | More than 500 events in one request (checked before any event is validated) |
+| 422 | `invalid_request` | Invalid input for endpoints other than `POST /events` (bad events there are reported per event, see below) |
 | 429 | `too_many_attempts` | Too many wrong pairing codes |
 | 503 | `ai_unavailable` | The local model server is not reachable |
 
@@ -62,29 +63,45 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 
 ### POST /events
 
-Send one event object, or a batch `{ "events": [ ... ] }` of 1 to 500 events. Resending an event with the same
-`(device_id, seq)` is safe: it is counted as a duplicate and not stored twice.
+Send one event object, or a batch `{ "events": [ ... ] }` of 1 to 500 events.
 
-`seq` rules:
-- Collectors with a local store (Android, desktop tracker, Mac bridge, browser extension) use an
-  auto-increment counter per device.
-- iPhone Shortcuts have no store, so they use the event's start time in Unix milliseconds.
+**Every event's `device_id` must be the device the token belongs to**; events for any other device are rejected.
+
+#### Resending is always safe (deduplication)
+
+The hub stores each event under one key per device, `UNIQUE(device_id, dedup_key)`, chosen in this order
+(`Event.dedup_key()` in the models):
+
+| The event has | Key | When the key already exists |
+|---|---|---|
+| `external_id` | `ext:<external_id>` | The new copy **replaces** the stored one (counted as `replaced`). Use this for anything that can change after it was first sent: Health Connect records, HealthKit samples, calendar events, and daily totals. |
+| `seq` (no `external_id`) | `seq:<seq>` | Ignored (counted as `duplicates`). Collectors with a local store (Android, desktop tracker, Mac bridge, browser extension) number their events 0, 1, 2, ... per device. |
+| neither | `content:<hash>` of kind, start, end, app, app_id, title and data | Ignored. For stateless collectors such as iPhone Shortcuts: two different events in the same second get different keys, and resending the same event gives the same key. |
+
+Daily totals use a derived `external_id` such as `steps:2026-09-25`, so the evening sync replaces the morning
+number instead of being dropped or double counted.
+
+#### Request and response
 
 Request (from `ios/shortcuts/payloads/app-event.json`):
 
 ```json
-{ "device_id": "iphone-1", "seq": 1790359390000, "kind": "app_open", "source": "shortcuts",
+{ "device_id": "iphone-1", "kind": "app_open", "source": "shortcuts",
   "start": "2026-09-25T14:03:10-04:00", "app": "Instagram" }
 ```
 
-Response:
+Response (`200` whenever the body has the right shape, even if some events were rejected):
 
 ```json
-{ "accepted": 1, "duplicates": 0, "last_seq": 1790359390000, "nudge": null }
+{ "accepted": 1, "replaced": 0, "duplicates": 0,
+  "rejected": [ { "index": 3, "seq": 812, "external_id": null, "reason": "data.stage: sleep data.stage must be one of [...]" } ],
+  "last_seq": 4812, "nudge": null }
 ```
 
-When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "...", "body": "...", "created_at": "..." }`.
-DT-42 adds the parsed meal items to the response for `meal` events.
+- `rejected` lists events the hub will never accept as sent. Collectors mark them as failed and **do not resend
+  them**, so one bad event can never block the events after it.
+- When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "...", "body": "...", "created_at": "..." }`.
+- DT-42 adds the parsed meal items to the response for `meal` events.
 
 ### GET /devices/{device_id}/cursor
 
@@ -92,7 +109,13 @@ DT-42 adds the parsed meal items to the response for `meal` events.
 { "device_id": "android-1", "last_seq": 4812 }
 ```
 
-A collector resends everything after `last_seq`. A device can only read its own cursor.
+`last_seq` is the highest `seq` stored for that device (null for devices that never send `seq`). A device can
+only read its own cursor.
+
+How collectors use it: an event counts as synced only after the request that carried it got a `200`, and
+collectors resend **all** events that are not synced yet (never just "everything after `last_seq`", which would
+skip gaps left by a failed batch). The cursor is for recovery, for example after reinstalling the app, when the
+collector checks what the hub already has.
 
 ### Pairing
 
@@ -102,6 +125,9 @@ A collector resends everything after `last_seq`. A device can only read its own 
 { "code": "493817", "expires_at": "2026-09-25T14:08:10-04:00",
   "url": "http://daytrace-hub.local:8765", "qr": "/api/v1/pair/qr.png?code=493817" }
 ```
+
+`url` is the running profile's address as phones see it on the local network (the personal profile listens on
+your home Wi-Fi so your own phone can reach it).
 
 `POST /pair/claim`:
 
