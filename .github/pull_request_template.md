@@ -10,8 +10,9 @@ DT-<id> (the PR title must start with `DT-<id>:`)
 
 - [ ] Hub tests (`pytest`)
 - [ ] Dashboard build (`npm run build`)
-- [ ] Android build (`./gradlew assembleDebug`)
+- [ ] Android build (`gradlew assembleDebug`)
 - [ ] Tried it on a real device:
+- [ ] Reviewed for bugs, and every finding is fixed or answered
 
 ## Screenshots (UI changes)
 
