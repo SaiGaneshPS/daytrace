@@ -33,6 +33,15 @@ export default function App() {
           {pages.map((page) => (
             <Route key={page.path} path={page.path} element={page.element} />
           ))}
+          <Route
+            path="*"
+            element={
+              <section>
+                <h1>Page not found</h1>
+                <p className="muted">That page doesn&apos;t exist. Pick one from the menu above.</p>
+              </section>
+            }
+          />
         </Routes>
       </main>
     </BrowserRouter>

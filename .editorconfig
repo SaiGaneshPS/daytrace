@@ -14,5 +14,9 @@ indent_size = 4
 [*.{ps1,bat,cmd}]
 end_of_line = crlf
 
+# Windows PowerShell 5.1 reads BOM-less scripts with the ANSI code page.
+[*.ps1]
+charset = utf-8-bom
+
 [*.md]
 trim_trailing_whitespace = false

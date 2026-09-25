@@ -24,6 +24,10 @@ captures/
 # Secrets and keys (never commit)
 *.jks
 *.keystore
+*.pem
+*.key
+*.p12
+*.pfx
 .env
 .env.*
 !.env.example

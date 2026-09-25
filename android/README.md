@@ -11,8 +11,15 @@ placeholders until DT-19, so the versions come from Android Studio's own templat
    saved to a temporary folder.
 2. Copy `settings.gradle.kts`, `build.gradle.kts`, `gradle.properties`, `gradle/` (including `wrapper/`),
    `gradlew`, `gradlew.bat` and `app/build.gradle.kts` from it into this folder.
-3. Keep the files already in `app/src/main/` (merge the generated `MainActivity` into ours).
-4. Open this `android/` folder in Android Studio and build.
+3. Also copy the template files that `MainActivity` and the manifest depend on. These are the one
+   allowed addition to the fixed layout, and only in DT-19:
+   - `app/src/main/java/app/daytrace/android/ui/theme/` (Color.kt, Theme.kt, Type.kt)
+   - `app/src/main/res/mipmap-*/`, `res/drawable/` launcher assets
+   - `res/values/themes.xml`, `res/values/colors.xml`
+   - `res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml`
+4. Keep the files already in `app/src/main/`: merge the generated `MainActivity` and `AndroidManifest.xml`
+   into ours, and keep our `strings.xml` (add any template strings to it).
+5. Open this `android/` folder in Android Studio and build.
 
 | File | Ticket |
 |---|---|

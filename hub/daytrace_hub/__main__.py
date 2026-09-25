@@ -8,8 +8,7 @@ import argparse
 import sys
 
 from . import __version__
-
-PROFILES = ("personal", "shared-dev", "demo")
+from .config import PROFILES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,7 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     seed.add_argument("--profile", choices=PROFILES, default="demo")
     seed.add_argument("--days", type=int, default=14)
 
-    sub.add_parser("tracker", help="run only the desktop activity tracker (DT-16)")
+    tracker = sub.add_parser("tracker", help="run only the desktop activity tracker (DT-16)")
+    tracker.add_argument("--profile", choices=PROFILES, default="personal")
     return parser
 
 

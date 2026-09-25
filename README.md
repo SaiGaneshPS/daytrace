@@ -12,7 +12,9 @@ there is no cloud server, and the AI runs on your own machine.
   activity, runs the stats and talks to a local LLM (LM Studio or Ollama).
 - **Collectors** send events to the hub over your Wi-Fi: an Android app, iPhone Shortcuts, a Mac bridge for
   full iPhone Screen Time, and a browser extension.
-- A **PWA dashboard**, served by the hub, works in any browser and can be installed on phones.
+- A **PWA dashboard**, served by the hub, works in any browser. Installing it on phones and using it offline
+  needs HTTPS, which the hub gets from a local mkcert certificate (DT-47); over plain HTTP it still works
+  as a normal web page.
 
 ## Repo layout (fixed in DT-1)
 
@@ -40,8 +42,8 @@ python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"   # macOS/Linux: .venv/bin/python
 .venv/Scripts/python -m pytest
 
-# dashboard
-cd dashboard
+# dashboard (from the repo root)
+cd ../dashboard
 npm ci
 npm run build
 ```
