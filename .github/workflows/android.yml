@@ -13,8 +13,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.ref }}
-  # Cancel superseded PR runs only; every commit on development gets a full run.
+  # PR runs share one group per branch, so a new push cancels the superseded run.
+  # Push and manual runs get one group per commit, so every commit on development gets its own run.
+  group: android-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
