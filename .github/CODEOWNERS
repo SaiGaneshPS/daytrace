@@ -1,0 +1,5 @@
+# DT-3 fills in the real GitHub usernames.
+# Everything defaults to you; Apple-only folders go to the teammate.
+# *        @your-github-username
+# /ios/    @teammate-github-username
+# /mac/    @teammate-github-username

@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DT-19: allow plain HTTP to the hub on the LAN. DT-47 switches to HTTPS with the mkcert CA. -->
+<network-security-config />

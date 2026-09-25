@@ -1,0 +1,9 @@
+# DT-6 / DT-25: Android debug build, signed release on tags. Placeholder from DT-1 (manual trigger only).
+name: android
+on:
+  workflow_dispatch:
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Implemented in DT-6 / DT-25"

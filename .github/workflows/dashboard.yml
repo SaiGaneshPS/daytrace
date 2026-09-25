@@ -1,0 +1,9 @@
+# DT-6: dashboard type-check and build. Placeholder from DT-1 (manual trigger only).
+name: dashboard
+on:
+  workflow_dispatch:
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Implemented in DT-6"
