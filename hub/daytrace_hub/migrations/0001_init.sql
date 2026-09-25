@@ -1,0 +1,1 @@
+-- DT-10: initial schema (devices, events, sessions, category_overrides, nudge_log, settings).

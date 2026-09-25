@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "DT-9 fills in the full Event schema.",
+  "title": "Daytrace event",
+  "type": "object"
+}

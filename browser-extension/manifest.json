@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Daytrace Web Activity",
+  "version": "0.1.0",
+  "description": "Sends the active tab's domain (never the full URL) to your local Daytrace hub.",
+  "background": { "service_worker": "background.js" },
+  "options_page": "options.html",
+  "permissions": [],
+  "host_permissions": []
+}

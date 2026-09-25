@@ -1,0 +1,9 @@
+# DT-6: hub tests on Windows and Linux, macOS on demand. Placeholder from DT-1 (manual trigger only).
+name: hub
+on:
+  workflow_dispatch:
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Implemented in DT-6"

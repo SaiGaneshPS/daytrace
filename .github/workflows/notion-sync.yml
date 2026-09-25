@@ -1,0 +1,9 @@
+# DT-5: move Notion tickets from PR events. Placeholder from DT-1 (manual trigger only).
+name: notion-sync
+on:
+  workflow_dispatch:
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Implemented in DT-5"

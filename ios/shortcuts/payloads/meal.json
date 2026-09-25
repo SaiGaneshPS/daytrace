@@ -1,0 +1,3 @@
+{
+  "$comment": "Example request body for DT-28. DT-9 fills it in and tests it against the schema."
+}
