@@ -212,10 +212,14 @@ uses the same addresses could otherwise hand its token to a stranger's device at
 ```
 
 - `nonce` is 32 to 128 lowercase hex characters, new for every check.
-- Response `200` (`Cache-Control: no-store`): `{ "device_id": "android-1", "proof": "<64 hex>" }`, where `proof` is
-  HMAC-SHA256 with the device's stored token hash as the key (the lowercase hex SHA-256 of the token, as UTF-8
-  text) and the nonce as the message (UTF-8). The device computes the same from its token and compares.
-- `401 unauthorized` for an unknown or revoked device (pair again). The token never travels for this.
+- Response `200` (`Cache-Control: no-store`): `{ "device_id": "android-1", "revoked": false, "proof": "<64 hex>" }`,
+  where `proof` is HMAC-SHA256 with the device's stored token hash as the key (the lowercase hex SHA-256 of the
+  token, as UTF-8 text) and the nonce as the message (UTF-8). The device computes the same from its token and
+  compares. The token never travels for this.
+- For a revoked device, `revoked` is `true` and the message is `"revoked:" + nonce`. The revocation is signed, so
+  the device asks to pair again only when its own hub says so.
+- `401 unauthorized` for a device this hub never paired. It is unsigned (anyone could send it), so the device
+  treats it as "not my hub", never as a revocation.
 
 ### Local network discovery
 

@@ -4,10 +4,10 @@ package app.daytrace.android.sync
 
 import android.app.Application
 import android.content.Context
+import android.net.NetworkCapabilities
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
-import androidx.work.NetworkType
 import androidx.work.WorkManager
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -46,13 +46,14 @@ class SyncerTest {
         val queue = QueueDispatcher().apply { setFailFast(true) }
         var proofToken: String? = null // null: the paired token, so the proof is right
         var proofStatus = 200
+        var revoked = false
 
         override fun dispatch(request: RecordedRequest): MockResponse {
             if (!isProof(request)) return queue.dispatch(request)
-            if (proofStatus != 200) return reply(proofStatus, """{"error": {"code": "unauthorized", "message": "pair it again"}}""")
+            if (proofStatus != 200) return reply(proofStatus, """{"error": {"code": "unauthorized", "message": "never paired"}}""")
             val nonce = JSONObject(request.body!!.utf8()).getString("nonce")
-            val proof = HubClient.expectedProof(proofToken ?: hub!!.token, nonce)
-            return reply(200, """{"device_id": "${hub!!.deviceId}", "proof": "$proof"}""")
+            val proof = HubClient.expectedProof(proofToken ?: hub!!.token, if (revoked) "revoked:$nonce" else nonce)
+            return reply(200, """{"device_id": "${hub!!.deviceId}", "revoked": $revoked, "proof": "$proof"}""")
         }
     }
 
@@ -81,8 +82,24 @@ class SyncerTest {
     }
 
     private var onWifi = true
+    private var foundOnWifi = emptyList<String>() // what discovery would find
+
+    /** The pairing as the Syncer sees it, following the hub when it moves. */
+    private val pairing = object : HubConfigSource {
+        override fun load() = hub
+
+        override fun moved(baseUrl: String) {
+            hub = hub?.copy(baseUrl = baseUrl)
+        }
+    }
+
     private fun sync() = runBlocking {
-        Syncer(store, { hub }, status, wifi = { if (onWifi) HubClient.httpClient() else null }, clock = { 1_000L }).sync()
+        Syncer(
+            store, pairing, status,
+            wifi = { if (onWifi) HubClient.httpClient() else null },
+            findHubs = { foundOnWifi },
+            clock = { 1_000L },
+        ).sync()
     }
 
     private fun collect(count: Int, from: Long = 0) =
@@ -123,10 +140,52 @@ class SyncerTest {
     @Test
     fun aRevokedPairingIsNoticedBeforeTheTokenIsSent() {
         collect(1)
-        fakeHub.proofStatus = 401
+        fakeHub.revoked = true // signed by our hub
         assertEquals(SyncResult.PAIR_AGAIN, sync().result)
         assertEquals(1, server.requestCount)
         assertEquals(null, server.takeRequest().headers["Authorization"])
+    }
+
+    @Test
+    fun anUnsignedRefusalIsNotTakenAsARevocation() {
+        collect(1)
+        fakeHub.proofStatus = 401 // anyone can send this, so it only means "not proven"
+        assertEquals(SyncResult.BLOCKED, sync().result)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun aHubWithANewAddressIsFoundAgainAndFollowed() {
+        collect(2)
+        val newUrl = server.url("/").toString()
+        hub = hub!!.copy(baseUrl = "http://127.0.0.1:1") // the old address: nothing answers there any more
+        foundOnWifi = listOf("http://127.0.0.1:1", newUrl) // discovery finds the hub at its new address
+        enqueue(cursor(null))
+        enqueue(stored(1))
+        assertEquals(SyncResult.SENT, sync().result)
+        assertEquals(newUrl, hub!!.baseUrl) // remembered for next time
+        assertEquals(0, store.counts().waiting)
+    }
+
+    @Test
+    fun aStrangerFoundOnTheWifiIsNotFollowed() {
+        collect(1)
+        hub = hub!!.copy(baseUrl = "http://127.0.0.1:1")
+        foundOnWifi = listOf(server.url("/").toString())
+        fakeHub.proofToken = "dt_someone_else" // a different hub: it can't prove it paired this phone
+        assertEquals(SyncResult.UNREACHABLE, sync().result)
+        assertEquals("http://127.0.0.1:1", hub!!.baseUrl)
+        assertEquals(1, server.requestCount) // asked for its proof, and nothing more
+    }
+
+    @Test
+    fun beingOffWifiDoesNotHideThatThePhoneMustPairAgain() {
+        collect(1)
+        fakeHub.revoked = true
+        assertEquals(SyncResult.PAIR_AGAIN, sync().result)
+        onWifi = false
+        assertEquals(SyncResult.NOT_ON_WIFI, sync().result)
+        assertEquals(SyncResult.PAIR_AGAIN, status.read().result) // still on screen
     }
 
     @Test
@@ -292,13 +351,16 @@ class SyncerTest {
     }
 
     @Test
-    fun backgroundSyncIsScheduledEvery15MinutesOnUnmeteredNetworks() {
+    fun backgroundSyncIsScheduledEvery15MinutesOnWifiOnly() {
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
         SyncWorker.schedule(context)
         SyncWorker.schedule(context) // scheduling again keeps the first one
         val infos = WorkManager.getInstance(context).getWorkInfosForUniqueWork(SyncWorker.PERIODIC).get()
         assertEquals(1, infos.size)
-        assertEquals(NetworkType.UNMETERED, infos.single().constraints.requiredNetworkType)
+        val network = infos.single().constraints.requiredNetworkRequest!!
+        assertTrue(network.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+        assertTrue(network.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN))
+        assertTrue(!network.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) // a hub LAN may have no internet
         assertEquals(15 * 60_000L, infos.single().periodicityInfo!!.repeatIntervalMillis)
     }
 }

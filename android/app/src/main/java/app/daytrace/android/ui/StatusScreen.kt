@@ -136,7 +136,12 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                         syncing,
                         onSyncNow = { SyncWorker.syncNow(context) },
                         onPair = onPair,
-                        onForget = { scope.launch(Dispatchers.IO) { PairingStore.get(context).clear() } },
+                        onForget = {
+                            scope.launch(Dispatchers.IO) {
+                                PairingStore.get(context).clear()
+                                SyncStatusStore(context).reset()
+                            }
+                        },
                     )
                 }
             }

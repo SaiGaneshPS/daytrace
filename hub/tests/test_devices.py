@@ -450,10 +450,10 @@ def test_revoking_is_for_the_hub_computer_only(phone: TestClient, db: Database) 
 NONCE = "0123456789abcdef" * 2
 
 
-def expected_proof(token: str, nonce: str) -> str:
-    """What the phone computes on its side: HMAC-SHA256(key = sha256(token) as hex, message = nonce)."""
+def expected_proof(token: str, message: str) -> str:
+    """What the phone computes on its side: HMAC-SHA256(key = sha256(token) as hex, message)."""
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    return hmac.new(token_hash.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.new(token_hash.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def test_the_hub_proves_it_paired_the_phone_without_the_token(client: TestClient, phone: TestClient) -> None:
@@ -461,19 +461,28 @@ def test_the_hub_proves_it_paired_the_phone_without_the_token(client: TestClient
     response = phone.post("/api/v1/devices/android-1/proof", json={"nonce": NONCE})  # no Authorization header
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json() == {"device_id": "android-1", "proof": expected_proof(token, NONCE)}
+    assert response.json() == {"device_id": "android-1", "revoked": False, "proof": expected_proof(token, NONCE)}
     other = phone.post("/api/v1/devices/android-1/proof", json={"nonce": "f" * 64}).json()["proof"]
     assert other == expected_proof(token, "f" * 64) != response.json()["proof"]  # a new nonce, a new answer
     assert token not in response.text
 
 
-def test_revoked_or_unknown_devices_get_no_proof(client: TestClient, phone: TestClient, db: Database) -> None:
-    paired(db)
+def test_a_revocation_is_signed_so_the_phone_can_believe_it(client: TestClient, phone: TestClient, db: Database) -> None:
+    tokens = paired(db)
     assert client.delete("/api/v1/devices/android-1").status_code == 204
-    for device_id in ("android-1", "android-99"):
-        response = phone.post(f"/api/v1/devices/{device_id}/proof", json={"nonce": NONCE})
-        assert response.status_code == 401
-        assert response.json()["error"]["code"] == "unauthorized"
+    response = phone.post("/api/v1/devices/android-1/proof", json={"nonce": NONCE})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["revoked"] is True
+    assert body["proof"] == expected_proof(tokens["android-1"], f"revoked:{NONCE}")
+    assert body["proof"] != expected_proof(tokens["android-1"], NONCE)  # can't be mistaken for "still paired"
+
+
+def test_devices_the_hub_never_paired_get_no_proof(phone: TestClient, db: Database) -> None:
+    paired(db)
+    response = phone.post("/api/v1/devices/android-99/proof", json={"nonce": NONCE})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
 
 
 @pytest.mark.parametrize(

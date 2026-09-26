@@ -35,6 +35,9 @@ data class HubConfig(val baseUrl: String, val token: String, val deviceId: Strin
 
 fun interface HubConfigSource {
     fun load(): HubConfig?
+
+    /** The hub proved itself at a new address (its DHCP lease changed, say): use that one from now on. */
+    fun moved(baseUrl: String) = Unit
 }
 
 /** An event the hub did not store, and why (docs/api.md, "rejected"). [index] is its place in the batch. */
@@ -140,25 +143,49 @@ data class Paired(val deviceId: String, val token: String, val profile: String, 
     override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name)" // never print the token
 }
 
+/** What the hub proved about this phone's pairing (POST /devices/{id}/proof). */
+enum class HubProof {
+    /** The hub that paired this phone, and the pairing is active: the token may be sent. */
+    PAIRED,
+
+    /** The hub that paired this phone says, signed, that the pairing was revoked: pair again. */
+    REVOKED,
+
+    /** Whatever answered could not prove anything: not this phone's hub (or one that forgot it). */
+    NOT_PROVEN,
+}
+
+/**
+ * The hub as this device. [http] has no default on purpose: callers pass [HubClient.onNetwork] (the Wi-Fi), so no
+ * request can follow Android's default network by accident.
+ */
 class HubClient(
     private val config: HubConfig,
-    private val http: OkHttpClient = defaultHttp,
+    private val http: OkHttpClient,
     private val newNonce: () -> String = ::randomNonce,
 ) {
     /**
-     * POST /devices/{id}/proof (DT-22): true only if the other end answers a fresh nonce with the HMAC that only
-     * the hub which paired this phone can compute (it is keyed with the token's hash). Sent without the token,
-     * so a stranger's device at the hub's address learns nothing. 401 means the pairing is gone: pair again.
+     * POST /devices/{id}/proof (DT-22), sent without the token, so a stranger's device at the hub's address learns
+     * nothing. Only the hub that paired this phone can answer a fresh nonce with an HMAC keyed by the token's hash,
+     * and only it can sign "revoked". An unsigned 401 could come from anyone, so it proves nothing.
      */
-    fun proveHub(): HubResult<Boolean> {
+    fun proveHub(): HubResult<HubProof> {
         val url = apiUrl(config.baseUrl, "devices")?.newBuilder()?.addPathSegment(config.deviceId)?.addPathSegment("proof")?.build()
             ?: return badUrl(config.baseUrl)
         val nonce = newNonce()
         val body = JSONObject().put("nonce", nonce).toString()
-        return execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), token = null) { text ->
-            val answer = JSONObject(text).getString("proof").lowercase().toByteArray()
-            MessageDigest.isEqual(answer, expectedProof(config.token, nonce).toByteArray())
+        val result = execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), token = null, notFound = OUTDATED_HUB) { text ->
+            val json = JSONObject(text)
+            val revoked = json.optBoolean("revoked", false)
+            val answer = json.getString("proof").lowercase().toByteArray()
+            val expected = expectedProof(config.token, if (revoked) "revoked:$nonce" else nonce).toByteArray()
+            when {
+                !MessageDigest.isEqual(answer, expected) -> HubProof.NOT_PROVEN
+                revoked -> HubProof.REVOKED
+                else -> HubProof.PAIRED
+            }
         }
+        return if (result is HubResult.Unauthorized) HubResult.Ok(HubProof.NOT_PROVEN) else result
     }
 
     /** GET /devices/{id}/cursor: the highest seq the hub has for this device, or null when it has none. */
@@ -191,7 +218,7 @@ class HubClient(
          * POST /pair/claim: trades the 6-digit code shown on the PC for this phone's own token. A wrong or
          * expired code comes back as [HubResult.Retry] with the hub's message (it says how many tries are left).
          */
-        fun claim(baseUrl: String, code: String, deviceName: String, http: OkHttpClient = defaultHttp): HubResult<Paired> {
+        fun claim(baseUrl: String, code: String, deviceName: String, http: OkHttpClient): HubResult<Paired> {
             val url = apiUrl(baseUrl, "pair/claim") ?: return badUrl(baseUrl)
             val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android").toString()
             return execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), token = null) { text ->
@@ -218,22 +245,35 @@ class HubClient(
 
         private fun badUrl(baseUrl: String) = HubResult.Blocked("\"$baseUrl\" is not a web address Daytrace can use")
 
-        /** One request to the hub: the private-network checks, the token only when given, and the answer mapped. */
-        private fun <T> execute(http: OkHttpClient, request: Request.Builder, token: String?, parse: (String) -> T): HubResult<T> {
+        /**
+         * One request to the hub: the private-network checks, the token only when given, and the answer mapped. The
+         * reply is read only up to [MAX_REPLY_BYTES] (what answers may not be the hub), and its error text is
+         * cleaned and shortened before it can reach the screen.
+         */
+        private fun <T> execute(
+            http: OkHttpClient,
+            request: Request.Builder,
+            token: String?,
+            notFound: String? = null,
+            parse: (String) -> T,
+        ): HubResult<T> {
             if (token != null) request.header("Authorization", "Bearer $token")
             val built = request.header("Accept", "application/json").build()
             return try {
                 PrivateNetwork.check(built.url)
                 http.newCall(built).execute().use { response ->
-                    val text = response.body.string()
+                    val source = response.body.source()
+                    if (source.request(MAX_REPLY_BYTES + 1)) return HubResult.Retry("The reply was far too large for a Daytrace hub")
+                    val text = source.buffer.readUtf8()
                     val error = errorOf(text)
+                    val message = error?.second?.let { cleanText(it, MAX_TEXT) } ?: "HTTP ${response.code}"
                     when {
                         response.code in 200..299 -> runCatching { HubResult.Ok(parse(text)) }
                             .getOrElse { HubResult.Retry("The hub sent a reply Daytrace doesn't understand") }
-                        response.code == 413 -> HubResult.Split(error?.second ?: "HTTP 413")
-                        response.code == 401 || (response.code == 403 && error?.first == "forbidden") ->
-                            HubResult.Unauthorized(error?.second ?: "HTTP ${response.code}")
-                        else -> HubResult.Retry(error?.second ?: "HTTP ${response.code}")
+                        response.code == 413 -> HubResult.Split(message)
+                        response.code == 401 || (response.code == 403 && error?.first == "forbidden") -> HubResult.Unauthorized(message)
+                        response.code == 404 && notFound != null -> HubResult.Retry(notFound)
+                        else -> HubResult.Retry(message)
                     }
                 }
             } catch (e: IOException) {
@@ -241,6 +281,10 @@ class HubClient(
                 if (blocked != null) HubResult.Blocked(blocked.message.orEmpty()) else HubResult.Retry(e.message ?: e.javaClass.simpleName)
             }
         }
+
+        /** Far more than any hub reply (a batch reply lists at most 500 rejections). */
+        private const val MAX_REPLY_BYTES = 1L shl 20
+        private const val OUTDATED_HUB = "Your hub on the PC needs an update to work with this version of the app"
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
         const val MAX_TEXT = 200 // the hub's limit for app and app_id

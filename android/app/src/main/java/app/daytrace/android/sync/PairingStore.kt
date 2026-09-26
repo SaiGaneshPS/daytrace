@@ -68,16 +68,23 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
     override fun load(): HubConfig? = pairing()?.config
 
     /**
-     * The saved pairing, or null when there is none or the token cannot be decrypted (the Keystore key is gone,
-     * which happens only if Android wipes it): then the phone simply pairs again.
+     * The saved pairing, or null when there is none. A token that cannot be decrypted (the Keystore key is gone,
+     * which happens only if Android wipes it) can never be used again, so the pairing is cleared: the status screen
+     * then offers pairing again instead of looking paired while nothing syncs.
      */
     fun pairing(): Pairing? {
         val url = prefs.getString(KEY_URL, null) ?: return null
         val deviceId = prefs.getString(KEY_DEVICE, null) ?: return null
         val sealed = prefs.getString(KEY_TOKEN, null) ?: return null
         val iv = prefs.getString(KEY_IV, null) ?: return null
-        val token = runCatching { String(cipher.decrypt(decode(iv), decode(sealed)), Charsets.UTF_8) }.getOrNull() ?: return null
+        val token = runCatching { String(cipher.decrypt(decode(iv), decode(sealed)), Charsets.UTF_8) }.getOrNull()
+            ?: return null.also { clear() }
         return Pairing(HubConfig(url, token, deviceId), prefs.getString(KEY_PROFILE, null).orEmpty(), prefs.getString(KEY_NAME, null).orEmpty())
+    }
+
+    /** The hub proved itself at a new address (see [Syncer]): keep using that one. */
+    override fun moved(baseUrl: String) {
+        if (prefs.contains(KEY_TOKEN)) prefs.edit(commit = true) { putString(KEY_URL, baseUrl) }
     }
 
     /** Replaces any earlier pairing. Written to disk before this returns. */

@@ -62,7 +62,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -81,6 +80,7 @@ import app.daytrace.android.sync.HubDiscovery
 import app.daytrace.android.sync.HubResult
 import app.daytrace.android.sync.Pairing
 import app.daytrace.android.sync.PairingStore
+import app.daytrace.android.sync.SyncStatusStore
 import app.daytrace.android.sync.SyncWorker
 import app.daytrace.android.sync.WifiOnly
 import app.daytrace.android.ui.theme.DaytraceIcons
@@ -92,12 +92,16 @@ import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
 
@@ -148,12 +152,47 @@ private sealed interface PairState {
     data class Done(val pairing: Pairing) : PairState
 }
 
+/**
+ * Pairing runs here rather than in the screen's scope: turning the phone or leaving the screen mid-way must not
+ * lose a pairing the hub has already made (its code is spent by then). The screen only shows the state.
+ */
+private object Pairer {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val current = MutableStateFlow<PairState>(PairState.Idle)
+    val state: StateFlow<PairState> = current
+
+    fun pair(context: Context, url: String, code: String) {
+        if (current.value == PairState.Working) return
+        current.value = PairState.Working
+        val app = context.applicationContext
+        scope.launch {
+            val result = runCatching { pairWith(app, url, code) }
+                .getOrElse { PairState.Failed("Couldn't pair: ${it.message ?: it.javaClass.simpleName}") }
+            current.value = result
+            if (result is PairState.Done) SyncWorker.syncNow(app)
+        }
+    }
+
+    fun fail(message: String) {
+        if (current.value != PairState.Working) current.value = PairState.Failed(message)
+    }
+
+    /** A fresh screen starts from the beginning, unless a pairing is still on its way. */
+    fun reset() {
+        if (current.value != PairState.Working) current.value = PairState.Idle
+    }
+}
+
 @Composable
 fun PairingScreen(onClose: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val discovery = rememberFoundHubs()
-    var state by remember { mutableStateOf<PairState>(PairState.Idle) }
+    val state by Pairer.state.collectAsStateWithLifecycle()
+    var fresh by rememberSaveable { mutableStateOf(true) } // survives turning the phone, not closing the screen
+    LaunchedEffect(Unit) {
+        if (fresh) Pairer.reset()
+        fresh = false
+    }
     var chosen by rememberSaveable { mutableStateOf<String?>(null) }
     var typing by rememberSaveable { mutableStateOf(false) }
     var address by rememberSaveable { mutableStateOf("") }
@@ -168,21 +207,14 @@ fun PairingScreen(onClose: () -> Unit) {
     val validCode = PairingInput.code(code)
     val working = state == PairState.Working
 
-    fun pair(url: String, pairingCode: String) {
-        state = PairState.Working
-        scope.launch {
-            val result = withContext(Dispatchers.IO) { pairWith(context, url, pairingCode) }
-            state = result
-            if (result is PairState.Done) SyncWorker.syncNow(context)
-        }
-    }
+    fun pair(url: String, pairingCode: String) = Pairer.pair(context, url, pairingCode)
 
     val scan = rememberQrScanner(
         onScanned = { text ->
             val qr = PairingInput.qr(text)
-            if (qr != null) pair(qr.url, qr.code) else state = PairState.Failed("That QR code isn't a Daytrace pairing code.")
+            if (qr != null) pair(qr.url, qr.code) else Pairer.fail("That QR code isn't a Daytrace pairing code.")
         },
-        onError = { state = PairState.Failed(it) },
+        onError = { Pairer.fail(it) },
     )
 
     val done = state as? PairState.Done
@@ -312,7 +344,12 @@ private fun pairWith(context: Context, url: String, code: String): PairState {
         is HubResult.Ok -> {
             val paired = result.value
             val pairing = Pairing(HubConfig(url, paired.token, paired.deviceId), paired.profile, paired.name)
-            PairingStore.get(context).save(pairing)
+            try {
+                PairingStore.get(context).save(pairing)
+            } catch (e: Exception) { // the Keystore can fail on some phones; say so instead of crashing
+                return PairState.Failed("This phone couldn't store the pairing securely (${e.javaClass.simpleName}). Start pairing again on the PC.")
+            }
+            SyncStatusStore(context).reset() // the last sync belonged to the old pairing
             PairState.Done(pairing)
         }
         is HubResult.Retry -> PairState.Failed("Couldn't pair with $url: ${result.message}")

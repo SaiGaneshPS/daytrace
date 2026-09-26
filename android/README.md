@@ -98,14 +98,17 @@ usage checkpoint moves past it, and each commit waits until it is on disk. Event
   resolve, and the address actually connected to is checked before a byte of the request is written. No proxy,
   no redirects.
 - **Only over Wi-Fi (DT-22).** Every request to the hub is made on the Wi-Fi network itself, never cellular or a
-  VPN, so the phone syncs only when it is on the same Wi-Fi as the hub. Off Wi-Fi the status screen says it is
-  waiting for Wi-Fi, and events keep collecting.
+  VPN (so not over Tailscale either), and the background job only runs on Wi-Fi, with or without internet. The
+  phone syncs only when it is on the same Wi-Fi as the hub. Off Wi-Fi the status screen says it is waiting for
+  Wi-Fi, and events keep collecting.
 - **The right hub (DT-22).** Before each sync, the phone sends the hub a fresh random nonce, without its token.
   Only the hub that paired this phone can answer, since the answer is an HMAC keyed with the token's hash, which
   only that hub stores (`POST /devices/{id}/proof`, docs/api.md). If the answer is wrong, for example a stranger's
-  device at the same address on another Wi-Fi, nothing is sent. A revoked pairing is noticed the same way and the
-  status screen offers **Pair again**. Until DT-47 adds HTTPS, events and the token still cross your Wi-Fi as plain
-  HTTP.
+  device at the same address on another Wi-Fi, nothing is sent. A revocation counts only when the hub signs it the
+  same way; then the status screen offers **Pair again**. Until DT-47 adds HTTPS, events and the token still cross
+  your Wi-Fi as plain HTTP, so someone actively attacking your own Wi-Fi could still intercept them.
+- **The hub moved (DT-22).** If the saved address stops answering (the PC got a new address from the router),
+  the phone looks for hubs on the Wi-Fi and moves to the one that can prove it paired this phone.
 
 ## Pairing (DT-22)
 

@@ -94,21 +94,32 @@ class HubDiscovery(context: Context) {
         }
     }
 
+    /** The hub addresses found within [windowMs], for the sync when the saved address stops answering. */
+    suspend fun findNow(windowMs: Long = FIND_WINDOW_MS): List<String> {
+        var latest = emptyList<FoundHub>()
+        withTimeoutOrNull(windowMs) { hubs().collect { latest = it } }
+        return latest.map { it.url }
+    }
+
     private suspend fun resolve(info: NsdServiceInfo): FoundHub? = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) {
         suspendCancellableCoroutine { continuation ->
-            @Suppress("DEPRECATION") // its replacement needs Android 14; this works on every version
-            nsd.resolveService(
-                info,
-                object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                        if (continuation.isActive) continuation.resume(null)
-                    }
+            val listener = object : NsdManager.ResolveListener {
+                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                    if (continuation.isActive) continuation.resume(null)
+                }
 
-                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                        if (continuation.isActive) continuation.resume(toHub(serviceInfo))
-                    }
-                },
-            )
+                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                    if (continuation.isActive) continuation.resume(toHub(serviceInfo))
+                }
+            }
+            @Suppress("DEPRECATION") // its replacement needs Android 14; this works on every version
+            nsd.resolveService(info, listener)
+            // A resolve that timed out must be stopped, or later ones fail. Android 13 and older cannot stop one;
+            // there a hub that never resolves may hide the others until the screen is opened again, and typing
+            // the address still works.
+            continuation.invokeOnCancellation {
+                if (Build.VERSION.SDK_INT >= 34) runCatching { nsd.stopServiceResolution(listener) }
+            }
         }
     }
 
@@ -123,5 +134,6 @@ class HubDiscovery(context: Context) {
     private companion object {
         const val SERVICE_TYPE = "_daytrace._tcp"
         const val RESOLVE_TIMEOUT_MS = 5_000L
+        const val FIND_WINDOW_MS = 6_000L
     }
 }
