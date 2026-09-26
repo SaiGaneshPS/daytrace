@@ -1,6 +1,6 @@
 """Daytrace hub command line.
 
-`run` starts a profile (DT-10); `seed` (DT-15) and `tracker` (DT-16) are filled in by their tickets.
+`run` starts a profile (DT-10), `seed` fills a demo profile (DT-15), `tracker` runs only the desktop tracker (DT-16).
 """
 from __future__ import annotations
 
@@ -42,8 +42,40 @@ def main(argv: list[str] | None = None) -> int:
         return run(args.profile)
     if args.command == "seed":
         return seed(args.profile, args.days, args.tz)
+    if args.command == "tracker":
+        return tracker(args.profile)
     print(f"'{args.command}' is not implemented yet. See its ticket.", file=sys.stderr)
     return 2
+
+
+def tracker(profile_name: str) -> int:
+    """Run only the desktop tracker, in the foreground (the hub also runs it itself for the personal profile)."""
+    from .app import desktop_tracker
+    from .db import Database
+    from .tracker.base import AlreadyTracking
+
+    try:
+        settings = load_settings(profile_name)
+    except ValueError as error:
+        print(f"Not tracking: {error}", file=sys.stderr)
+        return 2
+    database = Database(settings.database_path)
+    database.initialize()
+    service = desktop_tracker(settings, database)
+    if service is None:
+        print(f"Not tracking: there is no desktop tracker for {sys.platform} yet (macOS arrives with DT-17)", file=sys.stderr)
+        return 2
+    print(f"Daytrace tracker: {profile_name} profile, every 2 s. Press Ctrl+C to stop.")
+    print(f"  Database: {settings.database_path}")
+    try:
+        service.run_forever()
+    except AlreadyTracking as error:
+        print(f"Not tracking: {error}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        pass
+    print(f"Stopped. Device: {service.device_id}")
+    return 0
 
 
 def seed(profile_name: str, days: int, tz_name: str | None) -> int:

@@ -29,7 +29,19 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("DAYTRACE_MDNS", "off")  # never announce anything on the real network from a test
     monkeypatch.delenv("DAYTRACE_LLM_BASE_URL", raising=False)  # tests never use the model server on this PC
     monkeypatch.delenv("DAYTRACE_LLM_MODEL", raising=False)
+    monkeypatch.setenv("DAYTRACE_TRACKER", "off")  # never record this computer's screen from a test
     return data_dir
+
+
+@pytest.fixture(autouse=True)
+def _no_real_desktop_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hub started by a test with tracking on fails loudly instead of recording this computer's screen."""
+    from daytrace_hub import app
+
+    def refuse() -> None:
+        raise AssertionError("tests must not start the real desktop tracker; use a fake probe")
+
+    monkeypatch.setattr(app, "platform_probe", refuse)
 
 
 @pytest.fixture(autouse=True)

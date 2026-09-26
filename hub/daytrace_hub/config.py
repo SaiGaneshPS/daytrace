@@ -209,10 +209,16 @@ class Settings:
     # Off unless load_settings() turns it on, so tests and scripts never announce anything on the network.
     advertise_mdns: bool = False
     mdns_name: str = "daytrace-hub"
+    # Off unless load_settings() turns it on (DT-16), so tests never record this computer's screen.
+    track_desktop: bool = False
 
     @property
     def database_path(self) -> Path:
         return self.data_dir / self.profile.database_filename
+
+    @property
+    def tracker_lock_path(self) -> Path:
+        return self.data_dir / f"{self.profile.database_filename}.tracker.lock"
 
 
 def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None = None) -> Settings:
@@ -234,10 +240,16 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
     if not MDNS_NAME.fullmatch(mdns_name):
         raise ValueError(f"DAYTRACE_MDNS_NAME must be one DNS label like daytrace-hub, got {mdns_name!r}")
     advertise = advertise_text in _TRUE
+    profile = get_profile(profile_name)
+    # The desktop tracker records this computer: on by default only for your own data (personal).
+    tracker_text = env.get("DAYTRACE_TRACKER", "").strip().lower() or ("on" if profile.name == "personal" else "off")
+    if tracker_text not in (*_TRUE, *_FALSE):
+        raise ValueError(f"DAYTRACE_TRACKER must be on or off, got {tracker_text!r}")
     return Settings(
-        profile=get_profile(profile_name),
+        profile=profile,
         data_dir=data_dir,
         lan_networks=lan_networks,
         advertise_mdns=advertise,
         mdns_name=mdns_name,
+        track_desktop=tracker_text in _TRUE,
     )
