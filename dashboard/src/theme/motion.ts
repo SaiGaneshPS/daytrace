@@ -5,7 +5,7 @@
 //   dot) are switched off in styles.css, AnimatedNumber shows the final value at once, and celebrate() does nothing.
 // - Pages fade up, their cards follow one after another (staggered), tabs slide in the direction you moved.
 import type { Transition, Variants } from "motion/react";
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 export const EASE: [number, number, number, number] = [0.2, 0.8, 0.2, 1];
 export const spring: Transition = { type: "spring", stiffness: 420, damping: 36 };
@@ -38,22 +38,34 @@ export const slideVariants: Variants = {
 
 export const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
-function matches(query: string): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+const lists = new Map<string, MediaQueryList>();
+
+/** One MediaQueryList per query, kept (not rebuilt on every read). */
+function mediaList(query: string): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  let list = lists.get(query);
+  if (!list) {
+    list = window.matchMedia(query);
+    lists.set(query, list);
+  }
+  return list;
 }
 
-/** Whether a media query matches, kept up to date. */
+function matches(query: string): boolean {
+  return mediaList(query)?.matches ?? false;
+}
+
+/** Whether a media query matches, kept up to date. Subscribes once per query, not on every render. */
 export function useMediaQuery(query: string): boolean {
-  return useSyncExternalStore(
-    (listener) => {
-      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
-      const list = window.matchMedia(query);
-      list.addEventListener("change", listener);
-      return () => list.removeEventListener("change", listener);
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const list = mediaList(query);
+      list?.addEventListener("change", listener);
+      return () => list?.removeEventListener("change", listener);
     },
-    () => matches(query),
-    () => false,
+    [query],
   );
+  return useSyncExternalStore(subscribe, () => matches(query), () => false);
 }
 
 export function useReducedMotionPreference(): boolean {

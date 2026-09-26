@@ -6,7 +6,8 @@ import { EASE, useReducedMotionPreference } from "../theme/motion";
 
 type Props = {
   value: number;
-  /** Digits after the point (default 0). Ignored when `format` is given. */
+  /** Digits after the point (default 0). The values shown while counting are rounded to these too, so `format`
+   * only ever sees numbers like the final one (whole minutes stay whole). */
   decimals?: number;
   format?: (value: number) => string;
   /** Seconds (default 0.8). */
@@ -16,13 +17,12 @@ type Props = {
 
 export default function AnimatedNumber({ value, decimals = 0, format, duration = 0.8, className }: Props) {
   const reduced = useReducedMotionPreference();
-  const [shown, setShown] = useState(reduced ? value : 0);
+  const [counted, setCounted] = useState(reduced ? value : 0);
   const from = useRef(reduced ? value : 0);
 
   useEffect(() => {
     if (reduced) {
       from.current = value;
-      setShown(value);
       return;
     }
     const controls = animate(from.current, value, {
@@ -30,14 +30,18 @@ export default function AnimatedNumber({ value, decimals = 0, format, duration =
       ease: EASE,
       onUpdate: (current) => {
         from.current = current;
-        setShown(current);
+        setCounted(current);
       },
     });
     return () => controls.stop();
   }, [value, reduced, duration]);
 
+  const scale = 10 ** decimals;
+  const round = (number: number) => Math.round(number * scale) / scale;
   const text = (number: number) =>
-    format ? format(number) : number.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    format ? format(round(number)) : round(number).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  // Under reduced motion the value itself is shown, not a counter that would catch up a frame later.
+  const shown = reduced ? value : counted;
   return (
     <span className={`number${className ? ` ${className}` : ""}`}>
       <span aria-hidden="true">{text(shown)}</span>

@@ -35,7 +35,8 @@ button { font: inherit; color: inherit; }
 
 .app { min-height: 100vh; }
 .main-column { min-width: 0; }
-main { padding: var(--space-4); max-width: 1180px; margin: 0 auto; outline: none; }
+main { padding: var(--space-4); max-width: 1180px; margin: 0 auto; }
+main:focus-visible { outline: none; } /* focused by the skip link: no ring around the whole page */
 .brand {
   display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--touch);
   color: var(--text); font-weight: 800; font-size: var(--text-lg); text-decoration: none; letter-spacing: -0.01em;
@@ -213,7 +214,7 @@ main { padding: var(--space-4); max-width: 1180px; margin: 0 auto; outline: none
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent-ink); }
 .tab-underline { position: absolute; left: var(--space-2); right: var(--space-2); bottom: -1px; height: 3px; border-radius: 3px; background: var(--accent); }
-.tabpanel { outline: none; touch-action: pan-y; }
+.tabpanel { border-radius: var(--radius-sm); } /* focusable: it keeps the focus ring */
 
 /* --- skeletons ------------------------------------------------------------------------------------------------- */
 
@@ -227,12 +228,16 @@ main { padding: var(--space-4); max-width: 1180px; margin: 0 auto; outline: none
 
 /* --- notices and toasts ---------------------------------------------------------------------------------------- */
 
+/* Notices line up with the page's content column (main's width minus its padding). */
 .notice {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
-  margin: var(--space-3) var(--space-4) 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--border);
+  width: calc(100% - 2 * var(--space-4)); max-width: calc(1180px - 2 * var(--space-4));
+  margin: var(--space-3) auto 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface);
 }
-@media (min-width: 1024px) { .notice { margin: var(--space-4) var(--space-6) 0; } }
+@media (min-width: 1024px) {
+  .notice { width: calc(100% - 2 * var(--space-6)); max-width: calc(1180px - 2 * var(--space-6)); margin-top: var(--space-4); }
+}
 .notice.bad { border-color: var(--bad); }
 .notice a, .notice button {
   min-height: var(--touch); padding: 0 var(--space-2); color: var(--accent-ink); font-weight: 700; background: none;

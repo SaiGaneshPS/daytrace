@@ -3,10 +3,11 @@
 // - A proper tablist: arrow keys move between tabs (wrapping), Home and End jump, only the selected tab is in the
 //   tab order, and each panel is labelled by its tab.
 // - The underline glides to the selected tab, and the panel slides in from the side you moved to.
-// - On touch screens, swiping the panel left or right moves to the next or previous tab.
+// - On touch screens, swiping the panel left or right moves to the next or previous tab. A swipe never starts on a
+//   chart (or anything marked data-no-swipe), so a finger can scrub a chart inside a tab; pinch-zoom always works.
 // - Controlled (`value` + `onChange`) or not.
-import { AnimatePresence, motion } from "motion/react";
-import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
+import { AnimatePresence, motion, useDragControls } from "motion/react";
+import { type KeyboardEvent, type PointerEvent, type ReactNode, useId, useRef, useState } from "react";
 import { slideVariants, spring, useMediaQuery } from "../theme/motion";
 
 export type TabItem = { id: string; label: ReactNode; content: ReactNode };
@@ -29,6 +30,7 @@ export default function Tabs({ tabs, label, value, onChange, className }: Props)
   const [direction, setDirection] = useState(1);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const touch = useMediaQuery("(pointer: coarse)");
+  const drag = useDragControls();
   const selectedId = value ?? own;
   const index = Math.max(0, tabs.findIndex((tab) => tab.id === selectedId));
   const selected = tabs[index];
@@ -53,6 +55,10 @@ export default function Tabs({ tabs, label, value, onChange, className }: Props)
       event.preventDefault();
       choose(moves[event.key], true);
     }
+  };
+
+  const startSwipe = (event: PointerEvent<HTMLDivElement>) => {
+    if (touch && tabs.length > 1 && !(event.target as Element).closest(".chart, [data-no-swipe]")) drag.start(event);
   };
 
   if (!selected) return null;
@@ -96,6 +102,10 @@ export default function Tabs({ tabs, label, value, onChange, className }: Props)
           animate="enter"
           exit="exit"
           drag={touch && tabs.length > 1 ? "x" : false}
+          dragControls={drag}
+          dragListener={false}
+          onPointerDown={startSwipe}
+          style={{ touchAction: "pan-y pinch-zoom" }}
           dragConstraints={{ left: 0, right: 0 }}
           dragElastic={0.25}
           dragDirectionLock

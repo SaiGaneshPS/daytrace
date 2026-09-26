@@ -4,7 +4,7 @@
 // Each page is filled in by its own ticket (Today DT-31, Devices DT-32, Story and Ask DT-33, Insights and Wrapped
 // DT-34, Privacy DT-36; Streaks joins with DT-54). /styleguide shows the design system (DT-52) and isn't in the menu.
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { type ReactNode, Suspense, lazy, useEffect, useState } from "react";
+import { Component, type ReactNode, Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { PAIRED_EVENT, UNPAIRED_EVENT, dismissToast, useApi, useToasts } from "./api/client";
 import BottomNav, { Icon, type NavItem } from "./components/BottomNav";
@@ -47,6 +47,31 @@ function Toasts() {
       ))}
     </div>
   );
+}
+
+/** A page that fails to load (the hub restarted with a new build, or can't be reached) shows this instead of
+ * blanking the app; the menus keep working. A loaded page that breaks lands here too. */
+class PageError extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <section className="card" role="alert">
+        <h1>This page couldn&apos;t load</h1>
+        <p className="muted">
+          The hub may have restarted with a new version, or it can&apos;t be reached right now. Reloading tries again.
+        </p>
+        <button type="button" className="button" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </section>
+    );
+  }
 }
 
 function PageLoading() {
@@ -143,23 +168,25 @@ function Shell() {
         <main id="content" tabIndex={-1}>
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={location.pathname} variants={pageVariants} initial="initial" animate="enter" exit="exit">
-              <Suspense fallback={<PageLoading />}>
-                <Routes location={location}>
-                  {pages.map((page) => (
-                    <Route key={page.path} path={page.path} element={page.element} />
-                  ))}
-                  <Route path="/styleguide" element={<Styleguide />} />
-                  <Route
-                    path="*"
-                    element={
-                      <section>
-                        <h1>Page not found</h1>
-                        <p className="muted">That page doesn&apos;t exist. Pick one from the menu.</p>
-                      </section>
-                    }
-                  />
-                </Routes>
-              </Suspense>
+              <PageError>
+                <Suspense fallback={<PageLoading />}>
+                  <Routes location={location}>
+                    {pages.map((page) => (
+                      <Route key={page.path} path={page.path} element={page.element} />
+                    ))}
+                    <Route path="/styleguide" element={<Styleguide />} />
+                    <Route
+                      path="*"
+                      element={
+                        <section>
+                          <h1>Page not found</h1>
+                          <p className="muted">That page doesn&apos;t exist. Pick one from the menu.</p>
+                        </section>
+                      }
+                    />
+                  </Routes>
+                </Suspense>
+              </PageError>
             </motion.div>
           </AnimatePresence>
         </main>

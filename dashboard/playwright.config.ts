@@ -1,10 +1,11 @@
-// DT-52: end-to-end tests of the built dashboard (`npm run test:e2e`). They run against `vite preview` with the hub's
-// API mocked in each test, so no hub is needed. Two screens: a 1440 px desktop and a 360 px touch phone.
-// Locally the installed Microsoft Edge is used (no browser download); CI installs Playwright's Chromium.
+// DT-52: end-to-end tests of the built dashboard (`npm run test:e2e`, after `npm run build`). They run against
+// `vite preview` with the hub's API mocked in each test, so no hub is needed. Two screens: a 1440 px desktop and a
+// 360 px touch phone. On Windows the installed Microsoft Edge is used (no browser download); elsewhere, and in CI,
+// Playwright's own Chromium (`npx playwright install chromium` once).
 import { defineConfig } from "@playwright/test";
 
-const env = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env;
-const ci = Boolean(env.CI);
+const ci = Boolean(process.env.CI);
+const edge = !ci && process.platform === "win32";
 
 export default defineConfig({
   testDir: "e2e",
@@ -15,7 +16,7 @@ export default defineConfig({
   reporter: ci ? [["github"], ["list"]] : "list",
   use: {
     baseURL: "http://localhost:4173",
-    channel: ci ? undefined : "msedge",
+    channel: edge ? "msedge" : undefined,
     serviceWorkers: "block", // the tests mock the API; a service worker would answer before the mocks
     trace: "retain-on-failure",
   },

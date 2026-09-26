@@ -4,10 +4,12 @@
 // - the category palette, the app's font, rounded bars, soft dashed grid lines, a card-like tooltip;
 // - animated entrances and updates, switched off under reduced motion;
 // - never color alone: each category has its own pattern (an ECharts decal), and ECharts' aria module describes
-//   the chart to screen readers. Pages still label their marks.
+//   the chart to screen readers (the label names it, even with no data). Pages still label their marks.
 //
-// useEChart(option, label) gives a ref for a <div>: it makes the chart, follows the color scheme, resizes with its
-// box and cleans up. Only the chart types and components below are bundled.
+// useEChart(option, label) gives a ref for a <div>: it makes the chart whenever the div mounts (also after a
+// loading skeleton), follows the color scheme, resizes with its box and cleans up. Colors in an option may be
+// written as "var(--token)" (categoryStyle does): they are read again whenever the scheme changes, so a chart never
+// keeps the other theme's colors. Only the chart types and components below are bundled.
 import { BarChart, CustomChart, LineChart, PieChart, ScatterChart } from "echarts/charts";
 import {
   AriaComponent,
@@ -19,7 +21,7 @@ import {
 } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMediaQuery, useReducedMotionPreference } from "./motion";
 
 echarts.use([
@@ -81,10 +83,25 @@ export function categoryInk(category: string | null | undefined): string {
   return token(`--cat-${asCategory(category)}-ink`, "#475569");
 }
 
-/** itemStyle for a mark of this category: its color and its pattern. */
+/** itemStyle for a mark of this category: its color (a token, resolved by useEChart) and its pattern. */
 export function categoryStyle(category: string | null | undefined): Record<string, unknown> {
   const name = asCategory(category);
-  return { color: categoryColor(name), decal: CATEGORY_DECALS[name] };
+  return { color: `var(--cat-${name})`, decal: CATEGORY_DECALS[name] };
+}
+
+const TOKEN_REFERENCE = /^var\((--[\w-]+)\)$/;
+
+/** The option with every "var(--token)" string replaced by the token's current value. */
+export function resolveTokens<T>(value: T): T {
+  if (typeof value === "string") {
+    const match = TOKEN_REFERENCE.exec(value);
+    return (match ? token(match[1], value) : value) as T;
+  }
+  if (Array.isArray(value)) return value.map((item) => resolveTokens(item)) as T;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolveTokens(item)])) as T;
+  }
+  return value; // functions (formatters), dates, numbers
 }
 
 /** The ECharts theme for the current color scheme. */
@@ -137,40 +154,45 @@ function useScheme(): "light" | "dark" {
 }
 
 /** A ref for a chart's <div>. `label` names the chart for screen readers; `option` may be null while loading. */
-export function useEChart(option: ChartOption | null, label: string) {
-  const element = useRef<HTMLDivElement>(null);
-  const chart = useRef<echarts.ECharts | null>(null);
+export function useEChart(option: ChartOption | null, label: string): (box: HTMLDivElement | null) => void {
+  // A callback ref: the chart is made when the div mounts, whenever that is, and remade if it is replaced.
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const [chart, setChart] = useState<echarts.ECharts | null>(null);
   const scheme = useScheme();
   const reduced = useReducedMotionPreference();
 
   useEffect(() => {
-    const box = element.current;
     if (!box) return;
     const name = `daytrace-${scheme}`;
     echarts.registerTheme(name, chartTheme()); // read again: the tokens differ per scheme
     const instance = echarts.init(box, name, { renderer: "canvas" });
-    chart.current = instance;
+    setChart(instance);
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(box);
     return () => {
       observer.disconnect();
       instance.dispose();
-      chart.current = null;
+      setChart(null);
     };
-  }, [scheme]);
+  }, [box, scheme]);
 
   useEffect(() => {
-    if (!chart.current || !option) return;
-    chart.current.setOption(
-      {
-        animation: !reduced,
-        // The label names the chart; ECharts then describes its series and values after it.
-        aria: { enabled: true, label: { general: { withoutTitle: `${label}. ` } }, decal: { show: true } },
+    if (!box || !chart || !option) return;
+    // A name even when ECharts adds no description (no series), replacing any stale one; with data, ECharts'
+    // description (which starts with this label) takes its place.
+    box.setAttribute("role", "img");
+    box.setAttribute("aria-label", label);
+    const aria = (option.aria as Record<string, unknown> | undefined) ?? {};
+    chart.setOption(
+      resolveTokens({
         ...option,
-      },
+        // Set after the page's option, so no page can switch these off.
+        animation: reduced ? false : (option.animation ?? true),
+        aria: { ...aria, enabled: true, label: { general: { withoutTitle: `${label}. ` } }, decal: { show: true } },
+      }),
       { notMerge: true },
     );
-  }, [option, label, reduced, scheme]);
+  }, [box, chart, option, label, reduced, scheme]);
 
-  return element;
+  return useCallback((element: HTMLDivElement | null) => setBox(element), []);
 }

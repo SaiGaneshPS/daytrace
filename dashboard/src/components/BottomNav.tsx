@@ -1,10 +1,11 @@
 // DT-52: the phone navigation: four pages and "More" at the bottom of the screen, within thumb reach, every target
-// at least 44 px. "More" opens a sheet with the other pages. Hidden on wide screens, where the sidebar takes over.
+// at least 44 px. "More" opens a sheet with the other pages: a real modal (focus stays in it, the page behind is
+// inert, Escape or the backdrop closes it). Hidden on wide screens, where the sidebar takes over.
 // The icons live here too, so the sidebar shows the same ones.
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router";
-import { EASE } from "../theme/motion";
+import { EASE, useMediaQuery } from "../theme/motion";
 
 export type IconName = "today" | "story" | "ask" | "insights" | "wrapped" | "devices" | "privacy" | "more";
 export type NavItem = { path: string; label: string; icon: IconName };
@@ -74,18 +75,47 @@ export default function BottomNav({ items }: { items: NavItem[] }) {
   const primary = items.slice(0, PRIMARY);
   const more = items.slice(PRIMARY);
   const inMore = more.some((item) => item.path === location.pathname);
+  const wide = useMediaQuery("(min-width: 1024px)");
+  const returnFocus = useRef(true); // back to More after Escape or the backdrop, not after going to a page
 
-  useEffect(() => setOpen(false), [location.pathname]);
+  useEffect(() => {
+    returnFocus.current = false;
+    setOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (wide) setOpen(false); // the sheet isn't shown on wide screens
+  }, [wide]);
 
   useEffect(() => {
     if (!open) return;
-    sheet.current?.querySelector<HTMLElement>("a")?.focus();
+    returnFocus.current = true;
+    const links = () => Array.from(sheet.current?.querySelectorAll<HTMLElement>("a") ?? []);
+    links()[0]?.focus();
+    const behind = document.querySelector(".main-column");
+    behind?.setAttribute("inert", "");
     const button = moreButton.current;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Tab") return;
+      const items = links();
+      const [first, last] = [items[0], items[items.length - 1]];
+      if (!items.includes(document.activeElement as HTMLElement)) {
+        event.preventDefault();
+        first?.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      button?.focus();
+      behind?.removeAttribute("inert");
+      if (returnFocus.current) button?.focus();
     };
   }, [open]);
 
