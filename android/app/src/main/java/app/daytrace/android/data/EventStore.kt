@@ -1,12 +1,10 @@
-// DT-20 / DT-21: event store used by all collectors. DT-21 moves it to Room (numbered events with a synced flag);
-// until then events are appended to a JSON-lines file, so nothing collected is lost between runs.
+// DT-20 / DT-21: the event store every collector writes to. Events wait in the phone's database (Room), numbered
+// for the hub, until the hub has them. Events collected before DT-21 (a JSON-lines file) are moved in on first use.
 package app.daytrace.android.data
 
 import android.content.Context
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
-import java.io.RandomAccessFile
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -24,6 +22,7 @@ data class PhoneEvent(
     /** The same moment collected twice gives the same key, so a repeated collection never adds time twice. */
     val key: String get() = "$kind|$startMs|${appId ?: app.orEmpty()}"
 
+    /** The JSON-lines format of the store before DT-21 (read once to move old events into the database). */
     fun toStoredJson(): JSONObject = JSONObject()
         .put("kind", kind)
         .put("source", source)
@@ -52,56 +51,133 @@ data class PhoneEvent(
     }
 }
 
-class EventStore(private val file: File) {
-    /**
-     * Appends in one write and waits until it is on disk (fsync), so a checkpoint saved afterwards never gets ahead
-     * of the events it covers. A line cut off by a crash is closed off first, so it cannot swallow the next event.
-     */
-    @Synchronized
-    fun add(events: List<PhoneEvent>) {
-        if (events.isEmpty()) return
-        file.parentFile?.mkdirs()
-        val text = buildString {
-            if (endsMidLine()) append(NEWLINE)
-            events.forEach { append(it.toStoredJson().toString()).append(NEWLINE) }
-        }
-        FileOutputStream(file, true).use { out ->
-            out.write(text.toByteArray(Charsets.UTF_8))
-            out.fd.sync()
-        }
-    }
+/** How many events are still on their way to the hub, and how many it refused. */
+data class StoreCounts(val waiting: Int, val refused: Int)
+
+class EventStore(private val db: AppDatabase, private val legacyFile: File? = null) {
+    private val dao = db.events()
+    @Volatile private var legacyMoved = legacyFile == null
 
     /**
-     * Every stored event once, in time order. A collection repeated after a crash stores the same session again
-     * with an end at least as late, so the copy that ends last is kept.
+     * Stores newly collected events, each with the next seq. The same moment collected again (a collection
+     * repeated after a crash) is kept once: if the new copy ends later, the stored one is extended and queued
+     * again under a new seq, so the hub replaces its copy; otherwise nothing changes. Returns how many events
+     * were added or extended. Commits are on disk before this returns (see AppDatabase).
      */
-    @Synchronized
-    fun all(): List<PhoneEvent> {
-        if (!file.exists()) return emptyList()
-        val byKey = LinkedHashMap<String, PhoneEvent>()
-        file.forEachLine { line ->
-            val event = runCatching { PhoneEvent.fromStoredJson(JSONObject(line)) }.getOrNull() ?: return@forEachLine
-            val kept = byKey[event.key]
-            if (kept == null || (event.endMs ?: Long.MIN_VALUE) > (kept.endMs ?: Long.MIN_VALUE)) byKey[event.key] = event
-        }
-        return byKey.values.sortedBy { it.startMs }
+    fun add(events: List<PhoneEvent>, zone: ZoneId = ZoneId.systemDefault()): Int {
+        moveLegacyEvents()
+        return transaction { addNow(events, zone.id) }
     }
 
-    private fun endsMidLine(): Boolean {
-        if (!file.exists() || file.length() == 0L) return false
-        RandomAccessFile(file, "r").use { raf ->
-            raf.seek(file.length() - 1)
-            return raf.read() != NEWLINE.code
+    /** App sessions that end after [afterMs], oldest first (today's summary on the status screen). */
+    fun sessionsEndingAfter(afterMs: Long): List<PhoneEvent> {
+        moveLegacyEvents()
+        return dao.sessionsEndingAfter(afterMs).map { it.toPhoneEvent() }
+    }
+
+    /** The next events to send, lowest seq first. */
+    fun pending(limit: Int): List<EventEntity> {
+        moveLegacyEvents()
+        return dao.pending(limit)
+    }
+
+    fun counts(): StoreCounts {
+        moveLegacyEvents()
+        return StoreCounts(waiting = dao.count(SyncState.PENDING), refused = dao.count(SyncState.REJECTED))
+    }
+
+    /** The hub stored these. An event that changed since it was read (it has a new seq) stays queued. */
+    fun markSynced(events: List<EventEntity>): Int = transaction { events.sumOf { dao.markSynced(it.id, it.seq) } }
+
+    fun markRejected(event: EventEntity, reason: String): Int = dao.markRejected(event.id, event.seq, reason.take(500))
+
+    /**
+     * The hub already holds seqs up to [hubLastSeq] for this device (a reinstall starts counting from 0 again).
+     * From now on every seq is higher, and queued events at or below it get new numbers above it, so the hub
+     * treats them as the newest copies.
+     */
+    fun raiseSeqFloor(hubLastSeq: Long) = transaction { renumberNow(dao.pendingUpTo(hubLastSeq), hubLastSeq) }
+
+    /** New numbers above [hubLastSeq] (and above every seq on the phone) for these still-queued events. */
+    fun renumber(events: List<EventEntity>, hubLastSeq: Long?) = transaction { renumberNow(events, hubLastSeq) }
+
+    private fun addNow(events: List<PhoneEvent>, zone: String): Int {
+        var next = nextSeq()
+        var changed = 0
+        for (event in events) {
+            val stored = dao.byKey(event.key)
+            if (stored == null) {
+                dao.insert(
+                    EventEntity(
+                        seq = next++, key = event.key, kind = event.kind, source = event.source, startMs = event.startMs,
+                        endMs = event.endMs, app = event.app, appId = event.appId, zone = zone,
+                    ),
+                )
+                changed++
+            } else if ((event.endMs ?: Long.MIN_VALUE) > (stored.endMs ?: Long.MIN_VALUE)) {
+                dao.update(
+                    stored.copy(
+                        seq = next++, endMs = event.endMs, app = event.app ?: stored.app, zone = zone,
+                        state = SyncState.PENDING, rejectReason = null,
+                    ),
+                )
+                changed++
+            }
+        }
+        return changed
+    }
+
+    private fun renumberNow(events: List<EventEntity>, hubLastSeq: Long?) {
+        if (hubLastSeq != null && (dao.meta(SEQ_FLOOR) ?: 0) <= hubLastSeq) dao.setMeta(MetaEntry(SEQ_FLOOR, hubLastSeq + 1))
+        var next = nextSeq()
+        events.forEach { if (dao.renumber(it.id, it.seq, next) > 0) next++ }
+    }
+
+    private fun nextSeq(): Long = maxOf((dao.maxSeq() ?: -1) + 1, dao.meta(SEQ_FLOOR) ?: 0)
+
+    private fun <T> transaction(body: () -> T): T = db.runInTransaction<T> { body() }
+
+    /**
+     * Moves the events stored before DT-21 into the database, once. The file is deleted only after the events
+     * are committed; if the app stops in between, the next start moves them again and their keys keep them from
+     * being stored twice.
+     */
+    private fun moveLegacyEvents() {
+        if (legacyMoved) return
+        synchronized(this) {
+            if (legacyMoved) return
+            val file = legacyFile!!
+            if (file.exists()) {
+                val events = readLegacy(file)
+                transaction { addNow(events, ZoneId.systemDefault().id) }
+                file.delete()
+            }
+            legacyMoved = true
         }
     }
 
     companion object {
-        private const val NEWLINE = '\n'
+        private const val SEQ_FLOOR = "seq_floor"
+        const val LEGACY_FILE = "events-pending.jsonl"
 
         @Volatile private var instance: EventStore? = null
 
         fun get(context: Context): EventStore = instance ?: synchronized(this) {
-            instance ?: EventStore(File(context.filesDir, "events-pending.jsonl")).also { instance = it }
+            instance ?: EventStore(AppDatabase.get(context), File(context.filesDir, LEGACY_FILE)).also { instance = it }
+        }
+
+        /**
+         * Every event in the old file once, in time order. A line cut off by a crash is skipped, and of two copies
+         * of the same event (a collection repeated after a crash) the one that ends last is kept.
+         */
+        fun readLegacy(file: File): List<PhoneEvent> {
+            val byKey = LinkedHashMap<String, PhoneEvent>()
+            file.forEachLine { line ->
+                val event = runCatching { PhoneEvent.fromStoredJson(JSONObject(line)) }.getOrNull() ?: return@forEachLine
+                val kept = byKey[event.key]
+                if (kept == null || (event.endMs ?: Long.MIN_VALUE) > (kept.endMs ?: Long.MIN_VALUE)) byKey[event.key] = event
+            }
+            return byKey.values.sortedBy { it.startMs }
         }
     }
 }
