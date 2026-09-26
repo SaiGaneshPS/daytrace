@@ -22,9 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="start the hub (DT-10)")
     run.add_argument("--profile", choices=PROFILES, default="personal")
 
-    seed = sub.add_parser("seed", help="generate demo data (DT-15)")
+    seed = sub.add_parser("seed", help="fill a demo profile with 14 days of believable data (DT-15)")
     seed.add_argument("--profile", choices=PROFILES, default="demo")
     seed.add_argument("--days", type=int, default=14)
+    seed.add_argument("--tz", default=None, help="IANA time zone for the demo days (default: this computer's)")
 
     tracker = sub.add_parser("tracker", help="run only the desktop activity tracker (DT-16)")
     tracker.add_argument("--profile", choices=PROFILES, default="personal")
@@ -39,8 +40,33 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "run":
         return run(args.profile)
+    if args.command == "seed":
+        return seed(args.profile, args.days, args.tz)
     print(f"'{args.command}' is not implemented yet. See its ticket.", file=sys.stderr)
     return 2
+
+
+def seed(profile_name: str, days: int, tz_name: str | None) -> int:
+    """Replace a demo profile's seed data. The personal profile (real data) is refused."""
+    from zoneinfo import ZoneInfo
+
+    from .api.timeline import local_zone_name
+    from .db import Database
+    from .seed import seed as fill
+
+    settings = load_settings(profile_name)
+    zone_name = tz_name or local_zone_name()
+    try:
+        result = fill(Database(settings.database_path), profile_name, days, ZoneInfo(zone_name))
+    except (ValueError, KeyError, OSError) as error:  # refused profile, bad day count, unknown zone
+        print(f"Not seeded: {error}", file=sys.stderr)
+        return 2
+    print(f"Seeded the {profile_name} profile: {result.first_day} to {result.last_day} ({zone_name}),"
+          f" {result.total} events")
+    for device_id, count in result.events.items():
+        print(f"  {device_id}: {count}")
+    print(f"  Database: {settings.database_path}")
+    return 0
 
 
 def run(profile_name: str) -> int:
