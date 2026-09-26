@@ -218,21 +218,30 @@ announced (mDNS does not cross Tailscale).
 ### GET /timeline?date=2026-09-25&tz=America/Toronto
 
 Any paired device's token, or no token from the hub computer. `date` defaults to today in `tz`; `tz` defaults
-to the hub computer's current offset. Unknown time zones get `400`, impossible dates `422`.
+to the hub computer's IANA time zone (sent back in `tz`). Unknown time zones and dates outside 1970-01-01 to
+9998-12-31 get `400`, impossible dates such as `2026-02-30` get `422`.
+
+Example with two devices (the `...` stands for more sessions of the same shape):
 
 ```json
 {
   "date": "2026-09-25", "tz": "America/Toronto",
-  "lanes": [ { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true,
-    "seconds": 4500, "minutes": 75.0,
-    "sessions": [ { "start": "2026-09-25T09:00:00-04:00", "end": "2026-09-25T09:40:00-04:00", "seconds": 2400,
-      "minutes": 40.0, "app": "Code", "app_id": null, "title": "stats.py", "category": "work", "kind": "app",
-      "estimated": false } ] } ],
-  "calendar": [ { "start": "...", "end": "...", "title": "Study: algorithms", "all_day": false, "device_id": "iphone-1" } ],
-  "sleep": [ { "start": "...", "end": "...", "minutes": 445.0, "stage": "asleep", "estimated": false, "device_id": "iphone-1" } ],
-  "meals": [ { "time": "...", "items": ["roti", "dal"], "text": null, "meal_type": "dinner", "device_id": "iphone-1" } ],
-  "totals": { "seconds": 10500, "minutes": 175.0, "by_device": { "windows-1": 75.0, "android-1": 35.0 },
-    "any_screen_seconds": 9900, "any_screen_minutes": 165.0 },
+  "lanes": [
+    { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true, "seconds": 4500, "minutes": 75.0,
+      "sessions": [ { "start": "2026-09-25T09:00:00-04:00", "end": "2026-09-25T09:40:00-04:00", "seconds": 2400,
+        "minutes": 40.0, "app": "Code", "app_id": null, "title": "stats.py", "category": "work", "kind": "app",
+        "estimated": false }, "..." ] },
+    { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "counted": true, "seconds": 2100, "minutes": 35.0,
+      "sessions": [ "..." ] } ],
+  "calendar": [ { "start": "2026-09-25T15:00:00-04:00", "end": "2026-09-25T17:00:00-04:00", "title": "Study: algorithms",
+    "all_day": false, "device_id": "iphone-1" } ],
+  "sleep": [ { "start": "2026-09-24T23:40:00-04:00", "end": "2026-09-25T07:05:00-04:00", "minutes": 445.0,
+    "stage": "asleep", "estimated": false, "device_id": "iphone-1" } ],
+  "meals": [ { "time": "2026-09-25T19:30:00-04:00", "items": ["roti", "dal"], "text": null, "meal_type": "dinner",
+    "device_id": "iphone-1" } ],
+  "totals": { "seconds": 6600, "minutes": 110.0,
+    "by_device_seconds": { "windows-1": 4500, "android-1": 2100 }, "by_device": { "windows-1": 75.0, "android-1": 35.0 },
+    "any_screen_seconds": 6000, "any_screen_minutes": 100.0, "sleep_seconds": 26700, "sleep_minutes": 445.0 },
   "meta": { "unit": "minutes", "range": { "start": "2026-09-25T00:00:00-04:00", "end": "2026-09-26T00:00:00-04:00",
     "tz": "America/Toronto" }, "source": "real", "estimated": false }
 }
@@ -241,22 +250,28 @@ to the hub computer's current offset. Unknown time zones get `400`, impossible d
 How the numbers are made (`hub/daytrace_hub/sessions.py`):
 
 - The day runs from local midnight to local midnight in `tz`, so DST days are 23 or 25 hours and sessions are
-  split at local midnight.
-- iPhone `app_open` / `app_close` pairs become sessions. An open with no close ends at the device's next
-  event or after 30 minutes and is marked `estimated`. An open and close more than 6 hours apart count as a
-  missed close.
+  split at local midnight. Nothing after the current time is counted.
+- iPhone `app_open` / `app_close` pairs become sessions, ending early if a `screen_off` came first. An open with
+  no close ends at the device's next screen event (another open or close, screen on or off; not a calendar
+  entry or a health sync) or after 30 minutes, and is marked `estimated`. An open and close more than 6 hours
+  apart count as a missed close.
 - Desktop readings of the same app and title at most 5 s apart are merged; phone usage stats are used exactly.
 - On one device, overlapping sessions never double count: the most recently started app owns the screen, and
   an app it covered continues afterwards. AFK periods are cut out.
-- Every duration is whole seconds; `minutes` is rounded from seconds for display. `lane.seconds` is exactly
-  the sum of its sessions, and `totals.seconds` exactly the sum of the counted lanes (DT-59 checks this).
-- `totals` adds up screen time per device. `any_screen_seconds` is the time at least one screen was in use.
+- Session boundaries are snapped to whole seconds, so every total is whole seconds and adds up exactly:
+  `lane.seconds` is the sum of its sessions, `totals.seconds` the sum of the counted lanes (and of
+  `by_device_seconds`), and `any_screen_seconds` can never exceed `totals.seconds` (DT-59 checks this).
+  **Do arithmetic with the `seconds` fields.** Every `minutes` field is rounded to 2 decimals on its own for
+  display, so rounded minutes can differ from a sum of rounded minutes by 0.01 per item.
+- `totals` adds up screen time per device; `any_screen_seconds` is the time at least one screen was in use.
   Browser-extension lanes (`counted: false`) show which sites were open, but that time is already in the
   desktop lane, so they are not added.
 - `calendar` lists events overlapping the day (once, even when two phones sync the same calendar). `sleep`
-  lists sleep that **ended** on this day, at full length, so last night's sleep shows on this morning.
-- `meta.source` is `seed`, `real` or `mixed` over the events behind the day. `meta.estimated` is true when
-  any session end or sleep entry was inferred.
+  lists sleep that **ended** on this day, at full length, so last night's sleep shows on this morning; the
+  same entry from two phones is listed once. `totals.sleep_seconds` counts time asleep once, however many
+  stages or copies overlap, and leaves out `in_bed` and `awake`.
+- `meta.source` is `seed`, `real` or `mixed` over every event that shaped the day (sessions, AFK cuts, lanes).
+  `meta.estimated` is true when any session end or sleep entry was inferred.
 
 ### Categories
 

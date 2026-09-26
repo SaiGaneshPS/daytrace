@@ -1,21 +1,28 @@
 """Tests for DT-13: the timeline endpoint."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
 
+from daytrace_hub.api import timeline as timeline_api
 from daytrace_hub.api.events import store_events
-from daytrace_hub.api.timeline import day_window
+from daytrace_hub.api.timeline import day_window, local_zone_name
 from daytrace_hub.auth import register_device
 from daytrace_hub.db import Database, transaction
 from daytrace_hub.models import Event
 
 TORONTO = "America/Toronto"
 PHONE = ("192.168.1.50", 40000)
+LATER = datetime(2030, 1, 1, tzinfo=UTC)  # tests look back at days that are fully over
+
+
+@pytest.fixture(autouse=True)
+def _days_are_in_the_past(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(timeline_api, "current_time", lambda: LATER)
 
 
 def add(db: Database, device_id: str, device_type: str, events: list[dict[str, Any]], name: str | None = None) -> str:
@@ -92,6 +99,20 @@ def test_lane_and_total_seconds_add_up_exactly(client: TestClient, db: Database)
         assert lane["seconds"] == sum(s["seconds"] for s in lane["sessions"])
         assert lane["minutes"] == round(lane["seconds"] / 60, 2)
     assert body["totals"]["seconds"] == sum(lane["seconds"] for lane in body["lanes"] if lane["counted"])
+    assert body["totals"]["seconds"] == sum(body["totals"]["by_device_seconds"].values())
+
+
+def test_any_screen_time_never_exceeds_total_screen_time(client: TestClient, db: Database) -> None:
+    # Ten 1.4 s sessions: boundaries are snapped to whole seconds before anything is added up.
+    base = datetime(2026, 9, 25, 14, 0, tzinfo=UTC)
+    add(db, "android-1", "android", [
+        span("app_session", (base + timedelta(seconds=5 * n)).isoformat(),
+             (base + timedelta(seconds=5 * n, milliseconds=1400)).isoformat(), "X", source="usagestats", seq=n)
+        for n in range(10)
+    ])
+    totals = get(client, "2026-09-25")["totals"]
+    assert totals["any_screen_seconds"] <= totals["seconds"]
+    assert totals["seconds"] == 10
 
 
 def test_time_on_two_screens_at_once_counts_once_in_any_screen(client: TestClient, db: Database) -> None:
@@ -143,7 +164,10 @@ def test_browser_lanes_are_shown_but_not_added_to_totals(client: TestClient, db:
 def test_an_empty_day(client: TestClient) -> None:
     body = get(client, "2026-09-25")
     assert body["lanes"] == [] and body["calendar"] == [] and body["sleep"] == [] and body["meals"] == []
-    assert body["totals"] == {"seconds": 0, "minutes": 0.0, "by_device": {}, "any_screen_seconds": 0, "any_screen_minutes": 0.0}
+    assert body["totals"] == {
+        "seconds": 0, "minutes": 0.0, "by_device_seconds": {}, "by_device": {},
+        "any_screen_seconds": 0, "any_screen_minutes": 0.0, "sleep_seconds": 0, "sleep_minutes": 0.0,
+    }
     assert body["meta"]["source"] == "real"
 
 
@@ -224,6 +248,30 @@ def test_meals_are_listed(client: TestClient, db: Database) -> None:
 # --- accuracy signals -----------------------------------------------------------------------------------------
 
 
+def test_seed_afk_that_changes_the_numbers_makes_the_source_mixed(client: TestClient, db: Database) -> None:
+    add(db, "windows-1", "windows", [
+        span("window", "2026-09-25T10:00:00-04:00", "2026-09-25T11:00:00-04:00", "Code"),
+        span("afk", "2026-09-25T10:00:00-04:00", "2026-09-25T10:59:00-04:00", source="seed"),
+    ])
+    body = get(client, "2026-09-25")
+    assert body["totals"]["seconds"] == 60
+    assert body["meta"]["source"] == "mixed"
+
+
+def test_overlapping_sleep_stages_and_copies_are_counted_once(client: TestClient, db: Database) -> None:
+    night = [
+        span("sleep", "2026-09-24T23:00:00-04:00", "2026-09-25T07:00:00-04:00", source="healthkit",
+             data={"stage": "in_bed"}, external_id="sleep:bed"),
+        span("sleep", "2026-09-24T23:20:00-04:00", "2026-09-25T06:50:00-04:00", source="healthkit",
+             data={"stage": "asleep"}, external_id="sleep:asleep"),
+    ]
+    add(db, "iphone-1", "ios", night)
+    add(db, "android-1", "android", night)  # the same night from the other phone
+    body = get(client, "2026-09-25")
+    assert [s["stage"] for s in body["sleep"]] == ["in_bed", "asleep"]
+    assert body["totals"]["sleep_seconds"] == 450 * 60  # asleep only, once
+
+
 def test_the_source_says_when_numbers_come_from_seed_data(client: TestClient, db: Database) -> None:
     add(db, "android-1", "android", [
         span("app_session", "2026-09-25T08:00:00-04:00", "2026-09-25T08:10:00-04:00", "Instagram", source="seed", seq=1),
@@ -243,13 +291,80 @@ def test_an_inferred_iphone_session_marks_the_day_as_estimated(client: TestClien
     assert body["meta"]["estimated"] is True
 
 
+def test_nothing_after_now_is_counted(client: TestClient, db: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime.fromisoformat("2026-09-25T21:21:39-04:00")
+    monkeypatch.setattr(timeline_api, "current_time", lambda: now.astimezone(UTC))
+    add(db, "iphone-1", "ios", [point("app_open", "2026-09-25T21:19:39-04:00", "TikTok")])  # no close yet
+    body = get(client, "2026-09-25")
+    assert body["totals"]["seconds"] == 120  # not 30 minutes into the future
+    assert get(client, "2026-09-26")["totals"]["seconds"] == 0
+
+
+def test_a_close_hours_after_midnight_still_pairs_for_the_first_day(client: TestClient, db: Database) -> None:
+    add(db, "iphone-1", "ios", [
+        point("app_open", "2026-09-25T23:00:00-04:00", "TikTok"),
+        point("app_close", "2026-09-26T00:45:00-04:00", "TikTok"),
+    ])
+    today = get(client, "2026-09-25")
+    assert today["totals"]["seconds"] == 3600
+    assert today["meta"]["estimated"] is False
+    assert get(client, "2026-09-26")["totals"]["seconds"] == 45 * 60
+
+
+def test_a_health_sync_does_not_end_an_iphone_session(client: TestClient, db: Database) -> None:
+    add(db, "iphone-1", "ios", [
+        point("app_open", "2026-09-25T14:50:00-04:00", "TikTok"),
+        span("calendar_event", "2026-09-25T14:51:00-04:00", "2026-09-25T15:30:00-04:00", source="calendar",
+             title="Call", external_id="cal:9"),
+    ])
+    assert get(client, "2026-09-25")["totals"]["seconds"] == 30 * 60
+
+
+def test_the_screen_turning_off_ends_a_paired_session(client: TestClient, db: Database) -> None:
+    add(db, "iphone-1", "ios", [
+        point("app_open", "2026-09-25T10:00:00-04:00", "YouTube"),
+        point("screen_off", "2026-09-25T10:04:00-04:00"),
+        point("app_close", "2026-09-25T15:00:00-04:00", "YouTube"),
+    ])
+    session = get(client, "2026-09-25")["lanes"][0]["sessions"][0]
+    assert (session["seconds"], session["estimated"]) == (240, False)
+
+
+def test_old_history_is_not_loaded_for_a_day(db: Database) -> None:
+    from daytrace_hub.sessions import load_events
+
+    add(db, "android-1", "android", [
+        span("app_session", "2026-09-20T10:00:00-04:00", "2026-09-20T10:10:00-04:00", "Old", source="usagestats", seq=1),
+        span("app_session", "2026-09-25T10:00:00-04:00", "2026-09-25T10:10:00-04:00", "Today", source="usagestats", seq=2),
+    ])
+    start, end = day_window(date(2026, 9, 25), ZoneInfo(TORONTO))
+    with db.connect() as conn:
+        assert [e.app for e in load_events(conn, start, end)] == ["Today"]
+        plan = " ".join(str(tuple(row)) for row in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT id FROM events INDEXED BY events_by_end WHERE end_utc > ? AND start_utc < ?",
+            ("2026-09-25", "2026-09-26"),
+        ))
+    assert "events_by_end" in plan
+
+
 # --- parameters and access ------------------------------------------------------------------------------------
 
 
 def test_date_and_time_zone_default_to_today_here(client: TestClient) -> None:
     response = client.get("/api/v1/timeline")
     assert response.status_code == 200
-    assert response.json()["date"] == datetime.now().astimezone().date().isoformat()
+    body = response.json()
+    zone = local_zone_name()
+    assert body["tz"] == zone  # an IANA name the dashboard can send back
+    assert body["date"] == LATER.astimezone(ZoneInfo(zone)).date().isoformat()
+
+
+def test_the_default_zone_follows_dst_on_other_dates(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(timeline_api, "local_zone_name", lambda: "America/St_Johns")
+    summer = client.get("/api/v1/timeline", params={"date": "2026-07-15"}).json()["meta"]["range"]
+    winter = client.get("/api/v1/timeline", params={"date": "2026-01-15"}).json()["meta"]["range"]
+    assert summer["start"].endswith("-02:30")
+    assert winter["start"].endswith("-03:30")
 
 
 @pytest.mark.parametrize(
@@ -257,6 +372,8 @@ def test_date_and_time_zone_default_to_today_here(client: TestClient) -> None:
     [
         ({"date": "2026-09-25", "tz": "Mars/Olympus"}, 400),
         ({"date": "2026-09-25", "tz": "../../etc/passwd"}, 400),
+        ({"date": "2026-09-25", "tz": "America"}, 400),  # a tzdata folder: a crash on Windows before
+        ({"date": "2026-09-25", "tz": " "}, 400),
         ({"date": "2026-02-30", "tz": TORONTO}, 422),
         ({"date": "yesterday", "tz": TORONTO}, 422),
         ({"date": "0001-01-01", "tz": TORONTO}, 400),

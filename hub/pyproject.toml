@@ -19,6 +19,8 @@ dependencies = [
     "scipy>=1.13",
     "openai>=1.40",
     "psutil>=5.9",
+    "tzlocal>=5.2",  # the computer's IANA time zone (Windows has no simple way to ask)
+    "tzdata>=2024.1",  # time zone rules on Windows, which has no system zoneinfo database
     "pywin32>=306; sys_platform == 'win32'",
     "winotify>=1.1; sys_platform == 'win32'",
     "pyobjc-framework-Cocoa>=10.3; sys_platform == 'darwin'",
