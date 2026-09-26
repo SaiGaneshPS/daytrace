@@ -43,8 +43,27 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.daytrace.android.data.EventStore
+import app.daytrace.android.ui.theme.Blush
+import app.daytrace.android.ui.theme.Mint
+import app.daytrace.android.ui.theme.Sunrise
+import app.daytrace.android.usage.TodaySummary
+import app.daytrace.android.usage.UsageCollector
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -86,6 +105,9 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                     }
                 }
             }
+            if (usageOn) {
+                item(key = "today") { Box(Modifier.padding(horizontal = 16.dp)) { TodayCard(rememberToday()) } }
+            }
             item(key = "hub") { Box(Modifier.padding(horizontal = 16.dp)) { HubCard() } }
             item(key = "title") {
                 Text(
@@ -103,6 +125,101 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        }
+    }
+}
+
+/** What the Today card shows: still counting, today's numbers, or a problem reading them. */
+private sealed interface Today {
+    data object Counting : Today
+    data class Ready(val summary: TodaySummary) : Today
+    data object Failed : Today
+}
+
+/**
+ * Collects what is new and sums up today, off the main thread, when the screen comes to the front and then every
+ * minute while it stays there (so the card is live, and rolls over at midnight). A failure (a full disk, say)
+ * shows a message on the card instead of crashing the app.
+ */
+@Composable
+private fun rememberToday(): Today {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var today by remember { mutableStateOf<Today>(Today.Counting) }
+    LifecycleResumeEffect(Unit) {
+        val job = scope.launch {
+            while (isActive) {
+                today = withContext(Dispatchers.IO) {
+                    runCatching {
+                        UsageCollector(context).collect()
+                        TodaySummary.from(EventStore.get(context).all(), System.currentTimeMillis())
+                    }.fold({ Today.Ready(it) }, { Today.Failed })
+                }
+                delay(60_000)
+            }
+        }
+        onPauseOrDispose { job.cancel() }
+    }
+    return today
+}
+
+private fun duration(ms: Long): String {
+    val minutes = ms / 60_000
+    return if (minutes >= 60) "${minutes / 60} h ${minutes % 60} min" else "$minutes min"
+}
+
+@Composable
+private fun TodayCard(today: Today) {
+    val summary = (today as? Today.Ready)?.summary
+    val colors = listOf(Blush, Sunrise, Mint)
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    ) {
+        Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Text("Today on this phone", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                when (today) {
+                    Today.Counting -> "Counting..."
+                    Today.Failed -> "Not right now"
+                    is Today.Ready -> duration(today.summary.totalMs)
+                },
+                style = MaterialTheme.typography.displaySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            val top = summary?.topApps.orEmpty()
+            if (today is Today.Failed) {
+                Text(
+                    "Couldn't read today's usage. It will try again in a minute.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (summary != null && top.isEmpty()) {
+                Text(
+                    "Nothing yet today. Use a few apps and come back.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            top.forEachIndexed { index, (app, ms) ->
+                val share by animateFloatAsState(
+                    targetValue = if (summary!!.totalMs > 0) ms / summary.totalMs.toFloat() else 0f,
+                    animationSpec = tween(700, delayMillis = 120 * index),
+                    label = "share",
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(app, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(duration(ms), style = MaterialTheme.typography.labelLarge)
+                }
+                Spacer(Modifier.height(4.dp))
+                Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    Box(Modifier.fillMaxWidth(share).height(8.dp).clip(RoundedCornerShape(50)).background(colors[index % colors.size]))
                 }
             }
         }

@@ -48,4 +48,5 @@ dependencies {
     implementation(libs.androidx.health.connect)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.org.json) // Android's org.json is a stub in local unit tests
 }

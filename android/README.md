@@ -52,6 +52,23 @@ The onboarding screen walks through each one and the status screen shows them af
 
 `QUERY_ALL_PACKAGES` resolves app names from package IDs; it is fine because the app is not on the Play Store.
 
+## How app time is counted (DT-20)
+
+`usage/UsageCollector.kt` reads Android's usage events every time it runs (when the app opens, every minute
+while the status screen is open, and from DT-21 in the background):
+
+- A session runs from an app's first screen resuming to its last screen pausing; moving between screens of one
+  app stays one session (a pause followed by a resume of the same app within 1 s is ignored).
+- An app killed while on screen ends when it stops; the screen turning off, a shutdown or a restart ends every
+  session; the home screen and the status bar are not app time.
+- Collections stop 15 s short of now (Android records events a moment late) and carry open apps into the next
+  run, so nothing is lost or counted twice. A clock change between runs is corrected (Android shifts its stored
+  events by the same amount).
+- Split-screen time is counted once, the way the hub counts it: the most recently opened app owns the screen.
+
+Known limits (Android does not expose them to apps): time in a **work profile**, Secure Folder or Dual Messenger
+(separate Android users), and video playing in a **picture-in-picture** window (Android logs it as paused).
+
 ## Files by ticket
 
 | File | Ticket |
