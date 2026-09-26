@@ -224,10 +224,17 @@ def test_bad_events_are_rejected_by_schema_and_models(case: str) -> None:
             "before year 1000 in UTC",
             with_changes(SESSION, start="1000-01-01T00:30:00+01:00", end="1000-01-01T00:45:00+01:00"),
         ),
+        ("half an emoji in the title", with_changes(SESSION, title="hi \ud83d")),
+        ("half an emoji in a data key", with_changes(SESSION, data={"\udc00": 1})),
+        ("half an emoji deep in data", with_changes(SESSION, data={"a": [{"b": "\ud83d"}]})),
+        ("infinite number in data", with_changes(SESSION, data={"x": float("inf")})),
+        ("NaN in data", with_changes(SESSION, data={"x": [float("nan")]})),
+        ("data over 16 KB", with_changes(SESSION, data={"note": "x" * (16 * 1024)})),
     ],
 )
 def test_rules_only_the_models_can_check(case: str, event: dict[str, Any]) -> None:
-    # JSON Schema cannot compare two fields, know month lengths or convert to UTC; the hub models reject these.
+    # JSON Schema cannot compare two fields, know month lengths, convert to UTC, spot broken Unicode or
+    # measure data; the hub models reject these.
     assert schema_accepts(event), case
     assert not model_accepts(event), case
 
@@ -310,6 +317,12 @@ def test_events_for_another_device_are_rejected() -> None:
     events, rejected = parse_batch(copy.deepcopy(SESSION), expected_device_id="windows-desk")
     assert not events
     assert rejected[0].reason == "device_id does not match this token's device"
+    assert rejected[0].code == "wrong_device"
+
+
+def test_validation_failures_have_the_invalid_code() -> None:
+    _, rejected = parse_batch({"events": [BAD_EVENTS["sleep with stage as a list"]]})
+    assert rejected[0].code == "invalid"
 
 
 def test_oversized_batches_fail_before_any_validation() -> None:

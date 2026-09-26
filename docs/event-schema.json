@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SaiGaneshPS/daytrace/blob/development/docs/event-schema.json",
   "title": "Daytrace event",
-  "description": "One thing that happened on one device. Every collector (desktop tracker, Android, iPhone Shortcuts, Mac bridge, browser extension) sends events in this shape. Three rules JSON Schema cannot express are enforced by the hub models (hub/daytrace_hub/models.py): end is never before start, dates must exist (no February 30), and a time must still fall between years 1000 and 9999 once converted to UTC.",
+  "description": "One thing that happened on one device. Every collector (desktop tracker, Android, iPhone Shortcuts, Mac bridge, browser extension) sends events in this shape. Rules JSON Schema cannot express are enforced by the hub models (hub/daytrace_hub/models.py): end is never before start, dates must exist (no February 30), a time must still fall between years 1000 and 9999 once converted to UTC, text must be valid Unicode (no unpaired surrogates), numbers must be finite, and data must be at most 16 KB as compact UTF-8 JSON.",
   "type": "object",
   "additionalProperties": false,
   "required": ["device_id", "kind", "source", "start"],
