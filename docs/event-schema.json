@@ -8,7 +8,7 @@
   "required": ["device_id", "kind", "source", "start"],
   "properties": {
     "device_id": {
-      "description": "ID of the sending device, given at pairing time (for example windows-desk, android-1, iphone-1, iphone-via-mac). Must match the device the token belongs to.",
+      "description": "ID of the sending device, given at pairing time (for example windows-1, android-1, iphone-1). Must match the device the token belongs to.",
       "type": "string",
       "pattern": "^[A-Za-z0-9._-]{1,64}$"
     },

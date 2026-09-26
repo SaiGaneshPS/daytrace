@@ -1,4 +1,4 @@
-"""DT-11: Bearer-token device authentication.
+"""DT-11: Bearer-token device authentication (DT-12 adds local-only and reader access).
 
 Every paired device (phone, Shortcuts, Mac bridge, browser extension, dashboard viewer) has its own random
 token. The hub stores only a SHA-256 hash of it: tokens are 256-bit random values, so a fast hash is enough
@@ -12,16 +12,19 @@ import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal, get_args
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Header, Request
 
 from .api import ApiError
+from .config import host_name, parse_ip
 from .db import BUSY_TIMEOUT_MS, Database, utc_text
 from .models import DEVICE_ID_PATTERN
 
 TOKEN_PREFIX = "dt_"
-DEVICE_TYPES = ("windows", "macos", "android", "ios", "browser", "viewer")  # matches devices.device_type
+DeviceType = Literal["windows", "macos", "android", "ios", "browser", "viewer"]  # matches devices.device_type
+DEVICE_TYPES: tuple[str, ...] = get_args(DeviceType)
 LAST_SEEN_EVERY = timedelta(seconds=60)  # how often a busy device's last_seen is written
 LAST_SEEN_WAIT_MS = 100  # how long the last_seen write may wait for another writer
 _BEARER = re.compile(r"^\s*Bearer\s+(?P<token>[!-~]{1,200})\s*$", re.IGNORECASE)
@@ -122,3 +125,59 @@ def require_device(
 
 
 CurrentDevice = Annotated[AuthenticatedDevice, Depends(require_device)]
+
+
+def _is_loopback_name(name: str) -> bool:
+    if name == "localhost":
+        return True
+    address = parse_ip(name)
+    return address is not None and address.is_loopback
+
+
+def is_trusted_local(request: Request) -> bool:
+    """True only for the hub computer itself talking to itself, as the dashboard on localhost does.
+
+    Coming from 127.0.0.1 is not enough: a web page open on the hub computer also connects from there.
+    So the request must also name the hub by a loopback name (a LAN attacker can answer names like
+    evil.local or a bare word for the browser and point them at 127.0.0.1, which is DNS rebinding), and
+    must not come from another site's page (Origin, when sent, is a loopback origin; Sec-Fetch-Site is not
+    cross-site). Tools such as curl send neither header and are trusted.
+    """
+    client = parse_ip(request.client.host) if request.client else None
+    if client is None or not client.is_loopback:
+        return False
+    host = request.headers.get("host")
+    if host is not None and not _is_loopback_name(host_name(host)):
+        return False
+    origin = request.headers.get("origin")
+    if origin is not None:
+        parts = urlsplit(origin)
+        if parts.scheme not in ("http", "https") or not _is_loopback_name((parts.hostname or "").lower()):
+            return False
+    return request.headers.get("sec-fetch-site", "same-origin") != "cross-site"
+
+
+def require_local(request: Request) -> None:
+    """FastAPI dependency for local-only endpoints (pairing codes, revoking, delete-all)."""
+    if not is_trusted_local(request):
+        raise ApiError(
+            403, "local_only", "this can only be done on the hub computer itself, at http://localhost:<port>"
+        )
+
+
+def require_reader(
+    request: Request,
+    database: Annotated[Database, Depends(get_database)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> AuthenticatedDevice | None:
+    """FastAPI dependency for dashboard data: any paired device's token, or no token from the hub computer.
+
+    The dashboard on the hub computer itself is trusted (DT-30), with the same checks as local-only
+    endpoints (is_trusted_local). Returns None for that trusted local dashboard.
+    """
+    if authorization is None and is_trusted_local(request):
+        return None
+    return require_device(database, authorization)
+
+
+Reader = Annotated[AuthenticatedDevice | None, Depends(require_reader)]
