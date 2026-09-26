@@ -1,9 +1,32 @@
-# DT-5: move Notion tickets from PR events. Placeholder from DT-1 (manual trigger only).
+# DT-5: move the Notion ticket named in a PR's title (or branch) when the PR opens, changes, merges or closes.
+# Needs the NOTION_TOKEN and NOTION_TICKETS_DB secrets (gh secret set); without them it notes that and passes.
 name: notion-sync
+
 on:
-  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, edited, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per PR at a time, in order (an open quickly followed by a merge must not finish out of order).
+  group: notion-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
-  placeholder:
+  sync:
+    name: notion sync
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - run: echo "Implemented in DT-5"
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      # The PR title is read from the event file by the script, never put into a shell command here.
+      - name: Move the ticket
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_TICKETS_DB: ${{ secrets.NOTION_TICKETS_DB }}
+        run: python3 scripts/notion_sync.py
