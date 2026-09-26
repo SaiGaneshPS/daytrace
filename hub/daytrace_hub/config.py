@@ -211,6 +211,8 @@ class Settings:
     mdns_name: str = "daytrace-hub"
     # Off unless load_settings() turns it on (DT-16), so tests never record this computer's screen.
     track_desktop: bool = False
+    # The built dashboard (DT-30) from DAYTRACE_DASHBOARD_DIR; None: dashboard/dist next to the hub in this repo.
+    dashboard_dir: Path | None = None
 
     @property
     def database_path(self) -> Path:
@@ -221,16 +223,22 @@ class Settings:
         return self.data_dir / f"{self.profile.database_filename}.tracker.lock"
 
 
+def _folder(env: Mapping[str, str], name: str) -> Path | None:
+    """An absolute folder from the environment (~ and %VAR% or $VAR expanded), or None when it is not set. A
+    relative one would move with the current directory, so it is refused."""
+    configured = env.get(name, "").strip()
+    if not configured:
+        return None
+    folder = Path(os.path.expandvars(configured)).expanduser()
+    if not folder.is_absolute():
+        raise ValueError(f"{name} must be an absolute path, got {configured!r}")
+    return folder
+
+
 def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
-    configured = env.get("DAYTRACE_DATA_DIR", "").strip()
-    if configured:
-        data_dir = Path(os.path.expandvars(configured)).expanduser()
-        if not data_dir.is_absolute():
-            # A relative folder would move with the current directory and silently start an empty database.
-            raise ValueError(f"DAYTRACE_DATA_DIR must be an absolute path, got {configured!r}")
-    else:
-        data_dir = default_data_dir(env)
+    # A relative data folder would silently start an empty database somewhere else.
+    data_dir = _folder(env, "DAYTRACE_DATA_DIR") or default_data_dir(env)
     lan_text = env.get("DAYTRACE_LAN_NETWORKS", "").strip()
     lan_networks = parse_lan_networks(lan_text) if lan_text else DEFAULT_LAN_NETWORKS
     advertise_text = env.get("DAYTRACE_MDNS", "").strip().lower() or "on"
@@ -252,4 +260,5 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
         advertise_mdns=advertise,
         mdns_name=mdns_name,
         track_desktop=tracker_text in _TRUE,
+        dashboard_dir=_folder(env, "DAYTRACE_DASHBOARD_DIR"),
     )

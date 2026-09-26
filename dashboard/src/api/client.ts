@@ -5,15 +5,17 @@
 // - GETs are tried up to 3 times when the hub can't be reached or is busy (502, 503, 504; Retry-After is
 //   honoured). Other methods are sent once, since sending them twice could do something twice.
 // - Errors come back as ApiError with the hub's error code and a message a person can read. A 401 also tells the
-//   app shell that this browser isn't paired (UNPAIRED_EVENT).
+//   app shell that this browser isn't paired (UNPAIRED_EVENT); pairing (setToken) tells it again (PAIRED_EVENT).
 // - A browser paired as a viewer (DT-32) keeps its token in localStorage and sends it; the dashboard on the hub's
-//   own computer (http://localhost:<port>) needs none.
+//   own computer (http://localhost:<port>) needs none. A token the hub refuses (revoked) is forgotten and the call
+//   tried once without it, so a stale token never locks out the hub's own computer.
 // - toast() shows a short message, and useApi() loads data with loading and error states.
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { paths } from "./schema";
 
 export const API_BASE = "/api/v1";
 export const UNPAIRED_EVENT = "daytrace:unpaired";
+export const PAIRED_EVENT = "daytrace:paired";
 const TOKEN_KEY = "daytrace.token";
 const RETRIES = 2;
 const RETRY_STATUSES = new Set([502, 503, 504]);
@@ -38,12 +40,23 @@ export type Reply<O> =
         : void
     : never;
 type Params<O> = O extends { parameters: infer X } ? X : never;
-export type Options<O> = {
-  query?: Params<O> extends { query?: infer Q } ? Q : never;
-  path?: Params<O> extends { path?: infer Q } ? Q : never;
-  body?: O extends { requestBody?: { content: { "application/json": infer B } } } ? B : never;
-  signal?: AbortSignal;
-};
+// A part the schema requires is required here too (a path parameter, a required query or body), so forgetting
+// one is a compile error instead of a request to the wrong URL.
+type Part<X, K extends string> = X extends { [P in K]: infer V }
+  ? { [P in K]: V }
+  : X extends { [P in K]?: infer V }
+    ? [V] extends [never | undefined]
+      ? { [P in K]?: never }
+      : { [P in K]?: V }
+    : { [P in K]?: never };
+type BodyPart<O> = O extends { requestBody: { content: { "application/json": infer B } } }
+  ? { body: B }
+  : O extends { requestBody?: { content: { "application/json": infer B } } }
+    ? { body?: B }
+    : { body?: never };
+export type Options<O> = Part<Params<O>, "query"> & Part<Params<O>, "path"> & BodyPart<O> & { signal?: AbortSignal };
+/** The options argument: optional when nothing in it is required. */
+type Args<O, Extra = unknown> = {} extends Options<O> ? [options?: Options<O> & Extra] : [options: Options<O> & Extra];
 /** The reply of GET `P`. */
 export type GetReply<P extends PathsWith<"get">> = Reply<Operation<P, "get">>;
 
@@ -77,6 +90,7 @@ export function setToken(token: string | null): void {
   } catch {
     // Without storage the browser simply stays unpaired.
   }
+  if (token) window.dispatchEvent(new Event(PAIRED_EVENT));
 }
 
 async function errorFrom(response: Response): Promise<ApiError> {
@@ -129,7 +143,7 @@ type RawOptions = { query?: object; path?: object; body?: unknown; signal?: Abor
 
 async function send<T>(method: string, template: string, options: RawOptions): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  const token = getToken();
+  let token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   let body: string | undefined;
   if (options.body !== undefined) {
@@ -154,6 +168,15 @@ async function send<T>(method: string, template: string, options: RawOptions): P
       await wait(retryDelay(attempt, response), options.signal);
       continue;
     }
+    if (response.status === 401 && token) {
+      // Refused before anything was done, so trying again is safe: without the token, the hub's own computer
+      // is trusted, and anyone else is told to pair again.
+      setToken(null);
+      token = null;
+      delete headers.Authorization;
+      attempt -= 1;
+      continue;
+    }
     if (!response.ok) throw await errorFrom(response);
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
@@ -161,14 +184,14 @@ async function send<T>(method: string, template: string, options: RawOptions): P
 }
 
 export const api = {
-  get: <P extends PathsWith<"get">>(path: P, options: Options<Operation<P, "get">> = {}) =>
-    send<Reply<Operation<P, "get">>>("GET", path, options as RawOptions),
-  post: <P extends PathsWith<"post">>(path: P, options: Options<Operation<P, "post">> = {}) =>
-    send<Reply<Operation<P, "post">>>("POST", path, options as RawOptions),
-  put: <P extends PathsWith<"put">>(path: P, options: Options<Operation<P, "put">> = {}) =>
-    send<Reply<Operation<P, "put">>>("PUT", path, options as RawOptions),
-  delete: <P extends PathsWith<"delete">>(path: P, options: Options<Operation<P, "delete">> = {}) =>
-    send<Reply<Operation<P, "delete">>>("DELETE", path, options as RawOptions),
+  get: <P extends PathsWith<"get">>(path: P, ...[options]: Args<Operation<P, "get">>) =>
+    send<Reply<Operation<P, "get">>>("GET", path, (options ?? {}) as RawOptions),
+  post: <P extends PathsWith<"post">>(path: P, ...[options]: Args<Operation<P, "post">>) =>
+    send<Reply<Operation<P, "post">>>("POST", path, (options ?? {}) as RawOptions),
+  put: <P extends PathsWith<"put">>(path: P, ...[options]: Args<Operation<P, "put">>) =>
+    send<Reply<Operation<P, "put">>>("PUT", path, (options ?? {}) as RawOptions),
+  delete: <P extends PathsWith<"delete">>(path: P, ...[options]: Args<Operation<P, "delete">>) =>
+    send<Reply<Operation<P, "delete">>>("DELETE", path, (options ?? {}) as RawOptions),
 };
 
 // --- toasts --------------------------------------------------------------------------------------------------
@@ -218,8 +241,9 @@ export type Loaded<T> = {
  * reloads, the last data stays. A failure shows a toast unless `quiet`. */
 export function useApi<P extends PathsWith<"get">>(
   path: P,
-  options: Omit<Options<Operation<P, "get">>, "signal"> & { enabled?: boolean; quiet?: boolean } = {},
+  ...[given]: Args<Operation<P, "get">, { enabled?: boolean; quiet?: boolean }>
 ): Loaded<GetReply<P>> {
+  const options = (given ?? {}) as RawOptions & { enabled?: boolean; quiet?: boolean };
   const { enabled = true, quiet = false } = options;
   const key = JSON.stringify([path, options.query ?? null, options.path ?? null]);
   const [state, setState] = useState<Omit<Loaded<GetReply<P>>, "reload">>({
@@ -230,13 +254,15 @@ export function useApi<P extends PathsWith<"get">>(
   const [attempt, setAttempt] = useState(0);
   const reload = useCallback(() => setAttempt((count) => count + 1), []);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setState((previous) => (previous.loading ? { ...previous, loading: false } : previous));
+      return;
+    }
     const controller = new AbortController();
     const [target, query, pathParams] = JSON.parse(key) as [P, object | null, object | null];
     setState((previous) => ({ ...previous, loading: true }));
-    const request = { query: query ?? undefined, path: pathParams ?? undefined, signal: controller.signal };
-    api
-      .get(target, request as Options<Operation<P, "get">>)
+    const request: RawOptions = { query: query ?? undefined, path: pathParams ?? undefined, signal: controller.signal };
+    send<GetReply<P>>("GET", target, request)
       .then((data) => setState({ data, error: undefined, loading: false }))
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;

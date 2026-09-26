@@ -3,7 +3,7 @@
 // DT-34, Privacy DT-36; Streaks joins with DT-54).
 import { useEffect, useState } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation } from "react-router";
-import { UNPAIRED_EVENT, dismissToast, useApi, useToasts } from "./api/client";
+import { PAIRED_EVENT, UNPAIRED_EVENT, dismissToast, useApi, useToasts } from "./api/client";
 import Ask from "./pages/Ask";
 import Devices from "./pages/Devices";
 import Insights from "./pages/Insights";
@@ -45,8 +45,13 @@ function Shell() {
 
   useEffect(() => {
     const onUnpaired = () => setUnpaired(true);
+    const onPaired = () => setUnpaired(false);
     window.addEventListener(UNPAIRED_EVENT, onUnpaired);
-    return () => window.removeEventListener(UNPAIRED_EVENT, onUnpaired);
+    window.addEventListener(PAIRED_EVENT, onPaired);
+    return () => {
+      window.removeEventListener(UNPAIRED_EVENT, onUnpaired);
+      window.removeEventListener(PAIRED_EVENT, onPaired);
+    };
   }, []);
 
   useEffect(() => {

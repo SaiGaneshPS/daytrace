@@ -13,14 +13,17 @@ npm run gen:api    # regenerate src/api/schema.d.ts from the hub running on this
   trusted and needs no pairing.
 - **Other devices:** open `http://<pc-name>.local:<port>` or the PC's address. The browser pairs as a viewer on the
   Devices page (DT-32).
-- **Serving the build:** the hub looks for `dashboard/dist` next to itself; set `DAYTRACE_DASHBOARD_DIR` to serve
-  another folder. Every page reloads (unknown paths get `index.html`), and `/api` stays the API. Before the first
-  build the hub shows a page saying how to build.
-- **Installing and offline:** the service worker makes the app installable and caches it. Browsers allow that only
-  over HTTPS or on localhost, so phones can install it once the hub has HTTPS (DT-47); over plain HTTP it works as a
-  normal web page.
-- **API calls:** go through `src/api/client.ts`. Paths, queries and replies are typed from the schema; GETs retry
-  when the hub is busy or unreachable; errors show as toasts; `useApi()` gives loading and error states.
+- **Serving the build:** the hub looks for `dashboard/dist` next to itself; set `DAYTRACE_DASHBOARD_DIR` (an absolute
+  path) to serve another folder, for example when the hub was installed on its own. Every page reloads (a page load
+  of an unknown path gets `index.html`), and `/api` stays the API. Before the first build the hub shows a page saying
+  how to build.
+- **Installing and offline:** the service worker makes the app installable and caches it; a new build takes over on
+  the next load. Browsers allow that only over HTTPS or on localhost, so phones can install it once the hub has HTTPS
+  (DT-47); over plain HTTP it works as a normal web page.
+- **API calls:** go through `src/api/client.ts`. Paths, queries, bodies and replies are typed from the schema (a
+  required path parameter or body is a compile error when missing); GETs retry when the hub is busy or unreachable;
+  errors show as toasts; `useApi()` gives loading and error states.
+- **Dev server:** its `/api` proxy answers only this computer, since the hub trusts requests from it.
 - **Icons:** `public/icons` holds the app icon (192 and 512 px, a maskable 512 px, the Apple touch icon, and an SVG
   favicon).
 
