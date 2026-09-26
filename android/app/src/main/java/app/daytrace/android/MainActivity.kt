@@ -4,6 +4,7 @@ package app.daytrace.android
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
@@ -47,6 +48,8 @@ private fun DaytraceRoot() {
     var showOnboarding by rememberSaveable { mutableStateOf(!onboarded(context)) }
     val (states, refresh) = rememberPermissionStates()
     val grant = rememberPermissionRequester(onChanged = refresh)
+    // Reopened from the status screen: Back returns there instead of closing the app.
+    BackHandler(enabled = showOnboarding && onboarded(context)) { showOnboarding = false }
     if (showOnboarding) {
         OnboardingScreen(states, grant, onContinue = {
             setOnboarded(context, true)

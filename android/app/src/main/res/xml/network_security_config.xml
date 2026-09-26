@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- DT-19: the app only talks to your own hub on your own network, whose address (a LAN IP) is not known in
-     advance, so plain HTTP is allowed. DT-47 switches the hub to HTTPS and pins its local CA here. -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+<!-- DT-19: the app only talks to your own hub on your own network, at an address (a LAN IP) that is not known in
+     advance, so plain HTTP has to be allowed here: this file cannot name IP ranges. Until DT-47 moves the hub to
+     HTTPS, the token and events cross your Wi-Fi unencrypted (docs/api.md says so), and DT-21's HubClient refuses
+     any address that is not on a private network, so nothing ever leaves the LAN over plain HTTP. -->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
