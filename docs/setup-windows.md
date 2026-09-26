@@ -89,7 +89,7 @@ Or from PowerShell:
 | `GRADLE_USER_HOME` | `D:\Hackathon\Cache\gradle` | Gradle caches off C: |
 | `ANDROID_HOME` | `D:\Hackathon\Android\Sdk` | Android SDK location |
 | `JAVA_HOME` | `C:\Program Files\Android\Android Studio\jbr` | Makes terminal builds (`gradlew`) use Android Studio's JDK instead of whichever `java` is first on PATH |
-| `DAYTRACE_DATA_DIR` | `D:\Hackathon\data` | hub databases |
+| `DAYTRACE_DATA_DIR` | `D:\Hackathon\data` | hub databases (must be an absolute path) |
 | `Path` (add) | `D:\Hackathon\Tools\NodeJS`, your VS Code `bin` folder | `node`, `npm`, `code` |
 
 Optional, only if you use them: `ANDROID_USER_HOME` (emulator images, default `C:\Users\<you>\.android`, several
