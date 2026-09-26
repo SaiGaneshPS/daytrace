@@ -17,8 +17,9 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..auth import Reader, get_database
+from ..categories import Categorizer
 from ..db import Database
-from ..sessions import Session, StoredEvent, build_sessions, load_events, snap
+from ..sessions import Session, StoredEvent, build_sessions, load_events, snap, with_categories
 from . import API_PREFIX, ApiError
 
 LANE_ORDER = {"windows": 0, "macos": 1, "android": 2, "ios": 3, "browser": 4, "viewer": 5}
@@ -39,7 +40,7 @@ class TimelineSession(BaseModel):
     app: str | None
     app_id: str | None
     title: str | None
-    category: str | None
+    category: str = Field(description="One of the categories in GET /categories; 'other' when unknown.")
     kind: Literal["app", "web"]
     estimated: bool = Field(description="True when the end was inferred (an iPhone open with no close).")
 
@@ -173,7 +174,8 @@ def build_timeline(database: Database, day: date, tz: tzinfo, tz_name: str) -> T
     with database.connect() as conn:
         events = load_events(conn, start, end)
         devices = {row["device_id"]: row for row in conn.execute("SELECT device_id, name, device_type FROM devices")}
-    sessions = build_sessions(events, start, until) if until > start else []
+        categorizer = Categorizer.from_db(conn)
+    sessions = with_categories(build_sessions(events, start, until), categorizer) if until > start else []
 
     grouped: dict[str, list[Session]] = defaultdict(list)
     for session in sessions:
@@ -255,7 +257,7 @@ def _shown(session: Session, tz: tzinfo) -> TimelineSession:
         app=session.app,
         app_id=session.app_id,
         title=session.title,
-        category=session.category,
+        category=session.category or "other",
         kind=session.kind,  # type: ignore[arg-type]
         estimated=session.estimated,
     )

@@ -28,6 +28,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 
+from .categories import Categorizer
 from .db import utc_text
 
 OPEN_WITHOUT_CLOSE = timedelta(minutes=30)
@@ -312,6 +313,13 @@ def load_events(
     return sorted(events, key=lambda e: (e.start, e.id))
 
 
+def with_categories(sessions: Iterable[Session], categorizer: Categorizer) -> list[Session]:
+    """Sessions with their resolved category (user override, collector hint, built-in list, AI, other)."""
+    return [
+        replace(s, category=categorizer.category(s.app, s.app_id, s.kind, s.category)) for s in sessions
+    ]
+
+
 def sessions_for(
     conn: sqlite3.Connection,
     start: datetime,
@@ -319,11 +327,16 @@ def sessions_for(
     device_ids: Sequence[str] | None = None,
     now: datetime | None = None,
 ) -> list[Session]:
-    """Sessions in [start, end). Nothing after `now` (default: the current time) is counted."""
+    """Categorized sessions in [start, end). Nothing after `now` (default: the current time) is counted.
+
+    This is the one entry point for everything built on sessions (timeline, stats, goals, insights), so they
+    all agree on the numbers and the categories.
+    """
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("session windows must be timezone-aware")
     start, end = start.astimezone(UTC), end.astimezone(UTC)
     until = min(end, now or datetime.now(UTC))
     if until <= start:
         return []
-    return build_sessions(load_events(conn, start, end, device_ids), start, until)
+    sessions = build_sessions(load_events(conn, start, end, device_ids), start, until)
+    return with_categories(sessions, Categorizer.from_db(conn))

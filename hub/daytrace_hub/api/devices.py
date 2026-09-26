@@ -14,7 +14,6 @@ import secrets
 import sqlite3
 import threading
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -28,6 +27,7 @@ from ..auth import DeviceType, Reader, get_database, register_device, require_lo
 from ..config import Settings
 from ..db import Database, transaction, utc_text
 from ..discovery import detect_phone_addresses, hub_url, mdns_url
+from ..models import has_hidden_characters
 from . import API_PREFIX, ApiError
 
 CODE_LIFETIME = timedelta(minutes=5)
@@ -37,7 +37,6 @@ WRONG_TRIES_PER_CODE = 20  # across all clients: at most 20 guesses out of a mil
 ID_PREFIX = {"windows": "windows", "macos": "mac", "android": "android", "ios": "iphone", "browser": "browser",
              "viewer": "viewer"}
 NO_STORE = {"Cache-Control": "no-store"}
-ZERO_WIDTH_JOINER = chr(0x200D)
 
 router = APIRouter(prefix=API_PREFIX, tags=["devices"])
 
@@ -161,9 +160,7 @@ class PairClaim(BaseModel):
     @field_validator("device_name")
     @classmethod
     def _readable_name(cls, name: str) -> str:
-        # Control and formatting characters (for example U+202E, which flips text) could disguise a name.
-        # The zero-width joiner stays allowed because emoji such as a person at a laptop need it.
-        if any(unicodedata.category(char) in ("Cc", "Cf") and char != ZERO_WIDTH_JOINER for char in name):
+        if has_hidden_characters(name):  # U+202E and friends could disguise a name in the device list
             raise ValueError("device_name must not contain control or formatting characters")
         return name
 

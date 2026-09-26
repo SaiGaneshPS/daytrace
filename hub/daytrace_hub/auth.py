@@ -181,3 +181,18 @@ def require_reader(
 
 
 Reader = Annotated[AuthenticatedDevice | None, Depends(require_reader)]
+
+
+def require_editor(reader: Reader) -> AuthenticatedDevice | None:
+    """FastAPI dependency for changing the user's settings (categories, goals): the dashboard only.
+
+    That is a viewer token (the dashboard on a phone) or the trusted local dashboard. Collector tokens
+    (phones' sync apps, Shortcuts, the browser extension) can send events but not change settings, so a token
+    copied out of one of them cannot rewrite your choices.
+    """
+    if reader is not None and not reader.is_viewer:
+        raise ApiError(403, "forbidden", "only the dashboard can change settings; this token is for sending events")
+    return reader
+
+
+Editor = Annotated[AuthenticatedDevice | None, Depends(require_editor)]
