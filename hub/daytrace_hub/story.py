@@ -15,7 +15,8 @@ one fact of the same kind:
   without am or pm either half of the day. Scores and percents match within 1, counts exactly.
 - A plain number with no unit may match a fact of any kind. A number with a unit no fact has ("155 seconds",
   "81 apps") matches only an amount written in a fact's own label ("10+ minutes", "after 11 pm") or, for apps and
-  categories, how many are listed. A date must be the story's day.
+  categories, how many are listed. A date must be the story's day (for DT-40's answers, a day the tools
+  looked at).
 
 A story with any other number, the wrong length, or cut off gets one retry, told what was wrong. After that, or
 when the model is not available, a plain template story built from the same facts is used instead (`fallback`).
@@ -459,15 +460,16 @@ _FACT_KINDS = {"minutes": "duration", "time": "clock", "score": "score", "percen
 @dataclass(frozen=True)
 class Allowed:
     """What a story's amounts may match: each fact's (kind, value), the amounts written in the facts' labels, how
-    many apps and categories are listed, and the day."""
+    many apps and categories are listed, and the days it may name (the story's day; for an answer, every day the
+    tools looked at)."""
 
     values: list[tuple[str, float]]
     labels: list[Amount]
     items: set[int]
-    day: date
+    days: frozenset[date]
 
 
-def allowed_values(facts: Iterable[Fact], day: date) -> Allowed:
+def allowed_values(facts: Iterable[Fact], days: date | Iterable[date]) -> Allowed:
     facts = list(facts)
     values: list[tuple[str, float]] = []
     labels: list[Amount] = []
@@ -480,7 +482,7 @@ def allowed_values(facts: Iterable[Fact], day: date) -> Allowed:
         else:
             values.append((kind, float(fact.value)))
     listed = {sum(f.label.startswith("time in ") for f in facts), sum(f.label.startswith("time on ") for f in facts)}
-    return Allowed(values, labels, listed - {0}, day)
+    return Allowed(values, labels, listed - {0}, frozenset([days] if isinstance(days, date) else days))
 
 
 def _duration_fits(minutes: float, precision: str, fact: float) -> bool:
@@ -544,24 +546,24 @@ def _fits(amount: Amount, kind: str, value: float) -> bool:
 
 def supported(amount: Amount, allowed: Allowed) -> bool:
     """Whether an amount read from a story matches a fact (see the module docstring)."""
-    day = allowed.day
+    days = allowed.days
     if amount.kind == "date" and amount.calendar_day is not None:
         on, month, year = amount.calendar_day
-        return (on, month) == (day.day, day.month) and year in (None, day.year)
+        return any((on, month) == (day.day, day.month) and year in (None, day.year) for day in days)
     if amount.kind == "ordinal":
-        return amount.value == day.day or 1 <= amount.value <= max(allowed.items, default=0)
+        return any(amount.value == day.day for day in days) or 1 <= amount.value <= max(allowed.items, default=0)
     if any(_same_as_label(amount, label) for label in allowed.labels):
         return True
     if amount.kind in ("items", "bare") and amount.value in allowed.items:
         return True
-    if amount.kind == "bare" and amount.value in (day.day, day.year):
+    if amount.kind == "bare" and any(amount.value in (day.day, day.year) for day in days):
         return True
     return any(_fits(amount, kind, value) for kind, value in allowed.values)
 
 
-def unsupported_numbers(text: str, facts: Sequence[Fact], day: date) -> list[str]:
-    """The amounts in `text`, as written, that match no fact."""
-    allowed = allowed_values(facts, day)
+def unsupported_numbers(text: str, facts: Sequence[Fact], days: date | Iterable[date]) -> list[str]:
+    """The amounts in `text`, as written, that match no fact. `days` are the days it may name."""
+    allowed = allowed_values(facts, days)
     return [amount.written for amount in numbers_in(text) if not supported(amount, allowed)]
 
 
