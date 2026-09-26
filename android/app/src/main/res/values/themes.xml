@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DT-19: the window theme before Compose draws; Compose's DaytraceTheme does the rest. -->
+<resources>
+    <style name="Theme.Daytrace" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/daytrace_background</item>
+    </style>
+</resources>
