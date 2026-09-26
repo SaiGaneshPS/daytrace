@@ -20,7 +20,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Networks | The hub listens on IPv4 (`0.0.0.0`). Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, and `fc00::/7`, `fe80::/10` for IPv6-mapped peers). On Wi-Fi you do not trust (venue, cafe), set `DAYTRACE_LAN_NETWORKS` to your own subnet, for example `192.168.1.0/24`, or stop the personal profile. Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. HTTP and WebSocket are checked the same way. |
 | Host names | To block DNS rebinding, the `Host` header must be an IP address, a single-label name (`localhost`, the PC name), a private name (`*.local`, `*.home.arpa`, `*.internal`, `*.lan`, `*.home`, `*.localdomain`) or, on shared-dev only, a Tailscale MagicDNS name (`*.ts.net`). Anything else gets `403 forbidden_host`. |
 | Forwarding | Never forward the personal port with a VS Code tunnel, `tailscale serve` / `funnel` or `ssh -L`: forwarded traffic arrives from `127.0.0.1` and would look like the hub computer itself. Tunnel and `ts.net` host names are refused on personal, but `ssh -L` to `localhost` is not. |
-| Local only | Endpoints marked *local only* accept requests only from the hub computer itself (`127.0.0.1` / `::1`). |
+| Local only | Endpoints marked *local only* (and dashboard reads without a token) accept requests only from the hub computer talking to itself: the client is `127.0.0.1` / `::1`, the `Host` is `localhost`, `127.0.0.1` or `[::1]`, an `Origin` (when sent) is a loopback origin, and `Sec-Fetch-Site` is not `cross-site`. So open the dashboard at `http://localhost:<port>` on the hub computer. Web pages from other sites, and DNS rebinding through LAN names, get `403 local_only`. |
 | Accuracy | Every response that feeds a chart or a number on screen includes `meta`: `{ "unit", "range": { "start", "end", "tz" }, "source": "real" \| "seed" \| "mixed", "estimated": true \| false }`. |
 
 ### Errors
@@ -145,17 +145,20 @@ collector checks what the hub already has.
 { "code": "493817", "expires_at": "2026-09-25T14:08:10-04:00",
   "url": "http://192.168.1.23:8765",
   "urls": ["http://192.168.1.23:8765"],
-  "mdns_url": "http://daytrace-hub.local:8765",
-  "qr": "/api/v1/pair/qr.png?code=493817" }
+  "mdns_url": "http://daytrace-desktop-ab12cd.local:8765",
+  "qr": "/api/v1/pair/qr.png" }
 ```
 
-- `url` is the hub's LAN IP as phones see it (the interface with the default route). The QR code uses it
-  because Android browsers do not reliably resolve `.local` names.
+- `url` is the hub's LAN IP as phones see it (the interface with the default route, skipping VPN and virtual
+  adapters). The QR code uses it because Android browsers do not reliably resolve `.local` names. It is `null`
+  (and so is `qr`) when this computer has no LAN address right now; the code still works for devices that reach
+  the hub another way.
 - `urls` lists every address phones can use: LAN addresses first, then the Tailscale address on shared-dev.
-- Only one code is active at a time; starting again replaces it.
+- `mdns_url` is set only when mDNS is on.
+- Only one code is active at a time; starting again replaces it. The response is sent with `Cache-Control: no-store`.
 
-`GET /pair/qr.png?code=493817` (local only) is a PNG of `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`.
-It answers `404` when the code is not the active one any more.
+`GET /pair/qr.png` (local only) is a PNG of `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`
+for the active code, or `404` when no code can be claimed.
 
 `POST /pair/claim` (no token; the network rules still apply):
 
@@ -164,19 +167,23 @@ It answers `404` when the code is not the active one any more.
 ```
 
 - `code` may be typed with a space or dash (`493 817`, `493-817`).
-- `device_name` is 1 to 64 characters, trimmed, without control characters.
+- `device_name` is 1 to 64 characters after trimming, without control or formatting characters (emoji are fine).
 - `device_type` is one of `windows`, `macos`, `android`, `ios`, `browser`, `viewer`. Phone browsers opening
   the dashboard pair as `viewer`; the iPhone's Shortcuts use `ios`.
 
-Response `201`. The token is shown only once:
+Response `201` with `Cache-Control: no-store`. The token is shown only once:
 
 ```json
 { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal" }
 ```
 
-Device IDs count up per type (`android-1`, `android-2`) and are never reused. Codes are single use and expire
-after 5 minutes: `400 invalid_code` for a wrong, used or expired code (the message says how many tries are
-left); 5 wrong tries lock the code (`429 too_many_attempts`, even for the right code) until a new one is started.
+- Device IDs count up per type and are never reused: `windows-1`, `mac-1`, `android-1`, `iphone-1`,
+  `browser-1`, `viewer-1`. Collectors send the `device_id` they got here (the Shortcuts ask for it on import).
+- Codes are single use and expire after 5 minutes: `400 invalid_code` for a wrong, used or expired code (the
+  message says how many tries are left).
+- 5 wrong tries from one address lock that address out of the code, and 20 wrong tries in total lock the code
+  for everyone (`429 too_many_attempts`, even for the right code), until a new one is started. One noisy
+  device on the Wi-Fi cannot lock out your phone.
 
 ### Devices
 
@@ -197,21 +204,28 @@ revoked, `404` for an unknown device). The device's data stays.
 ### Local network discovery
 
 While a profile runs, it advertises `_daytrace._tcp` on the LAN (`Daytrace hub (<profile>)`, TXT `profile`,
-`version`, `api=/api/v1`) with the host name `daytrace-hub.local`. `DAYTRACE_MDNS=off` turns this off;
-`DAYTRACE_MDNS_NAME` changes the host name (useful when two hubs share one Wi-Fi). Check it with
-`dns-sd -B _daytrace._tcp` on a Mac.
+`version`, `api=/api/v1`) with the host name `daytrace-<pc name>.local`, for example
+`daytrace-desktop-ab12cd.local`, so two hubs on one Wi-Fi never claim the same name. Only LAN addresses are
+announced (mDNS does not cross Tailscale).
+
+- The announcement starts in the background (the hub serves at once) and the addresses are checked every
+  30 seconds, so a new Wi-Fi, a new DHCP address or Wi-Fi connecting after the hub started is picked up.
+- `DAYTRACE_MDNS=off` turns it off (`on` / `off`; anything else is an error). `DAYTRACE_MDNS_NAME` sets the host
+  name (one DNS label).
+- Check it with `dns-sd -B _daytrace._tcp` on a Mac. Windows Firewall asks once to allow Python on private
+  networks; allow it, or phones cannot reach the hub at all.
 
 ### GET /timeline?date=2026-09-25&tz=America/Toronto
 
 ```json
 {
   "date": "2026-09-25", "tz": "America/Toronto",
-  "lanes": [ { "device_id": "windows-desk", "device_type": "windows",
+  "lanes": [ { "device_id": "windows-1", "device_type": "windows",
     "sessions": [ { "start": "...", "end": "...", "minutes": 18.6, "app": "Code", "category": "work", "title": "stats.py" } ] } ],
   "calendar": [ { "start": "...", "end": "...", "title": "Study: algorithms" } ],
   "sleep": [ { "start": "...", "end": "...", "minutes": 445, "estimated": false } ],
   "meals": [ { "time": "...", "items": ["roti", "dal"], "meal_type": "dinner" } ],
-  "totals": { "minutes": 512.4, "by_device": { "windows-desk": 301.2, "android-1": 211.2 } },
+  "totals": { "minutes": 512.4, "by_device": { "windows-1": 301.2, "android-1": 211.2 } },
   "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "America/Toronto" }, "source": "real", "estimated": false }
 }
 ```
@@ -249,7 +263,7 @@ or `calendar`, and `range` is `today`, `7d`, `30d` or `YYYY-MM-DD..YYYY-MM-DD`:
   "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "..." }, "source": "seed", "estimated": false },
   "metrics": [ { "id": "screen_time", "label": "Screen time", "value": 3120, "unit": "minutes",
     "explain": "All app and window time across devices, AFK removed.", "estimated": false } ],
-  "series": { "trend": { "type": "stacked_area", "x": ["2026-09-19", "..."], "stacks": { "windows-desk": [301, "..."] } } } }
+  "series": { "trend": { "type": "stacked_area", "x": ["2026-09-19", "..."], "stacks": { "windows-1": [301, "..."] } } } }
 ```
 
 `GET /wrapped?week=2026-W39` returns `{ "week": "...", "stats": [...], "streaks": [...], "lines": ["...", "...", "..."], "meta": {...} }`.

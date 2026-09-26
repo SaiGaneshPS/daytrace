@@ -2,7 +2,8 @@
 
 Pairing: on the hub computer, POST /pair/start shows a 6-digit code (and a QR code with the hub URL). The
 phone sends that code to POST /pair/claim and gets its own token. Codes live in memory, one at a time:
-single use, 5 minutes, and 5 wrong tries lock the code until a new one is started.
+single use and 5 minutes. Wrong guesses are limited per client (5) and per code (20), so nobody can guess
+the code, and one noisy device on the Wi-Fi cannot lock everyone else out.
 """
 from __future__ import annotations
 
@@ -13,24 +14,30 @@ import secrets
 import sqlite3
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated
 
 import qrcode
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
-from ..auth import Reader, get_database, register_device, require_local
+from ..auth import DeviceType, Reader, get_database, register_device, require_local
 from ..config import Settings
 from ..db import Database, transaction, utc_text
 from ..discovery import detect_phone_addresses, hub_url, mdns_url
 from . import API_PREFIX, ApiError
 
 CODE_LIFETIME = timedelta(minutes=5)
-MAX_WRONG_TRIES = 5
-DeviceType = Literal["windows", "macos", "android", "ios", "browser", "viewer"]
+WRONG_TRIES_PER_CLIENT = 5
+WRONG_TRIES_PER_CODE = 20  # across all clients: at most 20 guesses out of a million per code
+# Device IDs start with these, so the first iPhone is iphone-1 like the Shortcut examples.
+ID_PREFIX = {"windows": "windows", "macos": "mac", "android": "android", "ios": "iphone", "browser": "browser",
+             "viewer": "viewer"}
+NO_STORE = {"Cache-Control": "no-store"}
+ZERO_WIDTH_JOINER = chr(0x200D)
 
 router = APIRouter(prefix=API_PREFIX, tags=["devices"])
 
@@ -41,11 +48,15 @@ router = APIRouter(prefix=API_PREFIX, tags=["devices"])
 @dataclass
 class ActiveCode:
     code: str
-    url: str
+    url: str | None
     expires_at: datetime  # shown to people
     expires_monotonic: float  # used for the check, so clock changes cannot extend a code
-    wrong_tries: int = 0
+    wrong_by_client: dict[str, int] = field(default_factory=dict)
     used: bool = False
+
+    @property
+    def wrong_tries(self) -> int:
+        return sum(self.wrong_by_client.values())
 
 
 class PairingCodes:
@@ -53,29 +64,59 @@ class PairingCodes:
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
-        self.lock = threading.Lock()
-        self.active: ActiveCode | None = None
+        self._lock = threading.Lock()
+        self._active: ActiveCode | None = None
 
-    def start(self, url: str) -> ActiveCode:
-        with self.lock:
-            self.active = ActiveCode(
+    def start(self, url: str | None) -> ActiveCode:
+        with self._lock:
+            self._active = ActiveCode(
                 code=f"{secrets.randbelow(1_000_000):06d}",
                 url=url,
                 expires_at=datetime.now(UTC) + CODE_LIFETIME,
                 expires_monotonic=self.clock() + CODE_LIFETIME.total_seconds(),
             )
-            return self.active
+            return self._active
 
-    def usable(self, code: str) -> ActiveCode | None:
-        """The active code if it matches and can still be claimed (for showing its QR code)."""
-        with self.lock:
-            active = self.active
-            if active is None or not self._open(active) or not hmac.compare_digest(active.code, code):
-                return None
-            return active
+    def _open(self, active: ActiveCode | None) -> bool:
+        return (
+            active is not None
+            and not active.used
+            and active.wrong_tries < WRONG_TRIES_PER_CODE
+            and self.clock() < active.expires_monotonic
+        )
 
-    def _open(self, active: ActiveCode) -> bool:
-        return not active.used and active.wrong_tries < MAX_WRONG_TRIES and self.clock() < active.expires_monotonic
+    def current(self) -> ActiveCode | None:
+        """The active code while it can still be claimed (for its QR code)."""
+        with self._lock:
+            return self._active if self._open(self._active) else None
+
+    def claim(self, code: str, client: str, register: Callable[[], PairClaimed]) -> PairClaimed:
+        """Check the code for this client and, if right, run `register` (which stores the device).
+
+        Serialized, so a code can never be used twice. The code is spent only after `register` succeeds.
+        """
+        with self._lock:
+            active = self._active
+            if active is not None and active.wrong_by_client.get(client, 0) >= WRONG_TRIES_PER_CLIENT:
+                raise _too_many()
+            if active is not None and active.wrong_tries >= WRONG_TRIES_PER_CODE:
+                raise _too_many()
+            if not self._open(active):
+                raise ApiError(400, "invalid_code", "that code is not valid any more; start pairing again on the hub")
+            assert active is not None
+            if not hmac.compare_digest(active.code, code):
+                active.wrong_by_client[client] = active.wrong_by_client.get(client, 0) + 1
+                left = WRONG_TRIES_PER_CLIENT - active.wrong_by_client[client]
+                if left <= 0 or active.wrong_tries >= WRONG_TRIES_PER_CODE:
+                    raise _too_many()
+                raise ApiError(400, "invalid_code", f"wrong code; {left} {'try' if left == 1 else 'tries'} left")
+            claimed = register()
+            active.used = True
+            return claimed
+
+
+def _too_many() -> ApiError:
+    return ApiError(429, "too_many_attempts", "too many wrong codes; start pairing again on the hub")
 
 
 def get_pairing(request: Request) -> PairingCodes:
@@ -94,30 +135,36 @@ def _code_digits(value: object) -> object:
     return value.replace(" ", "").replace("-", "") if isinstance(value, str) else value
 
 
+def _trimmed(value: object) -> object:
+    return value.strip() if isinstance(value, str) else value
+
+
 class PairStarted(BaseModel):
     code: str
     expires_at: datetime
-    url: str = Field(description="The hub address to put in the QR code: its LAN IP, which every phone can reach.")
+    url: str | None = Field(
+        description="The hub address for the QR code (its LAN IP, which every phone can reach), or null when "
+        "this computer has no LAN address right now."
+    )
     urls: list[str] = Field(description="Every address phones can use, LAN first, then Tailscale on shared-dev.")
-    mdns_url: str
-    qr: str
+    mdns_url: str | None = Field(description="The .local address, when mDNS is on.")
+    qr: str | None
 
 
 class PairClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: Annotated[str, BeforeValidator(_code_digits), Field(pattern=r"^[0-9]{6}$")]
-    device_name: Annotated[str, Field(min_length=1, max_length=64)]
+    device_name: Annotated[str, BeforeValidator(_trimmed), Field(min_length=1, max_length=64)]
     device_type: DeviceType
 
     @field_validator("device_name")
     @classmethod
-    def _readable_name(cls, value: str) -> str:
-        name = value.strip()
-        if not name:
-            raise ValueError("device_name must not be blank")
-        if any(ord(char) < 32 or ord(char) == 127 for char in name):
-            raise ValueError("device_name must not contain control characters")
+    def _readable_name(cls, name: str) -> str:
+        # Control and formatting characters (for example U+202E, which flips text) could disguise a name.
+        # The zero-width joiner stays allowed because emoji such as a person at a laptop need it.
+        if any(unicodedata.category(char) in ("Cc", "Cf") and char != ZERO_WIDTH_JOINER for char in name):
+            raise ValueError("device_name must not contain control or formatting characters")
         return name
 
 
@@ -153,31 +200,17 @@ def qr_payload(active: ActiveCode) -> str:
 
 
 def next_device_id(conn: sqlite3.Connection, device_type: str) -> str:
-    """android-1, android-2, ...: the next free number, never reusing one (revoked devices keep their data)."""
-    prefix = f"{device_type}-"
+    """iphone-1, iphone-2, ...: the next free number, never reusing one (revoked devices keep their data)."""
+    prefix = f"{ID_PREFIX[device_type]}-"
     rows = conn.execute("SELECT device_id FROM devices WHERE substr(device_id, 1, ?) = ?", (len(prefix), prefix))
     numbers = [int(rest) for (device_id,) in rows if (rest := device_id[len(prefix):]).isdigit()]
     return f"{prefix}{max(numbers, default=0) + 1}"
 
 
-def claim(pairing: PairingCodes, database: Database, body: PairClaim, profile: str) -> PairClaimed:
-    """Check the code and add the device. Serialized, so a code can never be used twice."""
-    with pairing.lock:
-        active = pairing.active
-        if active is not None and active.wrong_tries >= MAX_WRONG_TRIES:
-            raise ApiError(429, "too_many_attempts", "too many wrong codes; start pairing again on the hub")
-        if active is None or active.used or pairing.clock() >= active.expires_monotonic:
-            raise ApiError(400, "invalid_code", "that code is not valid any more; start pairing again on the hub")
-        if not hmac.compare_digest(active.code, body.code):
-            active.wrong_tries += 1
-            if active.wrong_tries >= MAX_WRONG_TRIES:
-                raise ApiError(429, "too_many_attempts", "too many wrong codes; start pairing again on the hub")
-            left = MAX_WRONG_TRIES - active.wrong_tries
-            raise ApiError(400, "invalid_code", f"wrong code; {left} {'try' if left == 1 else 'tries'} left")
-        with database.connect() as conn, transaction(conn):
-            device_id = next_device_id(conn, body.device_type)
-            token = register_device(conn, device_id=device_id, name=body.device_name, device_type=body.device_type)
-        active.used = True  # only after the device was stored, so a failed write leaves the code usable
+def add_device(database: Database, body: PairClaim, profile: str) -> PairClaimed:
+    with database.connect() as conn, transaction(conn):
+        device_id = next_device_id(conn, body.device_type)
+        token = register_device(conn, device_id=device_id, name=body.device_name, device_type=body.device_type)
     return PairClaimed(
         device_id=device_id, device_type=body.device_type, name=body.device_name, token=token, profile=profile
     )
@@ -190,17 +223,20 @@ def claim(pairing: PairingCodes, database: Database, body: PairClaim, profile: s
     summary="Show a new pairing code (hub computer only)",
 )
 def pair_start(
-    settings: Annotated[Settings, Depends(get_settings)], pairing: Annotated[PairingCodes, Depends(get_pairing)]
+    response: Response,
+    settings: Annotated[Settings, Depends(get_settings)],
+    pairing: Annotated[PairingCodes, Depends(get_pairing)],
 ) -> PairStarted:
     urls = [hub_url(settings, address) for address in detect_phone_addresses(settings)]
-    active = pairing.start(urls[0] if urls else mdns_url(settings))
+    active = pairing.start(urls[0] if urls else None)
+    response.headers.update(NO_STORE)
     return PairStarted(
         code=active.code,
         expires_at=active.expires_at.astimezone(),
         url=active.url,
         urls=urls,
-        mdns_url=mdns_url(settings),
-        qr=f"{API_PREFIX}/pair/qr.png?code={active.code}",
+        mdns_url=mdns_url(settings) if settings.advertise_mdns else None,
+        qr=f"{API_PREFIX}/pair/qr.png" if active.url else None,
     )
 
 
@@ -211,25 +247,28 @@ def pair_start(
     responses={200: {"content": {"image/png": {}}}},
     summary="QR code for the active pairing code (hub computer only)",
 )
-def pair_qr(
-    pairing: Annotated[PairingCodes, Depends(get_pairing)], code: Annotated[str, Query(pattern=r"^[0-9]{6}$")]
-) -> Response:
-    active = pairing.usable(code)
-    if active is None:
-        raise ApiError(404, "not_found", "no active pairing code matches; start pairing again")
+def pair_qr(pairing: Annotated[PairingCodes, Depends(get_pairing)]) -> Response:
+    active = pairing.current()
+    if active is None or active.url is None:
+        raise ApiError(404, "not_found", "no pairing code is active; start pairing again")
     buffer = io.BytesIO()
     qrcode.make(qr_payload(active), box_size=8, border=2).save(buffer)
-    return Response(content=buffer.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
+    return Response(content=buffer.getvalue(), media_type="image/png", headers=NO_STORE)
 
 
 @router.post("/pair/claim", response_model=PairClaimed, status_code=201, summary="Trade a pairing code for a token")
 def pair_claim(
     body: PairClaim,
+    request: Request,
+    response: Response,
     settings: Annotated[Settings, Depends(get_settings)],
     pairing: Annotated[PairingCodes, Depends(get_pairing)],
     database: Annotated[Database, Depends(get_database)],
 ) -> PairClaimed:
-    return claim(pairing, database, body, settings.profile.name)
+    client = request.client.host if request.client else "unknown"
+    claimed = pairing.claim(body.code, client, lambda: add_device(database, body, settings.profile.name))
+    response.headers.update(NO_STORE)  # the only copy of the token
+    return claimed
 
 
 # --- devices --------------------------------------------------------------------------------------------------

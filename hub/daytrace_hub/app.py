@@ -56,7 +56,7 @@ class NetworkGuard:
             )
         if not host_allowed(Headers(scope=scope).get("host"), profile):
             return error_response(
-                403, "forbidden_host", "use the hub's IP address, its PC name or daytrace-hub.local to reach it"
+                403, "forbidden_host", "use the hub's IP address, its PC name or its .local name to reach it"
             )
         return None
 
@@ -77,7 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database.initialize()
         advertiser = Advertiser(settings) if settings.advertise_mdns else None
         if advertiser is not None:
-            await advertiser.start()
+            advertiser.start()  # in the background: the hub serves right away
         try:
             yield
         finally:

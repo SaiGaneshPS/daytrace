@@ -7,6 +7,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import socket
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -82,8 +83,8 @@ def _networks(*groups: Iterable[str]) -> tuple[IPNetwork, ...]:
     return tuple(ipaddress.ip_network(cidr) for group in groups for cidr in group)
 
 
-_LOOPBACK_NETWORKS = _networks(LOOPBACK)
-_TAILSCALE_NETWORKS = _networks(TAILSCALE)
+LOOPBACK_NETWORKS = _networks(LOOPBACK)
+TAILSCALE_NETWORKS = _networks(TAILSCALE)
 DEFAULT_LAN_NETWORKS = _networks(PRIVATE_LAN)
 
 
@@ -106,7 +107,8 @@ def parse_lan_networks(text: str) -> tuple[IPNetwork, ...]:
     return tuple(networks)
 
 
-def _ip(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+def parse_ip(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """An IP address from a client or Host value, or None. IPv4-mapped IPv6 becomes plain IPv4."""
     try:
         address = ipaddress.ip_address(text.split("%", 1)[0])  # drop an IPv6 zone such as fe80::1%eth0
     except ValueError:
@@ -125,36 +127,48 @@ def client_allowed(
     DAYTRACE_LAN_NETWORKS narrows them), Tailscale addresses only for profiles with allow_tailscale.
     Anything else (public addresses, unparseable hosts) is refused.
     """
-    address = _ip(host) if host else None
+    address = parse_ip(host) if host else None
     if address is None:
         return False
-    if any(address in network for network in _TAILSCALE_NETWORKS):
+    if any(address in network for network in TAILSCALE_NETWORKS):
         return profile.allow_tailscale
-    return any(address in network for network in (*_LOOPBACK_NETWORKS, *lan_networks))
+    return any(address in network for network in (*LOOPBACK_NETWORKS, *lan_networks))
 
 
 def host_allowed(host_header: str | None, profile: Profile) -> bool:
     """Blocks DNS rebinding: a web page on evil.example must not be able to talk to the hub as a local client.
 
     Allowed Host values: IP addresses, single-label names (localhost, a PC name), names ending in one of
-    PRIVATE_NAME_SUFFIXES (daytrace-hub.local, router names like pc.lan) and, on profiles that accept
+    PRIVATE_NAME_SUFFIXES (daytrace-<pc>.local, router names like pc.lan) and, on profiles that accept
     Tailscale, MagicDNS names (*.ts.net). Public DNS names can be pointed at any address by whoever owns
     them, so they are refused. A request without a Host header comes from a tool, not a browser, and is
     allowed.
+
+    Someone on the same LAN can still answer a local name for a browser on the hub computer, so trusting a
+    request as the hub computer itself takes more than this: see auth.is_trusted_local().
     """
     if not host_header:
         return True
+    name = host_name(host_header)
+    if not name:
+        return False
+    if parse_ip(name) is not None or "." not in name or name.endswith(PRIVATE_NAME_SUFFIXES):
+        return True
+    return profile.allow_tailscale and name.endswith(".ts.net")
+
+
+def host_name(host_header: str) -> str:
+    """The name part of a Host header or URL authority, lowercase, without port, brackets or final dot.
+
+    Returns "" for values that do not parse (such as "[not-an-ip]:80").
+    """
     host = host_header.strip().lower()
     if host.startswith("["):  # [::1]:8765
         end = host.find("]")
-        return end > 0 and _ip(host[1:end]) is not None
+        inner = host[1:end] if end > 0 else ""
+        return inner if parse_ip(inner) is not None else ""
     name = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
-    name = name.rstrip(".")
-    if not name:
-        return False
-    if _ip(name) is not None or "." not in name or name.endswith(PRIVATE_NAME_SUFFIXES):
-        return True
-    return profile.allow_tailscale and name.endswith(".ts.net")
+    return name.rstrip(".")
 
 
 def default_data_dir(env: Mapping[str, str] | None = None, platform: str | None = None) -> Path:
@@ -171,6 +185,15 @@ def default_data_dir(env: Mapping[str, str] | None = None, platform: str | None 
 
 
 MDNS_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+_TRUE = ("1", "on", "true", "yes")
+_FALSE = ("0", "off", "false", "no")
+
+
+def default_mdns_name(computer_name: str) -> str:
+    """daytrace-<pc name> as one DNS label, so two hubs on the same Wi-Fi never claim the same .local name."""
+    label = re.sub(r"[^a-z0-9-]+", "-", computer_name.split(".", 1)[0].lower()).strip("-")
+    name = f"daytrace-{label}"[:63].rstrip("-") if label else "daytrace-hub"
+    return name if MDNS_NAME.fullmatch(name) else "daytrace-hub"
 
 
 @dataclass(frozen=True)
@@ -201,10 +224,13 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
         data_dir = default_data_dir(env)
     lan_text = env.get("DAYTRACE_LAN_NETWORKS", "").strip()
     lan_networks = parse_lan_networks(lan_text) if lan_text else DEFAULT_LAN_NETWORKS
-    advertise = env.get("DAYTRACE_MDNS", "on").strip().lower() not in ("0", "off", "false", "no")
-    mdns_name = env.get("DAYTRACE_MDNS_NAME", "daytrace-hub").strip().lower()
+    advertise_text = env.get("DAYTRACE_MDNS", "").strip().lower() or "on"
+    if advertise_text not in (*_TRUE, *_FALSE):
+        raise ValueError(f"DAYTRACE_MDNS must be on or off, got {advertise_text!r}")
+    mdns_name = env.get("DAYTRACE_MDNS_NAME", "").strip().lower() or default_mdns_name(socket.gethostname())
     if not MDNS_NAME.fullmatch(mdns_name):
         raise ValueError(f"DAYTRACE_MDNS_NAME must be one DNS label like daytrace-hub, got {mdns_name!r}")
+    advertise = advertise_text in _TRUE
     return Settings(
         profile=get_profile(profile_name),
         data_dir=data_dir,
