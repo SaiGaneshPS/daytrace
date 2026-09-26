@@ -340,11 +340,28 @@ app or site seen in the last 30 days, most used first (at most 500):
     address is checked, and the connection goes to a checked address. Cloud metadata addresses are always refused.
     Only plain request headers are sent, never credentials.
   - A malformed `DAYTRACE_LLM_BASE_URL` does not stop the hub: `error` explains it.
-- `GET /story?date=` returns `{ "date": "...", "story": "...", "facts_used": [ { "label": "...", "value": 125, "unit": "minutes" } ], "model": "...", "cached": false }`.
+- `GET /story?date=&tz=` (DT-39, viewer) returns a 4 to 6 sentence story of the day:
+
+  ```json
+  { "date": "2026-09-25", "tz": "America/Toronto", "story": "...",
+    "facts_used": [ { "label": "screen time", "value": 155, "unit": "minutes" } ],
+    "model": "qwen3-14b", "cached": false, "fallback": false, "reason": null }
+  ```
+
+  - The facts come from the stats engine. `unit` is one of `minutes`, `times`, `score`, `percent`, `per hour`
+    or `time` (HH:MM, local).
+  - Every number in `story` matches a fact: digits, number words and clock times are all read. Rounding is
+    allowed (plus or minus 1 minute, point or percent), and so are the usual ways to say a duration
+    (125 minutes, 2 hours 5 minutes, about 2 hours, 2.1 hours). A number followed by a unit only matches facts
+    of that unit.
+  - A story with any other number is retried once. After that, or when the model is away, the answer is a plain
+    template story from the same facts, with `fallback: true` and `reason` saying why. It is still `200`.
+  - Stories the model wrote are cached per day and time zone until the facts change (`cached: true`), so today's
+    story follows new data. A day without data gets a short note and no model call.
 - `POST /ask` with `{ "question": "...", "tz": "..." }` returns `{ "answer": "...", "facts_used": [...], "tools_called": ["get_totals"], "chart": null }`. `chart`, when present, is a small series the dashboard can draw.
 
-Every number in `story` and `answer` appears in `facts_used` (the number check, DT-39). When the model is
-down these return 503 `ai_unavailable`.
+Every number in `story` and `answer` appears in `facts_used` (the number check, DT-39). `/story` falls back to a
+template when the model is down; `/ask` (DT-40) returns 503 `ai_unavailable` then.
 
 ### Insights and Wrapped
 
