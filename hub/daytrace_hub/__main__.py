@@ -47,26 +47,43 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def seed(profile_name: str, days: int, tz_name: str | None) -> int:
-    """Replace a demo profile's seed data. The personal profile (real data) is refused."""
+    """Replace a demo profile's seed data. Profiles with real data (personal) are refused.
+
+    Expected problems get a one-line message and exit code 2; anything else is a bug and keeps its traceback.
+    """
+    import sqlite3
     from zoneinfo import ZoneInfo
 
-    from .api.timeline import local_zone_name
-    from .db import Database
+    from .api.timeline import known_zones, local_zone_name
+    from .seed import SeedRefused
     from .seed import seed as fill
 
-    settings = load_settings(profile_name)
     zone_name = tz_name or local_zone_name()
+    if zone_name not in known_zones():
+        return _not_seeded(f"unknown time zone {zone_name!r}; use an IANA name such as America/Toronto")
     try:
-        result = fill(Database(settings.database_path), profile_name, days, ZoneInfo(zone_name))
-    except (ValueError, KeyError, OSError) as error:  # refused profile, bad day count, unknown zone
-        print(f"Not seeded: {error}", file=sys.stderr)
-        return 2
+        settings = load_settings(profile_name)
+    except ValueError as error:  # a bad DAYTRACE_* environment variable
+        return _not_seeded(str(error))
+    try:
+        result = fill(settings, days, ZoneInfo(zone_name))
+    except SeedRefused as error:
+        return _not_seeded(str(error))
+    except sqlite3.OperationalError as error:
+        return _not_seeded(f"the {profile_name} database is busy or unreadable ({error}); stop its hub and retry")
+    except RuntimeError as error:  # a database from a newer hub, or seed data the hub refused
+        return _not_seeded(str(error))
     print(f"Seeded the {profile_name} profile: {result.first_day} to {result.last_day} ({zone_name}),"
-          f" {result.total} events")
+          f" {result.total} events (the first night's sleep starts the evening before)")
     for device_id, count in result.events.items():
         print(f"  {device_id}: {count}")
     print(f"  Database: {settings.database_path}")
     return 0
+
+
+def _not_seeded(message: str) -> int:
+    print(f"Not seeded: {message}", file=sys.stderr)
+    return 2
 
 
 def run(profile_name: str) -> int:

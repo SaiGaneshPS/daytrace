@@ -120,7 +120,7 @@ def minutes(seconds: float) -> float:
 
 
 @lru_cache(maxsize=1)
-def _known_zones() -> frozenset[str]:
+def known_zones() -> frozenset[str]:
     return frozenset(available_timezones())
 
 
@@ -130,13 +130,13 @@ def local_zone_name() -> str:
         name = tzlocal.get_localzone_name()
     except Exception:  # noqa: BLE001 - tzlocal raises different errors on each OS; UTC is the safe answer
         return "UTC"
-    return name if name in _known_zones() else "UTC"
+    return name if name in known_zones() else "UTC"
 
 
 def resolve_tz(name: str | None) -> tuple[tzinfo, str]:
     """An IANA zone such as America/Toronto; the hub computer's own zone when none is given."""
     name = local_zone_name() if name is None else name.strip()
-    if name not in _known_zones():  # also refuses folders such as "America", which crash ZoneInfo on Windows
+    if name not in known_zones():  # also refuses folders such as "America", which crash ZoneInfo on Windows
         raise ApiError(400, "bad_request", f"unknown time zone {name!r}; use an IANA name such as America/Toronto")
     return ZoneInfo(name), name
 
