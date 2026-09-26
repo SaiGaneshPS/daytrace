@@ -163,7 +163,7 @@ def test_an_unknown_ticket_is_a_warning_not_a_failure(tmp_path: Path) -> None:
 def test_a_notion_error_fails_the_step_with_a_hint(tmp_path: Path) -> None:
     code, lines = run(tmp_path, FakeNotion(fail=401), "opened")
     assert code == 1 and lines[0].startswith("::error::DT-5: Notion answered 401")
-    assert "Connections" in lines[0] and "secret-test-token" not in lines[0]
+    assert "Connections" in lines[0] and "secret-test-token" not in lines[0] and ".." not in lines[0]
 
 
 def test_messages_can_never_start_a_workflow_command() -> None:

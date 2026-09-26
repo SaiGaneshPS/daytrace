@@ -205,7 +205,8 @@ def main(env: Mapping[str, str] | None = None, http_factory: Callable[[str], Htt
         result = apply(http, pages[0], change)
     except NotionError as error:
         hint = " Check that the integration is added to the Tasks database under Connections." if error.status in (401, 403, 404) else ""
-        out(annotation("error", f"{ticket}: {error}.{hint}"))
+        reason = str(error).rstrip(".")  # Notion ends its messages with a period already
+        out(annotation("error", f"{ticket}: {reason}.{hint}"))
         return 1
     out(f"{ticket}: {result}")
     return 0
