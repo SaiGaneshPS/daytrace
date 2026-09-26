@@ -17,7 +17,9 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Times | ISO 8601 with an offset, for example `2026-09-25T14:03:10-04:00`. Seconds and up to 9 fractional digits are optional, `T` and `Z` may be lowercase. Times without an offset, Unix numbers and impossible dates are rejected. |
 | Days | `YYYY-MM-DD`, interpreted in the time zone given by `tz` (an IANA name such as `America/Toronto`). Default: the hub computer's time zone. |
 | Auth | `Authorization: Bearer <token>`. Devices get a token when they pair (DT-12); the dashboard on phones pairs as a `viewer`. |
-| Networks | Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`, `fe80::/10`). Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. |
+| Networks | The hub listens on IPv4 (`0.0.0.0`). Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, and `fc00::/7`, `fe80::/10` for IPv6-mapped peers). On Wi-Fi you do not trust (venue, cafe), set `DAYTRACE_LAN_NETWORKS` to your own subnet, for example `192.168.1.0/24`, or stop the personal profile. Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. HTTP and WebSocket are checked the same way. |
+| Host names | To block DNS rebinding, the `Host` header must be an IP address, a single-label name (`localhost`, the PC name), a private name (`*.local`, `*.home.arpa`, `*.internal`, `*.lan`, `*.home`, `*.localdomain`) or, on shared-dev only, a Tailscale MagicDNS name (`*.ts.net`). Anything else gets `403 forbidden_host`. |
+| Forwarding | Never forward the personal port with a VS Code tunnel, `tailscale serve` / `funnel` or `ssh -L`: forwarded traffic arrives from `127.0.0.1` and would look like the hub computer itself. Tunnel and `ts.net` host names are refused on personal, but `ssh -L` to `localhost` is not. |
 | Local only | Endpoints marked *local only* accept requests only from the hub computer itself (`127.0.0.1` / `::1`). |
 | Accuracy | Every response that feeds a chart or a number on screen includes `meta`: `{ "unit", "range": { "start", "end", "tz" }, "source": "real" \| "seed" \| "mixed", "estimated": true \| false }`. |
 
@@ -31,7 +33,8 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 |---|---|---|
 | 400 | `bad_request` | Malformed JSON, a body that is not one event or `{"events": [...]}`, bad query parameters, wrong confirmation phrase |
 | 401 | `unauthorized` | Missing, unknown or revoked token |
-| 403 | `forbidden_network` | The request came from a network this profile does not serve: the public internet, or Tailscale on a profile other than shared-dev. Applies to every path, before auth |
+| 403 | `forbidden_network` | The request came from a network this profile does not serve: the public internet, a LAN outside `DAYTRACE_LAN_NETWORKS`, or Tailscale on a profile other than shared-dev. Applies to every path, before auth |
+| 403 | `forbidden_host` | The `Host` header is a public DNS name (possible DNS rebinding). Applies to every path, before auth |
 | 403 | `local_only` | A local-only endpoint was called from another machine |
 | 404 | `not_found` | Unknown device, tab or resource |
 | 413 | `batch_too_large` | More than 500 events in one request (checked before any event is validated) |

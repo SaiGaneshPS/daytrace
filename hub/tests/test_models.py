@@ -215,10 +215,19 @@ def test_bad_events_are_rejected_by_schema_and_models(case: str) -> None:
     [
         ("end before start", with_changes(SESSION, start="2026-09-25T15:00:00-04:00", end="2026-09-25T14:00:00-04:00")),
         ("February 30", with_changes(SESSION, start="2026-02-30T10:00:00Z", end="2026-03-01T10:00:00Z")),
+        # Valid text, but 04:30 UTC on 10000-01-01 does not exist, so the hub could not store it.
+        (
+            "past year 9999 in UTC",
+            with_changes(SESSION, start="9999-12-31T23:30:00-05:00", end="9999-12-31T23:45:00-05:00"),
+        ),
+        (
+            "before year 1000 in UTC",
+            with_changes(SESSION, start="1000-01-01T00:30:00+01:00", end="1000-01-01T00:45:00+01:00"),
+        ),
     ],
 )
 def test_rules_only_the_models_can_check(case: str, event: dict[str, Any]) -> None:
-    # JSON Schema cannot compare two fields or know month lengths; the hub models reject these.
+    # JSON Schema cannot compare two fields, know month lengths or convert to UTC; the hub models reject these.
     assert schema_accepts(event), case
     assert not model_accepts(event), case
 

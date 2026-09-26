@@ -1,11 +1,12 @@
 -- DT-10: initial schema. Times are stored with db.utc_text() (fixed-width UTC, for example
 -- 2026-09-25T18:03:10.000000Z) so they compare and sort as text; the original offset is kept to show
--- local times.
+-- local times. device_type matches the list in docs/api.md (POST /pair/claim).
+-- Migrations must not contain BEGIN or COMMIT: db.migrate() runs each file in its own transaction.
 
 CREATE TABLE devices (
     device_id   TEXT PRIMARY KEY CHECK (length(device_id) BETWEEN 1 AND 64),
     name        TEXT NOT NULL,
-    device_type TEXT NOT NULL CHECK (device_type IN ('windows', 'macos', 'linux', 'android', 'ios', 'browser', 'viewer')),
+    device_type TEXT NOT NULL CHECK (device_type IN ('windows', 'macos', 'android', 'ios', 'browser', 'viewer')),
     token_hash  TEXT UNIQUE,            -- NULL for the hub's own desktop tracker
     paired_at   TEXT NOT NULL,
     last_seen   TEXT,

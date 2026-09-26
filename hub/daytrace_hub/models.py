@@ -1,7 +1,8 @@
 """DT-9: Pydantic models for events, batches, ingest results and nudges.
 
 These mirror docs/event-schema.json (the contract every collector follows) and add the rules JSON Schema
-cannot express: an end time never before the start time, and real calendar dates (no February 30).
+cannot express: an end time never before the start time, real calendar dates (no February 30), and times
+that still exist once converted to UTC (the hub stores UTC).
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     BeforeValidator,
@@ -64,7 +66,18 @@ def _whole_number(value: Any) -> Any:
     return value
 
 
-Timestamp = Annotated[AwareDatetime, BeforeValidator(_timestamp_text)]
+def _storable_time(value: datetime) -> datetime:
+    """The hub stores times in UTC; 9999-12-31T23:30-05:00 is valid text but has no UTC equivalent."""
+    try:
+        utc_year = value.astimezone(UTC).year
+    except OverflowError:
+        raise ValueError("time is outside the supported range once converted to UTC") from None
+    if utc_year < 1000:
+        raise ValueError("time is outside the supported range once converted to UTC")
+    return value
+
+
+Timestamp = Annotated[AwareDatetime, BeforeValidator(_timestamp_text), AfterValidator(_storable_time)]
 WholeNumber = Annotated[int, BeforeValidator(_whole_number)]
 
 
