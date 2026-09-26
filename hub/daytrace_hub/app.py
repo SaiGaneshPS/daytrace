@@ -16,6 +16,7 @@ from starlette.websockets import WebSocketClose
 
 from . import __version__
 from .api import API_PREFIX, error_response, install_error_handlers
+from .api import ai as ai_api
 from .api import categories as categories_api
 from .api import devices as devices_api
 from .api import events as events_api
@@ -23,6 +24,7 @@ from .api import timeline as timeline_api
 from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
 from .discovery import Advertiser
+from .llm import LLM, load_llm_settings
 
 # 1008 = policy violation; closing before accept makes the server answer the handshake with 403.
 WEBSOCKET_POLICY_VIOLATION = 1008
@@ -69,10 +71,14 @@ class Health(BaseModel):
     version: str
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the hub for one profile. The database is created and migrated when the app starts."""
+def create_app(settings: Settings | None = None, llm: LLM | None = None) -> FastAPI:
+    """Build the hub for one profile. The database is created and migrated when the app starts.
+
+    `llm` is the local model server (DT-37); by default the one DAYTRACE_LLM_BASE_URL names. Tests pass a fake.
+    """
     settings = settings or load_settings()
     database = Database(settings.database_path)
+    model_server = llm or LLM(load_llm_settings())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -85,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             if advertiser is not None:
                 await advertiser.stop()
+            model_server.close()
 
     app = FastAPI(
         title=f"Daytrace hub ({settings.profile.name})",
@@ -94,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.db = database
     app.state.pairing = devices_api.PairingCodes()
+    app.state.llm = model_server
     app.add_middleware(NetworkGuard, settings=settings)
     install_error_handlers(app)
 
@@ -105,4 +113,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(devices_api.router)
     app.include_router(timeline_api.router)
     app.include_router(categories_api.router)
+    app.include_router(ai_api.router)
     return app

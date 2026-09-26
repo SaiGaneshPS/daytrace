@@ -322,7 +322,21 @@ app or site seen in the last 30 days, most used first (at most 500):
 
 ### AI
 
-- `GET /ai/status` returns `{ "model": "...", "reachable": true, "tool_calling": true }`.
+- `GET /ai/status` (DT-37) always answers `200`:
+
+  ```json
+  { "base_url": "http://127.0.0.1:1234/v1", "model": "qwen3-14b", "reachable": true, "tool_calling": true,
+    "models": ["qwen3-14b"], "error": null }
+  ```
+
+  - `reachable` is whether a model server answers `GET /models` (asked once, so a stopped server shows up quickly).
+  - `model` is `DAYTRACE_LLM_MODEL` when it is loaded, otherwise the first model listed.
+  - `tool_calling` is whether that model calls a tool when asked to. It is checked with one short reply and
+    remembered for 10 minutes; it is `null` when there is no usable model.
+  - `error` says, in plain words, what is wrong: no server, the model not loaded, or an address that isn't local.
+  - The model server must be on this computer, the LAN or the tailnet: `DAYTRACE_LLM_BASE_URL` (default LM Studio
+    `http://127.0.0.1:1234/v1`; Ollama is `http://127.0.0.1:11434/v1`). Host names are resolved, and every
+    address is checked before anything is sent.
 - `GET /story?date=` returns `{ "date": "...", "story": "...", "facts_used": [ { "label": "...", "value": 125, "unit": "minutes" } ], "model": "...", "cached": false }`.
 - `POST /ask` with `{ "question": "...", "tz": "..." }` returns `{ "answer": "...", "facts_used": [...], "tools_called": ["get_totals"], "chart": null }`. `chart`, when present, is a small series the dashboard can draw.
 
