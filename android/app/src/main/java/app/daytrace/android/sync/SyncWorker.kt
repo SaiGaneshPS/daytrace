@@ -1,8 +1,12 @@
-// DT-21: sending queued events to the hub. In the background every 15 minutes on Wi-Fi (an unmetered network),
-// and right away when you tap "Sync now". Each run collects new usage first, then sends 200 events at a time.
+// DT-21 / DT-22: sending queued events to the hub, only over Wi-Fi (the phone and the hub on the same Wi-Fi). In the
+// background every 15 minutes on an unmetered network, and right away when you tap "Sync now". Each run collects
+// new usage first, checks the hub proves it paired this phone, then sends 200 events at a time.
 package app.daytrace.android.sync
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.core.content.edit
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -26,9 +30,28 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
-enum class SyncResult { SENT, NOT_PAIRED, PAIR_AGAIN, BLOCKED, UNREACHABLE }
+enum class SyncResult { SENT, NOT_PAIRED, NOT_ON_WIFI, PAIR_AGAIN, BLOCKED, UNREACHABLE }
+
+/**
+ * The phone talks to the hub only over Wi-Fi. The hub accepts only devices on its own network, and every request
+ * is made on the Wi-Fi network itself (never cellular or a VPN), so a sync happens only when the phone is on the
+ * same Wi-Fi as the hub; the hub's proof then confirms it is the right one.
+ */
+object WifiOnly {
+    /** The Wi-Fi network the phone is on right now, or null. Found even when Android prefers another network. */
+    fun network(context: Context): Network? {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        fun isWifi(network: Network) = connectivity.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        connectivity.activeNetwork?.takeIf(::isWifi)?.let { return it }
+        @Suppress("DEPRECATION") // its replacement is a callback; a one-off look is all that is needed here
+        return connectivity.allNetworks.firstOrNull(::isWifi)
+    }
+
+    const val WAITING = "Waiting for Wi-Fi: this phone syncs only when it is on the same Wi-Fi as your hub"
+}
 
 data class SyncReport(val result: SyncResult, val message: String, val sent: Int = 0, val refused: Int = 0)
 
@@ -69,7 +92,9 @@ class Syncer(
     private val store: EventStore,
     private val pairing: HubConfigSource,
     private val status: SyncStatusStore,
-    private val clientFor: (HubConfig) -> HubClient = { HubClient(it) },
+    /** An HTTP client bound to the Wi-Fi network, or null when the phone is not on Wi-Fi (see [WifiOnly]). */
+    private val wifi: () -> OkHttpClient?,
+    private val clientFor: (HubConfig, OkHttpClient) -> HubClient = { config, http -> HubClient(config, http) },
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     suspend fun sync(): SyncReport = LOCK.withLock {
@@ -78,7 +103,13 @@ class Syncer(
 
     private suspend fun syncLocked(): SyncReport {
         val hub = pairing.load() ?: return SyncReport(SyncResult.NOT_PAIRED, "Not paired with a hub yet")
-        val client = clientFor(hub)
+        val http = wifi() ?: return SyncReport(SyncResult.NOT_ON_WIFI, WifiOnly.WAITING)
+        val client = clientFor(hub, http)
+        // Is this really the hub that paired this phone? Asked without the token, which only goes out after a yes.
+        when (val proof = client.proveHub()) {
+            is HubResult.Ok -> if (!proof.value) return SyncReport(SyncResult.BLOCKED, NOT_YOUR_HUB_MESSAGE)
+            else -> return stopped(proof, 0, 0)
+        }
         // After a reinstall the phone counts from 0 again, but the hub may already hold higher seqs from before.
         if (!store.hubCursorRead(hub.deviceId)) {
             when (val cursor = client.cursor()) {
@@ -151,13 +182,17 @@ class Syncer(
     companion object {
         const val BATCH = 200
         private const val PAIR_AGAIN_MESSAGE = "Your hub no longer accepts this phone. Pair again."
+        private const val NOT_YOUR_HUB_MESSAGE =
+            "Something answered at your hub's address but could not prove it is your hub, so nothing was sent. Are you on your home Wi-Fi?"
         private val LOCK = Mutex()
 
         @Volatile private var instance: Syncer? = null
 
         fun get(context: Context): Syncer = instance ?: synchronized(this) {
-            instance ?: Syncer(EventStore.get(context), PairingStore, SyncStatusStore(context.applicationContext))
-                .also { instance = it }
+            instance ?: run {
+                val app = context.applicationContext
+                Syncer(EventStore.get(app), PairingStore.get(app), SyncStatusStore(app), wifi = { WifiOnly.network(app)?.let(HubClient::onNetwork) })
+            }.also { instance = it }
         }
 
         fun events(count: Int) = if (count == 1) "1 event" else "$count events"
@@ -186,7 +221,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
         }
 
-        /** "Sync now": on any network, since you asked. A tap while one is running changes nothing. */
+        /**
+         * "Sync now": runs right away on any connection, so off Wi-Fi the screen says it is waiting for Wi-Fi
+         * instead of nothing happening. A tap while one is running changes nothing.
+         */
         fun syncNow(context: Context) {
             val request = OneTimeWorkRequestBuilder<SyncWorker>()
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())

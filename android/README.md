@@ -8,7 +8,8 @@ Kotlin + Jetpack Compose. Distributed as an APK (a signed release on GitHub Rele
   are in `gradle/libs.versions.toml`.
 - No cloud backup: `allowBackup` is off and the backup rules exclude everything, so the event store and the hub token
   stay on the phone.
-- Room 2.8 (the event store), WorkManager 2.12 (background sync), OkHttp 5 (talking to the hub).
+- Room 2.8 (the event store), WorkManager 2.12 (background sync), OkHttp 5 (talking to the hub), Google's code
+  scanner 16.1 (the pairing QR code).
 
 ## Build
 
@@ -96,11 +97,35 @@ usage checkpoint moves past it, and each commit waits until it is on disk. Event
   link-local or Tailscale. IP addresses must be written as plain `a.b.c.d`, host names are checked each time they
   resolve, and the address actually connected to is checked before a byte of the request is written. No proxy,
   no redirects.
-- **Known limit until DT-22 and DT-47.** "Private" means any private address, not the network you paired on: on
-  another Wi-Fi that uses the same addresses, the phone could reach a stranger's device at your hub's address.
-  Until DT-47 adds HTTPS, events and the token cross the network as plain HTTP.
+- **Only over Wi-Fi (DT-22).** Every request to the hub is made on the Wi-Fi network itself, never cellular or a
+  VPN, so the phone syncs only when it is on the same Wi-Fi as the hub. Off Wi-Fi the status screen says it is
+  waiting for Wi-Fi, and events keep collecting.
+- **The right hub (DT-22).** Before each sync, the phone sends the hub a fresh random nonce, without its token.
+  Only the hub that paired this phone can answer, since the answer is an HMAC keyed with the token's hash, which
+  only that hub stores (`POST /devices/{id}/proof`, docs/api.md). If the answer is wrong, for example a stranger's
+  device at the same address on another Wi-Fi, nothing is sent. A revoked pairing is noticed the same way and the
+  status screen offers **Pair again**. Until DT-47 adds HTTPS, events and the token still cross your Wi-Fi as plain
+  HTTP.
 
-Until DT-22 adds pairing, the phone is not paired: events wait safely in the database and **Sync now** stays off.
+## Pairing (DT-22)
+
+On the status screen, tap **Pair with your hub**. On the PC, start pairing: the Devices page of the dashboard
+(DT-32) shows a QR code and a 6-digit code for 5 minutes. Until that page exists, run this in PowerShell on the
+PC: `Invoke-RestMethod -Method Post http://localhost:8765/api/v1/pair/start`, and open
+`http://localhost:8765/api/v1/pair/qr.png` for the QR code. Then either:
+
+- **Scan the QR code.** It uses Google's code scanner (ML Kit inside Google Play services, on the device), which
+  brings its own camera screen, so the app needs no camera permission.
+- **Type the code.** The hub shows up by itself when it advertises on the Wi-Fi (`_daytrace._tcp`, found with
+  Android's NsdManager); otherwise type its address (the port defaults to 8765).
+
+The hub gives the phone its own device ID (`android-1`, ...) and token. The token is encrypted with an AES-256-GCM
+key kept in the Android Keystore (`sync/PairingStore.kt`), and the app's data is never backed up. **Forget this
+hub** on the status screen deletes the token; events stay on the phone and go to the next hub it pairs with.
+
+Pairing and syncing need the phone and the PC to reach each other on the Wi-Fi. Some routers (including some Bell
+Home Hubs) and most venue Wi-Fi isolate Wi-Fi devices from each other. Then plug the PC into the router with a
+cable, or turn on the PC's Mobile hotspot and connect the phone to it.
 
 ## Files by ticket
 
@@ -109,7 +134,7 @@ Until DT-22 adds pairing, the phone is not paired: events wait safely in the dat
 | Gradle files and wrapper, `AndroidManifest.xml`, `MainActivity.kt`, `DaytraceApp.kt`, `ui/OnboardingScreen.kt`, `ui/StatusScreen.kt`, `ui/theme/*`, `res/*` | DT-19 |
 | `usage/UsageCollector.kt` | DT-20 |
 | `data/*`, `sync/HubClient.kt`, `sync/SyncWorker.kt` | DT-21 |
-| `sync/HubDiscovery.kt`, `sync/PairingStore.kt`, `ui/PairingScreen.kt` | DT-22 |
+| `sync/HubDiscovery.kt`, `sync/PairingStore.kt`, `ui/PairingScreen.kt` (plus the hub's proof endpoint) | DT-22 |
 | `health/HealthCollector.kt`, `calendar/CalendarCollector.kt` | DT-23 |
 | `live/LiveModeService.kt`, `nudge/NudgeNotifier.kt` | DT-24 |
 | `app/build.gradle.kts` signing config | DT-25 |

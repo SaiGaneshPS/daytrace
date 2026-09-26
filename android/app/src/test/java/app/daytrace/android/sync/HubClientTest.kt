@@ -1,4 +1,5 @@
-// DT-21: the hub client: the request the hub expects, every kind of answer, and nothing sent off the home network.
+// DT-21 / DT-22: the hub client: the requests the hub expects, every kind of answer, pairing, the hub's proof, and
+// nothing sent off the home network.
 package app.daytrace.android.sync
 
 import app.daytrace.android.data.EventEntity
@@ -30,6 +31,61 @@ class HubClientTest {
         source = "usagestats", startMs = 1_790_307_924_094, endMs = 1_790_307_984_094, app = app,
         appId = "com.google.android.youtube", zone = "America/St_Johns",
     )
+
+    // --- pairing and the hub's proof (DT-22) ---
+
+    @Test
+    fun theProofIsComputedExactlyLikeTheHubDoes() {
+        // Worked out in Python the way hub/daytrace_hub/api/devices.py does it (hmac over sha256(token).hexdigest()).
+        assertEquals(
+            "abf47d9c4a9d458178268f0ae60604730397727cc2a4ee8faf2b8bb6e7bf27f1",
+            HubClient.expectedProof("dt_secret", "0123456789abcdef0123456789abcdef"),
+        )
+        assertTrue(HubClient.randomNonce().matches(Regex("[0-9a-f]{32}")))
+        assertTrue(HubClient.randomNonce() != HubClient.randomNonce())
+    }
+
+    @Test
+    fun theHubProvesItPairedThisPhoneAndTheTokenStaysHome() {
+        val nonce = "0123456789abcdef0123456789abcdef"
+        val hub = HubClient(HubConfig(server.url("/").toString(), "dt_secret", "android-1"), newNonce = { nonce })
+        server.enqueue(reply(200, """{"device_id": "android-1", "proof": "${HubClient.expectedProof("dt_secret", nonce)}"}"""))
+        server.enqueue(reply(200, """{"device_id": "android-1", "proof": "${HubClient.expectedProof("dt_other", nonce)}"}"""))
+        server.enqueue(reply(401, error("unauthorized")))
+        assertEquals(HubResult.Ok(true), hub.proveHub())
+        assertEquals(HubResult.Ok(false), hub.proveHub()) // something else answered at the hub's address
+        assertTrue(hub.proveHub() is HubResult.Unauthorized) // revoked: pair again
+
+        val request = server.takeRequest()
+        assertEquals("/api/v1/devices/android-1/proof", request.url.encodedPath)
+        assertEquals(nonce, JSONObject(request.body!!.utf8()).getString("nonce"))
+        assertEquals(null, request.headers["Authorization"])
+        assertTrue("dt_secret" !in request.body!!.utf8())
+    }
+
+    @Test
+    fun pairingTradesTheCodeForAToken() {
+        server.enqueue(
+            reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Galaxy S25 Ultra", "token": "dt_new", "profile": "personal"}"""),
+        )
+        val result = HubClient.claim(server.url("/").toString(), "493817", "Galaxy S25 Ultra")
+        assertEquals(HubResult.Ok(Paired("android-1", "dt_new", "personal", "Galaxy S25 Ultra")), result)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/pair/claim", request.url.encodedPath)
+        assertEquals(null, request.headers["Authorization"])
+        val body = JSONObject(request.body!!.utf8())
+        assertEquals(listOf("493817", "Galaxy S25 Ultra", "android"), listOf("code", "device_name", "device_type").map(body::getString))
+        assertTrue("dt_new" !in result.toString()) // never printed
+    }
+
+    @Test
+    fun aWrongCodeComesBackWithTheHubsMessage() {
+        server.enqueue(reply(400, """{"error": {"code": "invalid_code", "message": "wrong code, 4 tries left"}}"""))
+        assertEquals(HubResult.Retry("wrong code, 4 tries left"), HubClient.claim(server.url("/").toString(), "000000", "Phone"))
+        assertTrue(HubClient.claim("http://8.8.8.8:8765", "493817", "Phone") is HubResult.Blocked)
+    }
+
+    // --- events ---
 
     @Test
     fun sendsTheBatchAsThisDeviceWithItsToken() {

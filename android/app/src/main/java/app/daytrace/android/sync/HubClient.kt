@@ -1,8 +1,9 @@
-// DT-21: the hub's HTTP API (docs/api.md) over OkHttp, as this device with its Bearer token. It only ever talks to
-// addresses on your own network: until DT-47 adds HTTPS, events and the token travel as plain HTTP, so they must
-// never leave the LAN (see res/xml/network_security_config.xml).
+// DT-21 / DT-22: the hub's HTTP API (docs/api.md) over OkHttp: pairing, the hub's proof that it paired this phone,
+// the cursor and events. It only ever talks to addresses on your own network: until DT-47 adds HTTPS, events and
+// the token travel as plain HTTP, so they must never leave the LAN (see res/xml/network_security_config.xml).
 package app.daytrace.android.sync
 
+import android.net.Network
 import app.daytrace.android.data.EventEntity
 import app.daytrace.android.data.PhoneEvent
 import okhttp3.Dns
@@ -21,8 +22,11 @@ import java.net.InetAddress
 import java.net.Proxy
 import java.net.UnknownHostException
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.time.ZoneId
 import java.util.concurrent.TimeUnit
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /** How to reach the hub as this device. Pairing (DT-22) fills it in. */
 data class HubConfig(val baseUrl: String, val token: String, val deviceId: String) {
@@ -131,12 +135,37 @@ object PrivateNetwork {
     }
 }
 
-class HubClient(private val config: HubConfig, private val http: OkHttpClient = defaultHttp) {
+/** What pairing gave this phone (POST /pair/claim). */
+data class Paired(val deviceId: String, val token: String, val profile: String, val name: String) {
+    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name)" // never print the token
+}
+
+class HubClient(
+    private val config: HubConfig,
+    private val http: OkHttpClient = defaultHttp,
+    private val newNonce: () -> String = ::randomNonce,
+) {
+    /**
+     * POST /devices/{id}/proof (DT-22): true only if the other end answers a fresh nonce with the HMAC that only
+     * the hub which paired this phone can compute (it is keyed with the token's hash). Sent without the token,
+     * so a stranger's device at the hub's address learns nothing. 401 means the pairing is gone: pair again.
+     */
+    fun proveHub(): HubResult<Boolean> {
+        val url = apiUrl(config.baseUrl, "devices")?.newBuilder()?.addPathSegment(config.deviceId)?.addPathSegment("proof")?.build()
+            ?: return badUrl(config.baseUrl)
+        val nonce = newNonce()
+        val body = JSONObject().put("nonce", nonce).toString()
+        return execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), token = null) { text ->
+            val answer = JSONObject(text).getString("proof").lowercase().toByteArray()
+            MessageDigest.isEqual(answer, expectedProof(config.token, nonce).toByteArray())
+        }
+    }
+
     /** GET /devices/{id}/cursor: the highest seq the hub has for this device, or null when it has none. */
     fun cursor(): HubResult<Long?> {
-        val url = apiUrl("devices")?.newBuilder()?.addPathSegment(config.deviceId)?.addPathSegment("cursor")?.build()
-            ?: return badUrl()
-        return call(Request.Builder().url(url).get()) { body ->
+        val url = apiUrl(config.baseUrl, "devices")?.newBuilder()?.addPathSegment(config.deviceId)?.addPathSegment("cursor")?.build()
+            ?: return badUrl(config.baseUrl)
+        return execute(http, Request.Builder().url(url).get(), config.token) { body ->
             val json = JSONObject(body)
             if (json.isNull("last_seq")) null else json.getLong("last_seq")
         }
@@ -144,9 +173,9 @@ class HubClient(private val config: HubConfig, private val http: OkHttpClient = 
 
     /** POST /events with these events, in this order (at most 500; the sync sends 200 at a time). */
     fun send(events: List<EventEntity>): HubResult<IngestReply> {
-        val url = apiUrl("events") ?: return badUrl()
+        val url = apiUrl(config.baseUrl, "events") ?: return badUrl(config.baseUrl)
         val body = JSONObject().put("events", JSONArray(events.map { it.toHubJson(config.deviceId) })).toString()
-        return call(Request.Builder().url(url).post(body.toRequestBody(JSON))) { text ->
+        return execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), config.token) { text ->
             val reply = JSONObject(text)
             val rejected = reply.optJSONArray("rejected") ?: JSONArray()
             IngestReply(
@@ -157,36 +186,62 @@ class HubClient(private val config: HubConfig, private val http: OkHttpClient = 
         }
     }
 
-    private fun apiUrl(path: String): HttpUrl? {
-        val base = config.baseUrl.toHttpUrlOrNull() ?: return null
-        return base.newBuilder().addPathSegments("api/v1/$path").build()
-    }
-
-    private fun badUrl() = HubResult.Blocked("\"${config.baseUrl}\" is not a web address Daytrace can use")
-
-    private fun <T> call(request: Request.Builder, parse: (String) -> T): HubResult<T> {
-        val built = request.header("Authorization", "Bearer ${config.token}").header("Accept", "application/json").build()
-        return try {
-            PrivateNetwork.check(built.url)
-            http.newCall(built).execute().use { response ->
-                val text = response.body.string()
-                val error = errorOf(text)
-                when {
-                    response.code == 200 -> runCatching { HubResult.Ok(parse(text)) }
-                        .getOrElse { HubResult.Retry("The hub sent a reply Daytrace doesn't understand") }
-                    response.code == 413 -> HubResult.Split(error?.second ?: "HTTP 413")
-                    response.code == 401 || (response.code == 403 && error?.first == "forbidden") ->
-                        HubResult.Unauthorized(error?.second ?: "HTTP ${response.code}")
-                    else -> HubResult.Retry(error?.second ?: "HTTP ${response.code}")
-                }
-            }
-        } catch (e: IOException) {
-            val blocked = generateSequence<Throwable>(e) { it.cause }.firstOrNull { it is NotPrivateAddressException }
-            if (blocked != null) HubResult.Blocked(blocked.message.orEmpty()) else HubResult.Retry(e.message ?: e.javaClass.simpleName)
-        }
-    }
-
     companion object {
+        /**
+         * POST /pair/claim: trades the 6-digit code shown on the PC for this phone's own token. A wrong or
+         * expired code comes back as [HubResult.Retry] with the hub's message (it says how many tries are left).
+         */
+        fun claim(baseUrl: String, code: String, deviceName: String, http: OkHttpClient = defaultHttp): HubResult<Paired> {
+            val url = apiUrl(baseUrl, "pair/claim") ?: return badUrl(baseUrl)
+            val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android").toString()
+            return execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), token = null) { text ->
+                val json = JSONObject(text)
+                Paired(json.getString("device_id"), json.getString("token"), json.getString("profile"), json.getString("name"))
+            }
+        }
+
+        /** HMAC-SHA256 of the nonce, keyed with the token's SHA-256 as lowercase hex (what the hub stores). */
+        fun expectedProof(token: String, nonce: String): String {
+            val tokenHash = hex(MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8)))
+            val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(tokenHash.toByteArray(Charsets.UTF_8), "HmacSHA256")) }
+            return hex(mac.doFinal(nonce.toByteArray(Charsets.UTF_8)))
+        }
+
+        private val random = SecureRandom()
+
+        fun randomNonce(): String = hex(ByteArray(16).also(random::nextBytes))
+
+        private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
+
+        private fun apiUrl(baseUrl: String, path: String): HttpUrl? =
+            baseUrl.toHttpUrlOrNull()?.newBuilder()?.addPathSegments("api/v1/$path")?.build()
+
+        private fun badUrl(baseUrl: String) = HubResult.Blocked("\"$baseUrl\" is not a web address Daytrace can use")
+
+        /** One request to the hub: the private-network checks, the token only when given, and the answer mapped. */
+        private fun <T> execute(http: OkHttpClient, request: Request.Builder, token: String?, parse: (String) -> T): HubResult<T> {
+            if (token != null) request.header("Authorization", "Bearer $token")
+            val built = request.header("Accept", "application/json").build()
+            return try {
+                PrivateNetwork.check(built.url)
+                http.newCall(built).execute().use { response ->
+                    val text = response.body.string()
+                    val error = errorOf(text)
+                    when {
+                        response.code in 200..299 -> runCatching { HubResult.Ok(parse(text)) }
+                            .getOrElse { HubResult.Retry("The hub sent a reply Daytrace doesn't understand") }
+                        response.code == 413 -> HubResult.Split(error?.second ?: "HTTP 413")
+                        response.code == 401 || (response.code == 403 && error?.first == "forbidden") ->
+                            HubResult.Unauthorized(error?.second ?: "HTTP ${response.code}")
+                        else -> HubResult.Retry(error?.second ?: "HTTP ${response.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                val blocked = generateSequence<Throwable>(e) { it.cause }.firstOrNull { it is NotPrivateAddressException }
+                if (blocked != null) HubResult.Blocked(blocked.message.orEmpty()) else HubResult.Retry(e.message ?: e.javaClass.simpleName)
+            }
+        }
+
         private val JSON = "application/json; charset=utf-8".toMediaType()
         const val MAX_TEXT = 200 // the hub's limit for app and app_id
         private const val ZERO_WIDTH_JOINER = 0x200D
@@ -210,6 +265,21 @@ class HubClient(private val config: HubConfig, private val http: OkHttpClient = 
             .build()
 
         private val defaultHttp by lazy { httpClient() }
+
+        /**
+         * The same client with every connection and name lookup made on [network] only (the Wi-Fi, see
+         * [WifiOnly]), whatever Android's default network is: never cellular, never a VPN.
+         */
+        fun onNetwork(network: Network): OkHttpClient = defaultHttp.newBuilder()
+            .socketFactory(network.socketFactory)
+            .dns(
+                PrivateNetwork.FilteringDns(
+                    object : Dns {
+                        override fun lookup(hostname: String): List<InetAddress> = network.getAllByName(hostname).toList()
+                    },
+                ),
+            )
+            .build()
 
         /** {"error": {"code", "message"}} from the hub, or null for any other body. */
         private fun errorOf(text: String): Pair<String, String>? = runCatching {

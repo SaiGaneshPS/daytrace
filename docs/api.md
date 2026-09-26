@@ -58,6 +58,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `POST /pair/start`, `GET /pair/qr.png` | local only | DT-12 |
 | `POST /pair/claim` | none (needs a valid code) | DT-12 |
 | `GET /devices`, `DELETE /devices/{device_id}` | viewer / local only | DT-12 |
+| `POST /devices/{device_id}/proof` | none (answers only for a paired device) | DT-22 |
 | `GET /timeline` | viewer | DT-13 |
 | `GET /categories` | viewer | DT-14 |
 | `PUT /categories/{key}`, `DELETE /categories/{key}` | dashboard (viewer token or the hub computer) | DT-14 |
@@ -201,6 +202,20 @@ Revoked devices are listed too (`revoked_at` set). `events_24h` counts events th
 
 `DELETE /devices/{device_id}` (local only) revokes the token and returns `204` (again `204` if it was already
 revoked, `404` for an unknown device). The device's data stays.
+
+`POST /devices/{device_id}/proof` (no token; the network rules still apply) lets a device check it is talking to
+the hub that paired it **before** it sends its token (DT-22). Until HTTPS (DT-47), a phone on another Wi-Fi that
+uses the same addresses could otherwise hand its token to a stranger's device at the hub's address.
+
+```json
+{ "nonce": "5f0c3a9e1b7d4c2a8e6f0b1d3c5a7e9f" }
+```
+
+- `nonce` is 32 to 128 lowercase hex characters, new for every check.
+- Response `200` (`Cache-Control: no-store`): `{ "device_id": "android-1", "proof": "<64 hex>" }`, where `proof` is
+  HMAC-SHA256 with the device's stored token hash as the key (the lowercase hex SHA-256 of the token, as UTF-8
+  text) and the nonce as the message (UTF-8). The device computes the same from its token and compares.
+- `401 unauthorized` for an unknown or revoked device (pair again). The token never travels for this.
 
 ### Local network discovery
 

@@ -1,7 +1,9 @@
-"""Tests for DT-12: discovery, pairing and revoking devices."""
+"""Tests for DT-12: discovery, pairing and revoking devices. DT-22: the hub proving it paired a device."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import threading
 import time
@@ -441,6 +443,47 @@ def test_revoking_is_for_the_hub_computer_only(phone: TestClient, db: Database) 
     response = phone.delete("/api/v1/devices/android-1", headers={"Authorization": f"Bearer {tokens['viewer-1']}"})
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "local_only"
+
+
+# --- proving the hub (DT-22) ----------------------------------------------------------------------------------
+
+NONCE = "0123456789abcdef" * 2
+
+
+def expected_proof(token: str, nonce: str) -> str:
+    """What the phone computes on its side: HMAC-SHA256(key = sha256(token) as hex, message = nonce)."""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return hmac.new(token_hash.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def test_the_hub_proves_it_paired_the_phone_without_the_token(client: TestClient, phone: TestClient) -> None:
+    token = phone.post("/api/v1/pair/claim", json=claim_body(start(client)["code"])).json()["token"]
+    response = phone.post("/api/v1/devices/android-1/proof", json={"nonce": NONCE})  # no Authorization header
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"device_id": "android-1", "proof": expected_proof(token, NONCE)}
+    other = phone.post("/api/v1/devices/android-1/proof", json={"nonce": "f" * 64}).json()["proof"]
+    assert other == expected_proof(token, "f" * 64) != response.json()["proof"]  # a new nonce, a new answer
+    assert token not in response.text
+
+
+def test_revoked_or_unknown_devices_get_no_proof(client: TestClient, phone: TestClient, db: Database) -> None:
+    paired(db)
+    assert client.delete("/api/v1/devices/android-1").status_code == 204
+    for device_id in ("android-1", "android-99"):
+        response = phone.post(f"/api/v1/devices/{device_id}/proof", json={"nonce": NONCE})
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.parametrize(
+    "body", [{"nonce": "abc"}, {"nonce": NONCE.upper()}, {"nonce": "g" * 32}, {}, {"nonce": NONCE, "x": 1}]
+)
+def test_the_nonce_must_be_fresh_looking_hex(phone: TestClient, db: Database, body: dict[str, Any]) -> None:
+    paired(db)
+    response = phone.post("/api/v1/devices/android-1/proof", json=body)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
 def test_revoking_an_unknown_device_is_404(client: TestClient) -> None:

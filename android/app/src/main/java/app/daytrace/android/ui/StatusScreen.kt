@@ -1,5 +1,5 @@
-// DT-19 / DT-21: permission and sync status: today's app time, the hub card (events waiting, the last sync and
-// "Sync now") and the permissions. DT-22 adds pairing with the hub.
+// DT-19 / DT-21 / DT-22: permission and sync status: today's app time, the hub card (pairing, events waiting, the
+// last sync, "Sync now" and "Forget this hub") and the permissions.
 package app.daytrace.android.ui
 
 import androidx.compose.animation.AnimatedVisibility
@@ -38,6 +38,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -64,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.daytrace.android.BuildConfig
 import app.daytrace.android.data.EventStore
 import app.daytrace.android.data.StoreCounts
+import app.daytrace.android.sync.PairingInfo
 import app.daytrace.android.sync.PairingStore
 import app.daytrace.android.sync.SyncResult
 import app.daytrace.android.sync.SyncStatus
@@ -88,8 +91,9 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 @Composable
-fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOnboarding: () -> Unit) {
+fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOnboarding: () -> Unit, onPair: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val usageOn = readyToContinue(states)
     val syncing by remember(context) { SyncWorker.running(context) }.collectAsStateWithLifecycle(initialValue = false)
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
@@ -127,7 +131,13 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
             }
             item(key = "hub") {
                 Box(Modifier.padding(horizontal = 16.dp)) {
-                    HubCard(rememberSyncCard(), syncing, onSyncNow = { SyncWorker.syncNow(context) })
+                    HubCard(
+                        rememberSyncCard(),
+                        syncing,
+                        onSyncNow = { SyncWorker.syncNow(context) },
+                        onPair = onPair,
+                        onForget = { scope.launch(Dispatchers.IO) { PairingStore.get(context).clear() } },
+                    )
                 }
             }
             item(key = "title") {
@@ -271,7 +281,7 @@ private fun UsageOffBanner(onFix: () -> Unit) {
 }
 
 /** What the hub card shows: pairing, what is waiting to be sent, and how the last sync went. */
-private data class SyncCard(val paired: Boolean, val counts: StoreCounts, val status: SyncStatus)
+private data class SyncCard(val pairing: PairingInfo?, val counts: StoreCounts, val status: SyncStatus)
 
 /** Read every few seconds while the screen is in front, so a sync's result shows up as soon as it finishes. */
 @Composable
@@ -284,7 +294,7 @@ private fun rememberSyncCard(): SyncCard? {
             while (isActive) {
                 withContext(Dispatchers.IO) {
                     runCatching {
-                        SyncCard(PairingStore.load() != null, EventStore.get(context).counts(), SyncStatusStore(context).read())
+                        SyncCard(PairingStore.get(context).info(), EventStore.get(context).counts(), SyncStatusStore(context).read())
                     }.getOrNull()
                 }?.let { card = it }
                 delay(3_000)
@@ -307,9 +317,11 @@ private fun whenText(epochMs: Long, nowMs: Long = System.currentTimeMillis()): S
 }
 
 @Composable
-private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit) {
-    val paired = card?.paired == true
+private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit, onPair: () -> Unit, onForget: () -> Unit) {
+    val pairing = card?.pairing
+    val paired = pairing != null
     val status = card?.status
+    var confirmForget by remember { mutableStateOf(false) }
     val healthy = paired && status?.result == SyncResult.SENT
     // The dot pulses while looking for the hub or syncing, and stays still once all is well. The value is read in
     // the draw phase (graphicsLayer), so the card does not recompose on every animation frame.
@@ -341,10 +353,10 @@ private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit) {
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (paired) {
-                            "Paired with the Daytrace hub on your PC."
+                        if (pairing != null) {
+                            "Paired with the hub on your PC (${pairing.profile} profile) as ${pairing.deviceId}, at ${pairing.baseUrl.removePrefix("http://")}."
                         } else {
-                            "Not paired yet. Pairing with the Daytrace hub on your PC is coming next; until then, everything waits safely on this phone."
+                            "Not paired yet. Until you pair with the Daytrace hub on your PC, everything waits safely on this phone."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -373,6 +385,10 @@ private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit) {
                     Spacer(Modifier.height(4.dp))
                     Text(problem, style = MaterialTheme.typography.bodySmall, color = needed)
                 }
+                if (paired && status?.result == SyncResult.NOT_ON_WIFI) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(status.message.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (card.counts.refused > 0) {
                     Text(
                         "Your hub refused ${Syncer.events(card.counts.refused)}. They stay on this phone.",
@@ -381,17 +397,48 @@ private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = onSyncNow, enabled = paired && !syncing) {
-                    if (syncing) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                when {
+                    !paired -> Button(onClick = onPair) { Text("Pair with your hub") }
+                    status?.result == SyncResult.PAIR_AGAIN -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = onPair) { Text("Pair again") }
                         Spacer(Modifier.size(8.dp))
-                        Text("Syncing...")
-                    } else {
-                        Text("Sync now")
+                        TextButton(onClick = { confirmForget = true }) { Text("Forget this hub") }
+                    }
+                    else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(onClick = onSyncNow, enabled = !syncing) {
+                            if (syncing) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(8.dp))
+                                Text("Syncing...")
+                            } else {
+                                Text("Sync now")
+                            }
+                        }
+                        Spacer(Modifier.size(8.dp))
+                        TextButton(onClick = { confirmForget = true }) { Text("Forget this hub") }
                     }
                 }
             }
         }
+    }
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            title = { Text("Forget this hub?") },
+            text = {
+                Text(
+                    "This phone stops sending to it and deletes its token. Your events stay on the phone and go to the " +
+                        "hub you pair with next; the hub keeps what it already has.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmForget = false
+                    onForget()
+                }) { Text("Forget") }
+            },
+            dismissButton = { TextButton(onClick = { confirmForget = false }) { Text("Cancel") } },
+        )
     }
 }
 
