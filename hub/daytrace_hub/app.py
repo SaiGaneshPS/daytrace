@@ -4,6 +4,8 @@ Routers are added by their tickets (DT-11 onwards); DT-30 mounts the dashboard.
 """
 from __future__ import annotations
 
+import asyncio
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -25,6 +27,7 @@ from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
 from .discovery import Advertiser
 from .llm import LLM, load_llm_settings, model_networks
+from .tracker.base import TrackerService, platform_probe
 
 # 1008 = policy violation; closing before accept makes the server answer the handshake with 403.
 WEBSOCKET_POLICY_VIOLATION = 1008
@@ -71,6 +74,15 @@ class Health(BaseModel):
     version: str
 
 
+def desktop_tracker(settings: Settings, database: Database) -> TrackerService | None:
+    """This computer's tracker for the profile, or None on a platform without one yet (macOS: DT-17)."""
+    found = platform_probe()
+    if found is None:
+        return None
+    probe, device_type = found
+    return TrackerService(database, probe, device_type, socket.gethostname(), settings.tracker_lock_path)
+
+
 def create_app(settings: Settings | None = None, llm: LLM | None = None) -> FastAPI:
     """Build the hub for one profile. The database is created and migrated when the app starts.
 
@@ -86,9 +98,14 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
         advertiser = Advertiser(settings) if settings.advertise_mdns else None
         if advertiser is not None:
             advertiser.start()  # in the background: the hub serves right away
+        tracker = desktop_tracker(settings, database) if settings.track_desktop else None
+        if tracker is not None:
+            tracker.start()  # DT-16: this computer's own screen, in a background thread
         try:
             yield
         finally:
+            if tracker is not None:
+                await asyncio.to_thread(tracker.stop)
             if advertiser is not None:
                 await advertiser.stop()
             model_server.close()
