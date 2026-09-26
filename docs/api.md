@@ -217,20 +217,46 @@ announced (mDNS does not cross Tailscale).
 
 ### GET /timeline?date=2026-09-25&tz=America/Toronto
 
+Any paired device's token, or no token from the hub computer. `date` defaults to today in `tz`; `tz` defaults
+to the hub computer's current offset. Unknown time zones get `400`, impossible dates `422`.
+
 ```json
 {
   "date": "2026-09-25", "tz": "America/Toronto",
-  "lanes": [ { "device_id": "windows-1", "device_type": "windows",
-    "sessions": [ { "start": "...", "end": "...", "minutes": 18.6, "app": "Code", "category": "work", "title": "stats.py" } ] } ],
-  "calendar": [ { "start": "...", "end": "...", "title": "Study: algorithms" } ],
-  "sleep": [ { "start": "...", "end": "...", "minutes": 445, "estimated": false } ],
-  "meals": [ { "time": "...", "items": ["roti", "dal"], "meal_type": "dinner" } ],
-  "totals": { "minutes": 512.4, "by_device": { "windows-1": 301.2, "android-1": 211.2 } },
-  "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "America/Toronto" }, "source": "real", "estimated": false }
+  "lanes": [ { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true,
+    "seconds": 4500, "minutes": 75.0,
+    "sessions": [ { "start": "2026-09-25T09:00:00-04:00", "end": "2026-09-25T09:40:00-04:00", "seconds": 2400,
+      "minutes": 40.0, "app": "Code", "app_id": null, "title": "stats.py", "category": "work", "kind": "app",
+      "estimated": false } ] } ],
+  "calendar": [ { "start": "...", "end": "...", "title": "Study: algorithms", "all_day": false, "device_id": "iphone-1" } ],
+  "sleep": [ { "start": "...", "end": "...", "minutes": 445.0, "stage": "asleep", "estimated": false, "device_id": "iphone-1" } ],
+  "meals": [ { "time": "...", "items": ["roti", "dal"], "text": null, "meal_type": "dinner", "device_id": "iphone-1" } ],
+  "totals": { "seconds": 10500, "minutes": 175.0, "by_device": { "windows-1": 75.0, "android-1": 35.0 },
+    "any_screen_seconds": 9900, "any_screen_minutes": 165.0 },
+  "meta": { "unit": "minutes", "range": { "start": "2026-09-25T00:00:00-04:00", "end": "2026-09-26T00:00:00-04:00",
+    "tz": "America/Toronto" }, "source": "real", "estimated": false }
 }
 ```
 
-`totals.minutes` always equals the sum of all session minutes (DT-59 checks this).
+How the numbers are made (`hub/daytrace_hub/sessions.py`):
+
+- The day runs from local midnight to local midnight in `tz`, so DST days are 23 or 25 hours and sessions are
+  split at local midnight.
+- iPhone `app_open` / `app_close` pairs become sessions. An open with no close ends at the device's next
+  event or after 30 minutes and is marked `estimated`. An open and close more than 6 hours apart count as a
+  missed close.
+- Desktop readings of the same app and title at most 5 s apart are merged; phone usage stats are used exactly.
+- On one device, overlapping sessions never double count: the most recently started app owns the screen, and
+  an app it covered continues afterwards. AFK periods are cut out.
+- Every duration is whole seconds; `minutes` is rounded from seconds for display. `lane.seconds` is exactly
+  the sum of its sessions, and `totals.seconds` exactly the sum of the counted lanes (DT-59 checks this).
+- `totals` adds up screen time per device. `any_screen_seconds` is the time at least one screen was in use.
+  Browser-extension lanes (`counted: false`) show which sites were open, but that time is already in the
+  desktop lane, so they are not added.
+- `calendar` lists events overlapping the day (once, even when two phones sync the same calendar). `sleep`
+  lists sleep that **ended** on this day, at full length, so last night's sleep shows on this morning.
+- `meta.source` is `seed`, `real` or `mixed` over the events behind the day. `meta.estimated` is true when
+  any session end or sleep entry was inferred.
 
 ### Categories
 
