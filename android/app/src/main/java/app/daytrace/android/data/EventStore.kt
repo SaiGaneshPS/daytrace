@@ -5,6 +5,8 @@ package app.daytrace.android.data
 import android.content.Context
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -51,27 +53,51 @@ data class PhoneEvent(
 }
 
 class EventStore(private val file: File) {
-    /** Appends in one write; a line cut off by a crash is skipped when reading. */
+    /**
+     * Appends in one write and waits until it is on disk (fsync), so a checkpoint saved afterwards never gets ahead
+     * of the events it covers. A line cut off by a crash is closed off first, so it cannot swallow the next event.
+     */
     @Synchronized
     fun add(events: List<PhoneEvent>) {
         if (events.isEmpty()) return
         file.parentFile?.mkdirs()
-        file.appendText(events.joinToString(separator = "") { it.toStoredJson().toString() + "\n" })
+        val text = buildString {
+            if (endsMidLine()) append(NEWLINE)
+            events.forEach { append(it.toStoredJson().toString()).append(NEWLINE) }
+        }
+        FileOutputStream(file, true).use { out ->
+            out.write(text.toByteArray(Charsets.UTF_8))
+            out.fd.sync()
+        }
     }
 
-    /** Every stored event once, in time order. */
+    /**
+     * Every stored event once, in time order. A collection repeated after a crash stores the same session again
+     * with an end at least as late, so the copy that ends last is kept.
+     */
     @Synchronized
     fun all(): List<PhoneEvent> {
         if (!file.exists()) return emptyList()
         val byKey = LinkedHashMap<String, PhoneEvent>()
         file.forEachLine { line ->
             val event = runCatching { PhoneEvent.fromStoredJson(JSONObject(line)) }.getOrNull() ?: return@forEachLine
-            byKey.putIfAbsent(event.key, event)
+            val kept = byKey[event.key]
+            if (kept == null || (event.endMs ?: Long.MIN_VALUE) > (kept.endMs ?: Long.MIN_VALUE)) byKey[event.key] = event
         }
         return byKey.values.sortedBy { it.startMs }
     }
 
+    private fun endsMidLine(): Boolean {
+        if (!file.exists() || file.length() == 0L) return false
+        RandomAccessFile(file, "r").use { raf ->
+            raf.seek(file.length() - 1)
+            return raf.read() != NEWLINE.code
+        }
+    }
+
     companion object {
+        private const val NEWLINE = '\n'
+
         @Volatile private var instance: EventStore? = null
 
         fun get(context: Context): EventStore = instance ?: synchronized(this) {

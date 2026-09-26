@@ -60,6 +60,8 @@ import app.daytrace.android.ui.theme.Sunrise
 import app.daytrace.android.usage.TodaySummary
 import app.daytrace.android.usage.UsageCollector
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
@@ -104,7 +106,7 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                 }
             }
             if (usageOn) {
-                item(key = "today") { Box(Modifier.padding(horizontal = 16.dp)) { TodayCard(rememberTodaySummary()) } }
+                item(key = "today") { Box(Modifier.padding(horizontal = 16.dp)) { TodayCard(rememberToday()) } }
             }
             item(key = "hub") { Box(Modifier.padding(horizontal = 16.dp)) { HubCard() } }
             item(key = "title") {
@@ -129,22 +131,38 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
     }
 }
 
-/** Collects what is new each time the screen comes to the front, then sums up today (off the main thread). */
+/** What the Today card shows: still counting, today's numbers, or a problem reading them. */
+private sealed interface Today {
+    data object Counting : Today
+    data class Ready(val summary: TodaySummary) : Today
+    data object Failed : Today
+}
+
+/**
+ * Collects what is new and sums up today, off the main thread, when the screen comes to the front and then every
+ * minute while it stays there (so the card is live, and rolls over at midnight). A failure (a full disk, say)
+ * shows a message on the card instead of crashing the app.
+ */
 @Composable
-private fun rememberTodaySummary(): TodaySummary? {
+private fun rememberToday(): Today {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var summary by remember { mutableStateOf<TodaySummary?>(null) }
+    var today by remember { mutableStateOf<Today>(Today.Counting) }
     LifecycleResumeEffect(Unit) {
         val job = scope.launch {
-            summary = withContext(Dispatchers.IO) {
-                UsageCollector(context).collect()
-                TodaySummary.from(EventStore.get(context).all(), System.currentTimeMillis())
+            while (isActive) {
+                today = withContext(Dispatchers.IO) {
+                    runCatching {
+                        UsageCollector(context).collect()
+                        TodaySummary.from(EventStore.get(context).all(), System.currentTimeMillis())
+                    }.fold({ Today.Ready(it) }, { Today.Failed })
+                }
+                delay(60_000)
             }
         }
         onPauseOrDispose { job.cancel() }
     }
-    return summary
+    return today
 }
 
 private fun duration(ms: Long): String {
@@ -153,7 +171,8 @@ private fun duration(ms: Long): String {
 }
 
 @Composable
-private fun TodayCard(summary: TodaySummary?) {
+private fun TodayCard(today: Today) {
+    val summary = (today as? Today.Ready)?.summary
     val colors = listOf(Blush, Sunrise, Mint)
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -164,11 +183,22 @@ private fun TodayCard(summary: TodaySummary?) {
             Text("Today on this phone", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                if (summary == null) "Counting..." else duration(summary.totalMs),
+                when (today) {
+                    Today.Counting -> "Counting..."
+                    Today.Failed -> "Not right now"
+                    is Today.Ready -> duration(today.summary.totalMs)
+                },
                 style = MaterialTheme.typography.displaySmall,
                 color = MaterialTheme.colorScheme.primary,
             )
             val top = summary?.topApps.orEmpty()
+            if (today is Today.Failed) {
+                Text(
+                    "Couldn't read today's usage. It will try again in a minute.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (summary != null && top.isEmpty()) {
                 Text(
                     "Nothing yet today. Use a few apps and come back.",
