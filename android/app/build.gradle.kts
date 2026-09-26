@@ -63,6 +63,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.work.runtime)
     implementation(libs.okhttp)
+    implementation(libs.play.services.code.scanner) // QR pairing: ML Kit inside Google Play services, no camera permission
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.org.json) // Android's org.json is a stub in local unit tests

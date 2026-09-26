@@ -7,6 +7,7 @@ the code, and one noisy device on the Wi-Fi cannot lock everyone else out.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import io
 import json
@@ -303,3 +304,52 @@ def revoke_device(device_id: str, database: Annotated[Database, Depends(get_data
             (utc_text(datetime.now(UTC)), device_id),
         )
     return Response(status_code=204)
+
+
+# --- proving the hub (DT-22) ----------------------------------------------------------------------------------
+
+
+class ProofRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nonce: Annotated[
+        str, Field(pattern=r"^[0-9a-f]{32,128}$", description="32 to 128 lowercase hex characters, new for every check")
+    ]
+
+
+class Proof(BaseModel):
+    device_id: str
+    revoked: bool
+    proof: str
+
+
+def hub_proof(token_hash: str, nonce: str, revoked: bool = False) -> str:
+    """HMAC-SHA256 keyed with the device's stored token hash (UTF-8 text, lowercase hex). The message is the nonce,
+    or "revoked:" + nonce for a revoked device, so a revocation can be believed only when this hub signed it."""
+    message = f"revoked:{nonce}" if revoked else nonce
+    return hmac.new(token_hash.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+@router.post(
+    "/devices/{device_id}/proof",
+    response_model=Proof,
+    summary="Prove this is the hub the device paired with, before it sends its token (no auth)",
+)
+def prove_hub(
+    device_id: str, body: ProofRequest, response: Response, database: Annotated[Database, Depends(get_database)]
+) -> Proof:
+    """Until HTTPS (DT-47), a phone on another Wi-Fi with the same addresses could reach a stranger's device at
+    the hub's address and hand it the token. So the phone first sends a fresh nonce here and checks the answer:
+    only the hub that paired it holds the token hash that keys it. The token itself never travels for this.
+
+    A revoked device gets a signed "revoked" answer (the token hash is kept on revoke), so the phone asks to pair
+    again only when its own hub says so; an unsigned 401 could come from anyone."""
+    with database.connect() as conn:
+        row = conn.execute(
+            "SELECT token_hash, revoked_at FROM devices WHERE device_id = ? AND token_hash IS NOT NULL", (device_id,)
+        ).fetchone()
+    if row is None:
+        raise ApiError(401, "unauthorized", "this hub never paired that device")
+    revoked = row["revoked_at"] is not None
+    response.headers.update(NO_STORE)
+    return Proof(device_id=device_id, revoked=revoked, proof=hub_proof(row["token_hash"], body.nonce, revoked))
