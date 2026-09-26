@@ -16,9 +16,11 @@ from starlette.websockets import WebSocketClose
 
 from . import __version__
 from .api import API_PREFIX, error_response, install_error_handlers
+from .api import devices as devices_api
 from .api import events as events_api
 from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
+from .discovery import Advertiser
 
 # 1008 = policy violation; closing before accept makes the server answer the handshake with 403.
 WEBSOCKET_POLICY_VIOLATION = 1008
@@ -73,7 +75,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         database.initialize()
-        yield
+        advertiser = Advertiser(settings) if settings.advertise_mdns else None
+        if advertiser is not None:
+            await advertiser.start()
+        try:
+            yield
+        finally:
+            if advertiser is not None:
+                await advertiser.stop()
 
     app = FastAPI(
         title=f"Daytrace hub ({settings.profile.name})",
@@ -82,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.db = database
+    app.state.pairing = devices_api.PairingCodes()
     app.add_middleware(NetworkGuard, settings=settings)
     install_error_handlers(app)
 
@@ -90,4 +100,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Health(status="ok", profile=settings.profile.name, version=__version__)
 
     app.include_router(events_api.router)
+    app.include_router(devices_api.router)
     return app

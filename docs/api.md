@@ -32,6 +32,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Status | `code` | When |
 |---|---|---|
 | 400 | `bad_request` | Malformed JSON, a body that is not one event or `{"events": [...]}`, bad query parameters, wrong confirmation phrase |
+| 400 | `invalid_code` | The pairing code is wrong, already used or expired |
 | 401 | `unauthorized` | Missing, unknown or revoked token |
 | 403 | `forbidden_network` | The request came from a network this profile does not serve: the public internet, a LAN outside `DAYTRACE_LAN_NETWORKS`, or Tailscale on a profile other than shared-dev. Applies to every path, before auth |
 | 403 | `forbidden_host` | The `Host` header is a public DNS name (possible DNS rebinding). Applies to every path, before auth |
@@ -138,41 +139,67 @@ collector checks what the hub already has.
 
 ### Pairing
 
-`POST /pair/start` (local only):
+`POST /pair/start` (local only, no body):
 
 ```json
 { "code": "493817", "expires_at": "2026-09-25T14:08:10-04:00",
-  "url": "http://daytrace-hub.local:8765", "qr": "/api/v1/pair/qr.png?code=493817" }
+  "url": "http://192.168.1.23:8765",
+  "urls": ["http://192.168.1.23:8765"],
+  "mdns_url": "http://daytrace-hub.local:8765",
+  "qr": "/api/v1/pair/qr.png?code=493817" }
 ```
 
-`url` is the running profile's address as phones see it on the local network (the personal profile listens on
-your home Wi-Fi so your own phone can reach it).
+- `url` is the hub's LAN IP as phones see it (the interface with the default route). The QR code uses it
+  because Android browsers do not reliably resolve `.local` names.
+- `urls` lists every address phones can use: LAN addresses first, then the Tailscale address on shared-dev.
+- Only one code is active at a time; starting again replaces it.
 
-`POST /pair/claim`:
+`GET /pair/qr.png?code=493817` (local only) is a PNG of `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`.
+It answers `404` when the code is not the active one any more.
+
+`POST /pair/claim` (no token; the network rules still apply):
 
 ```json
 { "code": "493817", "device_name": "Galaxy phone", "device_type": "android" }
 ```
 
-`device_type` is one of `windows`, `macos`, `android`, `ios`, `browser`, `viewer`. The response contains the
-token, which is shown only once:
+- `code` may be typed with a space or dash (`493 817`, `493-817`).
+- `device_name` is 1 to 64 characters, trimmed, without control characters.
+- `device_type` is one of `windows`, `macos`, `android`, `ios`, `browser`, `viewer`. Phone browsers opening
+  the dashboard pair as `viewer`; the iPhone's Shortcuts use `ios`.
+
+Response `201`. The token is shown only once:
 
 ```json
-{ "device_id": "android-1", "token": "dt_..." }
+{ "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal" }
 ```
 
-Codes are single-use and expire after 5 minutes; 5 wrong tries lock the code (429).
+Device IDs count up per type (`android-1`, `android-2`) and are never reused. Codes are single use and expire
+after 5 minutes: `400 invalid_code` for a wrong, used or expired code (the message says how many tries are
+left); 5 wrong tries lock the code (`429 too_many_attempts`, even for the right code) until a new one is started.
 
 ### Devices
 
-`GET /devices`:
+`GET /devices` (any paired device's token, or no token from the hub computer itself):
 
 ```json
-{ "devices": [ { "device_id": "android-1", "name": "Galaxy phone", "type": "android",
-  "paired_at": "...", "last_seen": "...", "last_seq": 4812, "events_today": 1290 } ] }
+{ "devices": [ { "device_id": "android-1", "name": "Galaxy phone", "device_type": "android",
+  "paired_at": "2026-09-25T18:00:00.000000Z", "last_seen": "2026-09-25T22:41:07.000000Z", "revoked_at": null,
+  "last_seq": 4812, "event_count": 15230, "events_24h": 1290 } ] }
 ```
 
-`DELETE /devices/{device_id}` (local only) revokes the token and returns `204`.
+Revoked devices are listed too (`revoked_at` set). `events_24h` counts events that started in the last 24 hours.
+`last_seen` is updated at most once a minute.
+
+`DELETE /devices/{device_id}` (local only) revokes the token and returns `204` (again `204` if it was already
+revoked, `404` for an unknown device). The device's data stays.
+
+### Local network discovery
+
+While a profile runs, it advertises `_daytrace._tcp` on the LAN (`Daytrace hub (<profile>)`, TXT `profile`,
+`version`, `api=/api/v1`) with the host name `daytrace-hub.local`. `DAYTRACE_MDNS=off` turns this off;
+`DAYTRACE_MDNS_NAME` changes the host name (useful when two hubs share one Wi-Fi). Check it with
+`dns-sd -B _daytrace._tcp` on a Mac.
 
 ### GET /timeline?date=2026-09-25&tz=America/Toronto
 

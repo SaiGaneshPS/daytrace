@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -169,6 +170,9 @@ def default_data_dir(env: Mapping[str, str] | None = None, platform: str | None 
     return Path(env.get("XDG_DATA_HOME") or home / ".local" / "share") / "daytrace"
 
 
+MDNS_NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Everything the hub needs to start one profile."""
@@ -176,6 +180,9 @@ class Settings:
     profile: Profile
     data_dir: Path
     lan_networks: tuple[IPNetwork, ...] = field(default=DEFAULT_LAN_NETWORKS)
+    # Off unless load_settings() turns it on, so tests and scripts never announce anything on the network.
+    advertise_mdns: bool = False
+    mdns_name: str = "daytrace-hub"
 
     @property
     def database_path(self) -> Path:
@@ -194,4 +201,14 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
         data_dir = default_data_dir(env)
     lan_text = env.get("DAYTRACE_LAN_NETWORKS", "").strip()
     lan_networks = parse_lan_networks(lan_text) if lan_text else DEFAULT_LAN_NETWORKS
-    return Settings(profile=get_profile(profile_name), data_dir=data_dir, lan_networks=lan_networks)
+    advertise = env.get("DAYTRACE_MDNS", "on").strip().lower() not in ("0", "off", "false", "no")
+    mdns_name = env.get("DAYTRACE_MDNS_NAME", "daytrace-hub").strip().lower()
+    if not MDNS_NAME.fullmatch(mdns_name):
+        raise ValueError(f"DAYTRACE_MDNS_NAME must be one DNS label like daytrace-hub, got {mdns_name!r}")
+    return Settings(
+        profile=get_profile(profile_name),
+        data_dir=data_dir,
+        lan_networks=lan_networks,
+        advertise_mdns=advertise,
+        mdns_name=mdns_name,
+    )

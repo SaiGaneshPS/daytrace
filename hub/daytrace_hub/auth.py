@@ -1,4 +1,4 @@
-"""DT-11: Bearer-token device authentication.
+"""DT-11: Bearer-token device authentication (DT-12 adds local-only and reader access).
 
 Every paired device (phone, Shortcuts, Mac bridge, browser extension, dashboard viewer) has its own random
 token. The hub stores only a SHA-256 hash of it: tokens are 256-bit random values, so a fast hash is enough
@@ -7,6 +7,7 @@ and a copied database does not reveal any token. DT-12 hands tokens out through 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 import secrets
 import sqlite3
@@ -122,3 +123,40 @@ def require_device(
 
 
 CurrentDevice = Annotated[AuthenticatedDevice, Depends(require_device)]
+
+
+def is_local_request(request: Request) -> bool:
+    """True when the request comes from the hub computer itself (loopback)."""
+    host = request.client.host if request.client else ""
+    try:
+        address = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
+
+
+def require_local(request: Request) -> None:
+    """FastAPI dependency for local-only endpoints (pairing codes, revoking, delete-all)."""
+    if not is_local_request(request):
+        raise ApiError(403, "local_only", "this can only be done on the hub computer itself")
+
+
+def require_reader(
+    request: Request,
+    database: Annotated[Database, Depends(get_database)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> AuthenticatedDevice | None:
+    """FastAPI dependency for dashboard data: any paired device's token, or no token from the hub computer.
+
+    The dashboard on the hub computer itself is trusted (DT-30); pages from other sites cannot read the
+    answers (no CORS headers) and cannot pretend to be local (the Host check in app.NetworkGuard).
+    Returns None for that trusted local dashboard.
+    """
+    if authorization is None and is_local_request(request):
+        return None
+    return require_device(database, authorization)
+
+
+Reader = Annotated[AuthenticatedDevice | None, Depends(require_reader)]
