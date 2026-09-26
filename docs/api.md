@@ -39,9 +39,12 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | 403 | `local_only` | A local-only endpoint was called from another machine |
 | 405 | `method_not_allowed` | The path exists but not with this method |
 | 404 | `not_found` | Unknown device, tab or resource |
-| 413 | `batch_too_large` | More than 500 events in one request (checked before any event is validated), or a body over 2 MB (refused before it is read) |
+| 413 | `batch_too_large` | More than 500 events in one request (checked before any event is validated) |
+| 413 | `body_too_large` | The body is over 8 MB (refused before it is read). Send fewer events per request; any single valid event always fits |
 | 422 | `invalid_request` | Invalid input for endpoints other than `POST /events` (bad events there are reported per event, see below) |
 | 429 | `too_many_attempts` | Too many wrong pairing codes |
+| 500 | `internal_error` | A bug in the hub; the details are in the hub's log |
+| 503 | `busy` | Another writer held the database too long. Safe to retry the same request (`Retry-After: 1`) |
 | 503 | `ai_unavailable` | The local model server is not reachable |
 
 ## Endpoints
@@ -72,8 +75,8 @@ No token needed; the network and Host checks still apply.
 
 ### POST /events
 
-Send one event object, or a batch `{ "events": [ ... ] }` of 1 to 500 events, at most 2 MB. The token is
-checked before the body is read. `viewer` tokens cannot send events (`403 forbidden`).
+Send one event object, or a batch `{ "events": [ ... ] }` of 1 to 500 events, as UTF-8 JSON of at most 8 MB.
+The token is checked before the body is read. `viewer` tokens cannot send events (`403 forbidden`).
 
 **Every event's `device_id` must be the device the token belongs to**; events for any other device are rejected.
 All good events in one request are stored in a single transaction.
@@ -85,8 +88,8 @@ The hub stores each event under one key per device, `UNIQUE(device_id, dedup_key
 
 | The event has | Key | When the key already exists |
 |---|---|---|
-| `external_id` | `ext:<external_id>` | If anything changed, the new copy **replaces** the stored one (counted as `replaced`); an identical resend counts as `duplicates`. Use this for anything that can change after it was first sent: Health Connect records, HealthKit samples, calendar events, and daily totals. |
-| `seq` (no `external_id`) | `seq:<seq>` | An identical resend is ignored (counted as `duplicates`). If the stored event with that `seq` is a **different** event (kind, source, start, end, app, app_id, title or data differ), the new one is listed in `rejected`: the collector restarted its numbering, for example after a reinstall, and must continue after `last_seq`. Collectors with a local store (Android, desktop tracker, Mac bridge, browser extension) number their events 0, 1, 2, ... per device. |
+| `external_id` | `ext:<external_id>` | If anything changed, the new copy **replaces** the stored one (counted as `replaced`); an identical resend counts as `duplicates`. When both copies have a `seq`, an older copy (lower `seq`, for example a slow retry) never overwrites a newer one and counts as `duplicates`. Without `seq` the last copy to arrive wins, so stateless collectors send one request at a time. Use this for anything that can change after it was first sent: Health Connect records, HealthKit samples, calendar events, and daily totals. |
+| `seq` (no `external_id`) | `seq:<seq>` | An identical resend is ignored (counted as `duplicates`). If the stored event with that `seq` is a **different** event (kind, source, start, end, app, app_id, title or data differ), the new one is rejected with code `seq_conflict`: the collector restarted its numbering, for example after a reinstall. Collectors with a local store (Android, desktop tracker, Mac bridge, browser extension) number their events 0, 1, 2, ... per device. |
 | neither | `content:<hash>` of kind, start, end, app, app_id, title and data | Ignored (`duplicates`). For stateless collectors such as iPhone Shortcuts: two different events in the same second get different keys, and resending the same event gives the same key. |
 
 Daily totals use a derived `external_id` such as `steps:2026-09-25`, so the evening sync replaces the morning
@@ -105,12 +108,17 @@ Response (`200` whenever the body has the right shape, even if some events were 
 
 ```json
 { "accepted": 1, "replaced": 0, "duplicates": 0,
-  "rejected": [ { "index": 3, "seq": 812, "external_id": null, "reason": "data.stage: sleep data.stage must be one of [...]" } ],
+  "rejected": [ { "index": 3, "code": "invalid", "seq": 812, "external_id": null, "reason": "data.stage: sleep data.stage must be one of [...]" } ],
   "last_seq": 4812, "nudge": null }
 ```
 
-- `rejected` lists events the hub will never accept as sent. Collectors mark them as failed and **do not resend
-  them**, so one bad event can never block the events after it.
+- `rejected` lists events the hub did not store, each with a `code`:
+  - `invalid` or `wrong_device`: the hub will never accept the event as sent. Collectors mark it as failed and
+    **do not resend it**, so one bad event can never block the events after it.
+  - `seq_conflict`: the `seq` belongs to a different stored event. Collectors renumber their unsynced events
+    after `last_seq` and send them again; nothing is lost.
+- Besides the schema, the hub rejects (`invalid`) text with broken characters (half of an emoji), numbers that
+  are not finite (`1e400`), and `data` over 16 KB as compact UTF-8 JSON.
 - When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "...", "body": "...", "created_at": "..." }`.
 - DT-42 adds the parsed meal items to the response for `meal` events.
 

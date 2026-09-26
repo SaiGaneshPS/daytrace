@@ -4,6 +4,8 @@ Errors always look like {"error": {"code": ..., "message": ..., "details": [...]
 """
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -12,6 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 API_PREFIX = "/api/v1"
+logger = logging.getLogger("daytrace_hub")
 
 _CODES_BY_STATUS = {
     400: "bad_request",
@@ -71,6 +74,20 @@ def install_error_handlers(app: FastAPI) -> None:
         ]
         return error_response(422, "invalid_request", "the request is not valid", details)
 
+    async def database_error(_: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, sqlite3.OperationalError)
+        if exc.sqlite_errorcode & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            # Another writer held the database past the busy timeout: safe to retry the same request.
+            return error_response(503, "busy", "the hub is busy, try again in a moment", headers={"Retry-After": "1"})
+        logger.exception("database error", exc_info=exc)
+        return error_response(500, "internal_error", "the hub hit an unexpected error")
+
+    async def unexpected_error(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unexpected error", exc_info=exc)
+        return error_response(500, "internal_error", "the hub hit an unexpected error")
+
     app.add_exception_handler(ApiError, api_error)
     app.add_exception_handler(StarletteHTTPException, http_error)
     app.add_exception_handler(RequestValidationError, validation_error)
+    app.add_exception_handler(sqlite3.OperationalError, database_error)
+    app.add_exception_handler(Exception, unexpected_error)

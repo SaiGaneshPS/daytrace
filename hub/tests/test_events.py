@@ -165,6 +165,7 @@ def test_a_reused_seq_with_a_different_event_is_reported_not_dropped(
     assert len(body["rejected"]) == 1
     assert body["rejected"][0]["index"] == 1
     assert body["rejected"][0]["seq"] == 1
+    assert body["rejected"][0]["code"] == "seq_conflict"  # tells the collector to renumber, not to drop it
     assert "already used for a different event" in body["rejected"][0]["reason"]
     assert stored(db)[0]["app"] == "Instagram"
 
@@ -196,6 +197,7 @@ def test_events_for_another_device_are_rejected(client: TestClient, db: Database
     body = response.json()
     assert body["accepted"] == 1
     assert body["rejected"][0]["index"] == 1
+    assert body["rejected"][0]["code"] == "wrong_device"
     assert "does not match" in body["rejected"][0]["reason"]
     assert stored(db, "iphone-1") == []
 
@@ -204,7 +206,74 @@ def test_rejections_from_validation_and_storage_are_merged_in_order(client: Test
     post(client, tokens["android-1"], session(5))
     batch = [session(5, app="Other"), {"kind": "nope"}, session(6)]
     body = post(client, tokens["android-1"], {"events": batch}).json()
-    assert [r["index"] for r in body["rejected"]] == [0, 1]
+    assert [(r["index"], r["code"]) for r in body["rejected"]] == [(0, "seq_conflict"), (1, "invalid")]
+
+
+@pytest.mark.parametrize(
+    ("bad_part", "reason"),
+    [
+        (b'"data": {"note": "\\ud83d"}', "unicode"),  # half of an emoji
+        (b'"title": "chat \\udc00"', "unicode"),
+        (b'"data": {"x": 1e400}', "finite"),
+        (b'"data": {"x": [1, {"y": -1e999}]}', "finite"),
+    ],
+)
+def test_events_the_database_or_json_cannot_hold_are_rejected_alone(
+    client: TestClient, db: Database, tokens: dict[str, str], bad_part: bytes, reason: str
+) -> None:
+    good = json.dumps(session(1)).encode()
+    bad = json.dumps(session(2))[:-1].encode() + b", " + bad_part + b"}"
+    response = post(client, tokens["android-1"], b'{"events": [' + good + b", " + bad + b"]}")
+    body = response.json()
+    assert response.status_code == 200
+    assert body["accepted"] == 1
+    assert body["rejected"][0]["index"] == 1
+    assert body["rejected"][0]["code"] == "invalid"
+    assert reason in body["rejected"][0]["reason"].lower()
+    assert [r["seq"] for r in stored(db)] == [1]
+
+
+def test_oversized_data_is_rejected_alone(client: TestClient, tokens: dict[str, str]) -> None:
+    body = post(client, tokens["android-1"], {"events": [session(1), session(2, data={"note": "x" * 17_000})]}).json()
+    assert body["accepted"] == 1
+    assert "at most 16 KB" in body["rejected"][0]["reason"]
+
+
+def test_a_slow_retry_of_an_older_copy_does_not_overwrite_a_newer_one(
+    client: TestClient, db: Database, tokens: dict[str, str]
+) -> None:
+    morning = {"device_id": "android-1", "seq": 10, "external_id": "steps:2026-09-25", "kind": "steps",
+               "source": "health_connect", "start": "2026-09-25T00:00:00-04:00",
+               "end": "2026-09-25T09:00:00-04:00", "data": {"count": 2100}}
+    evening = {**morning, "seq": 20, "end": "2026-09-25T21:00:00-04:00", "data": {"count": 8421}}
+    post(client, tokens["android-1"], morning)
+    assert post(client, tokens["android-1"], evening).json()["replaced"] == 1
+    retry = post(client, tokens["android-1"], morning).json()  # the morning request's response was lost
+    assert (retry["replaced"], retry["duplicates"]) == (0, 1)
+    assert json.loads(stored(db)[0]["data"]) == {"count": 8421}
+
+
+def test_replaced_events_reach_the_nudge_hook(
+    client: TestClient, tokens: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daytrace_hub.api import events as events_api
+
+    seen: list[list[Any]] = []
+    monkeypatch.setattr(events_api, "pick_nudge", lambda conn, device, changed: seen.append(changed))
+    base = {"device_id": "iphone-1", "external_id": "cal:1", "kind": "calendar_event", "source": "calendar",
+            "start": "2026-09-25T15:00:00-04:00", "end": "2026-09-25T16:00:00-04:00", "title": "Study"}
+    post(client, tokens["iphone-1"], base)
+    post(client, tokens["iphone-1"], {**base, "end": "2026-09-25T17:00:00-04:00"})  # the event was moved
+    assert [len(changed) for changed in seen] == [1, 1]
+    assert seen[1][0].end.hour == 17
+
+
+def test_store_events_refuses_to_run_outside_a_transaction(db: Database, tokens: dict[str, str]) -> None:
+    from daytrace_hub.api.events import store_events
+    from daytrace_hub.models import Event
+
+    with db.connect() as conn, pytest.raises(RuntimeError, match="inside a transaction"):
+        store_events(conn, "android-1", [(0, Event.model_validate(session(1)))])
 
 
 # --- auth -----------------------------------------------------------------------------------------------------
@@ -258,6 +327,61 @@ def test_last_seen_is_recorded(client: TestClient, db: Database, tokens: dict[st
         assert conn.execute("SELECT last_seen FROM devices WHERE device_id = 'android-1'").fetchone()[0]
 
 
+def test_a_last_seen_in_the_future_is_corrected(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    # The hub clock was a day fast and has been fixed.
+    with db.connect() as conn:
+        conn.execute("UPDATE devices SET last_seen = '2999-01-01T00:00:00.000000Z' WHERE device_id = 'android-1'")
+    post(client, tokens["android-1"], session(1))
+    with db.connect() as conn:
+        assert conn.execute("SELECT last_seen FROM devices WHERE device_id = 'android-1'").fetchone()[0] < "2999"
+
+
+def test_a_busy_database_does_not_break_auth_for_reads(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    import time
+
+    with db.connect() as writer:
+        writer.execute("BEGIN IMMEDIATE")  # the tracker or seed generator is writing
+        started = time.monotonic()
+        response = client.get("/api/v1/devices/android-1/cursor", headers={"Authorization": f"Bearer {tokens['android-1']}"})
+        elapsed = time.monotonic() - started
+        writer.execute("ROLLBACK")
+    assert response.status_code == 200
+    assert elapsed < 2  # the last_seen write gave up quickly instead of waiting the full busy timeout
+
+
+def test_a_busy_database_answers_503_busy_for_writes(
+    client: TestClient, db: Database, tokens: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daytrace_hub import db as db_module
+
+    monkeypatch.setattr(db_module, "BUSY_TIMEOUT_MS", 200)
+    with db.connect() as writer:
+        writer.execute("BEGIN IMMEDIATE")
+        response = post(client, tokens["android-1"], session(1))
+        writer.execute("ROLLBACK")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "busy"
+    assert response.headers["retry-after"] == "1"
+
+
+def test_unexpected_errors_still_use_the_error_shape(
+    settings: Any, tokens: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daytrace_hub.api import events as events_api
+    from daytrace_hub.app import create_app
+
+    def boom(*_: Any) -> None:
+        raise RuntimeError("something nobody expected")
+
+    monkeypatch.setattr(events_api, "ingest", boom)
+    with TestClient(create_app(settings), client=("127.0.0.1", 1), raise_server_exceptions=False) as test_client:
+        response = post(test_client, tokens["android-1"], session(1))
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {"code": "internal_error", "message": "the hub hit an unexpected error", "details": []}
+    }
+
+
 def test_the_network_check_comes_before_auth(settings: Any, tokens: dict[str, str]) -> None:
     from daytrace_hub.app import create_app
 
@@ -287,7 +411,28 @@ def test_a_body_over_the_size_limit_gets_413(client: TestClient, tokens: dict[st
     body = json.dumps({**session(1), "data": {"note": "x" * MAX_BODY_BYTES}})
     response = post(client, tokens["android-1"], body)
     assert response.status_code == 413
-    assert response.json()["error"]["code"] == "batch_too_large"
+    assert response.json()["error"]["code"] == "body_too_large"  # split by size, unlike batch_too_large
+
+
+def test_a_single_event_of_the_largest_allowed_size_always_fits(client: TestClient, tokens: dict[str, str]) -> None:
+    # Worst case: every text field full of characters that a strict JSON encoder escapes to \\uXXXX.
+    event = session(1, app="应" * 200, app_id="应" * 200, title="应" * 500, data={"note": "应" * 5000})
+    body = json.dumps(event, ensure_ascii=True)
+    assert len(body) < MAX_BODY_BYTES
+    response = post(client, tokens["android-1"], body)
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+
+
+def test_utf16_bodies_are_refused(client: TestClient, tokens: dict[str, str]) -> None:
+    response = post(client, tokens["android-1"], json.dumps(session(1)).encode("utf-16"))
+    assert response.status_code == 400
+    assert "UTF-8" in response.json()["error"]["message"]
+
+
+def test_a_utf8_byte_order_mark_is_fine(client: TestClient, tokens: dict[str, str]) -> None:
+    response = post(client, tokens["android-1"], b"\xef\xbb\xbf" + json.dumps(session(1)).encode())
+    assert response.status_code == 200
 
 
 def test_a_chunked_body_without_content_length_is_capped_too(client: TestClient, tokens: dict[str, str]) -> None:
@@ -309,7 +454,7 @@ def test_a_chunked_body_without_content_length_is_capped_too(client: TestClient,
         (b"", "empty"),
         (b"   ", "empty"),
         (b"{not json", "not valid JSON"),
-        (b"\xff\xfe\x00garbage", "not valid JSON"),
+        (b"\xff\xfe\x00garbage", "UTF-8"),
         (b'{"device_id": "android-1", "seq": NaN}', "not valid JSON"),
         (b"[1, 2, 3]", "send one event object"),
         (b'"hello"', "send one event object"),

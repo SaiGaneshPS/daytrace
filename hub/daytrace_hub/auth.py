@@ -7,7 +7,6 @@ and a copied database does not reveal any token. DT-12 hands tokens out through 
 from __future__ import annotations
 
 import hashlib
-import hmac
 import re
 import secrets
 import sqlite3
@@ -18,12 +17,13 @@ from typing import Annotated
 from fastapi import Depends, Header, Request
 
 from .api import ApiError
-from .db import Database, utc_text
+from .db import BUSY_TIMEOUT_MS, Database, utc_text
 from .models import DEVICE_ID_PATTERN
 
 TOKEN_PREFIX = "dt_"
 DEVICE_TYPES = ("windows", "macos", "android", "ios", "browser", "viewer")  # matches devices.device_type
 LAST_SEEN_EVERY = timedelta(seconds=60)  # how often a busy device's last_seen is written
+LAST_SEEN_WAIT_MS = 100  # how long the last_seen write may wait for another writer
 _BEARER = re.compile(r"^\s*Bearer\s+(?P<token>[!-~]{1,200})\s*$", re.IGNORECASE)
 _DEVICE_ID = re.compile(DEVICE_ID_PATTERN)
 
@@ -62,20 +62,38 @@ def register_device(conn: sqlite3.Connection, *, device_id: str, name: str, devi
 
 
 def device_for_token(conn: sqlite3.Connection, token: str) -> AuthenticatedDevice | None:
-    """The active device this token belongs to, or None (unknown or revoked)."""
-    presented = hash_token(token)
+    """The active device this token belongs to, or None (unknown or revoked).
+
+    The lookup is by the token's SHA-256, so response timing reveals nothing useful about the token.
+    """
     row = conn.execute(
-        "SELECT device_id, name, device_type, token_hash, last_seen FROM devices"
-        " WHERE token_hash = ? AND revoked_at IS NULL",
-        (presented,),
+        "SELECT device_id, name, device_type, last_seen FROM devices WHERE token_hash = ? AND revoked_at IS NULL",
+        (hash_token(token),),
     ).fetchone()
-    # The lookup is by hash, so timing reveals nothing about the token; compare_digest is belt and braces.
-    if row is None or not hmac.compare_digest(row["token_hash"], presented):
+    if row is None:
         return None
-    now = datetime.now(UTC)
-    if row["last_seen"] is None or row["last_seen"] < utc_text(now - LAST_SEEN_EVERY):
-        conn.execute("UPDATE devices SET last_seen = ? WHERE device_id = ?", (utc_text(now), row["device_id"]))
+    _touch_last_seen(conn, row["device_id"], row["last_seen"])
     return AuthenticatedDevice(row["device_id"], row["name"], row["device_type"])
+
+
+def _touch_last_seen(conn: sqlite3.Connection, device_id: str, last_seen: str | None) -> None:
+    """Best effort: record when a device was last seen, at most once a minute.
+
+    Never fails a request: if another writer holds the database, the update is skipped (it waits at most
+    LAST_SEEN_WAIT_MS instead of the full busy timeout). A last_seen in the future (the clock was
+    corrected backwards) is overwritten too.
+    """
+    now = datetime.now(UTC)
+    now_text = utc_text(now)
+    if last_seen is not None and utc_text(now - LAST_SEEN_EVERY) <= last_seen <= now_text:
+        return
+    conn.execute(f"PRAGMA busy_timeout = {LAST_SEEN_WAIT_MS}")
+    try:
+        conn.execute("UPDATE devices SET last_seen = ? WHERE device_id = ?", (now_text, device_id))
+    except sqlite3.OperationalError:
+        pass  # busy: try again on the next request
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
 
 
 def get_database(request: Request) -> Database:

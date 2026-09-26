@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
@@ -26,6 +27,7 @@ from pydantic import (
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991  # largest integer JavaScript (and Shortcuts) can represent exactly
 MAX_BATCH_EVENTS = 500
+MAX_DATA_BYTES = 16 * 1024  # an event's data as compact UTF-8 JSON
 
 DEVICE_ID_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
 EXTERNAL_ID_PATTERN = r"^[!-~]{1,200}$"  # printable ASCII, no spaces
@@ -150,6 +152,7 @@ class Event(BaseModel):
 
     @model_validator(mode="after")
     def _check_kind_rules(self) -> Event:
+        _check_storable(self)
         if self.kind in SPAN_KINDS:
             if self.end is None:
                 raise ValueError(f"{self.kind.value} events need an end time")
@@ -212,6 +215,36 @@ def _is_blank(value: Any) -> bool:
     return isinstance(value, str) and not value.strip()
 
 
+def _check_storable(event: Event) -> None:
+    """Rules that keep one odd event from breaking storage or later JSON responses.
+
+    Text must be real Unicode (a Shortcut that cut an emoji in half sends an unpaired surrogate, which
+    SQLite cannot store), numbers must be finite (1e400 parses as infinity, which is not JSON), and data
+    stays small enough that any single event fits in a request.
+    """
+    texts: list[str] = [value for value in (event.app, event.app_id, event.title) if value is not None]
+    pending: list[Any] = [event.data]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            texts.extend(value)
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, str):
+            texts.append(value)
+        elif isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("numbers must be finite (no infinity or NaN)")
+    for text in texts:
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("text must be valid Unicode (it contains half of an emoji or another broken character)") from None
+    size = len(json.dumps(event.data, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    if size > MAX_DATA_BYTES:
+        raise ValueError(f"data must be at most {MAX_DATA_BYTES // 1024} KB as JSON (this one is {size} bytes)")
+
+
 def _check_steps_data(data: dict[str, Any]) -> None:
     count = data.get("count")
     if isinstance(count, float) and count.is_integer():
@@ -263,10 +296,19 @@ class EventBatch(BaseModel):
         return value
 
 
+RejectionCode = Literal["invalid", "wrong_device", "seq_conflict"]
+
+
 class RejectedEvent(BaseModel):
-    """One event the hub refused, so the collector can drop it instead of resending it forever."""
+    """One event the hub refused.
+
+    `invalid` and `wrong_device`: the collector drops it (resending would fail the same way).
+    `seq_conflict`: the seq was already used for a different event (numbering restarted, for example after
+    a reinstall); the collector renumbers its unsynced events after last_seq and sends them again.
+    """
 
     index: int
+    code: RejectionCode = "invalid"
     seq: int | None = None
     external_id: str | None = None
     reason: str
@@ -315,7 +357,11 @@ def parse_batch(payload: Any, expected_device_id: str | None = None) -> tuple[li
             rejected.append(RejectedEvent(index=index, reason=reason, **reference))
             continue
         if expected_device_id is not None and event.device_id != expected_device_id:
-            rejected.append(RejectedEvent(index=index, reason="device_id does not match this token's device", **reference))
+            rejected.append(
+                RejectedEvent(
+                    index=index, code="wrong_device", reason="device_id does not match this token's device", **reference
+                )
+            )
             continue
         events.append(event)
     return events, rejected
