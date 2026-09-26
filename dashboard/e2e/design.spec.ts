@@ -180,6 +180,7 @@ test("tabs: arrow keys, Home and End, and a visible focus ring on the panel", as
   await expect(tabs.getByRole("tab", { name: "Month" })).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("ArrowRight"); // wraps round
   await expect(tabs.getByRole("tab", { name: "Day" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel")).toContainText("One day, hour by hour"); // the old panel has left
   await page.keyboard.press("Tab");
   await expect(page.getByRole("tabpanel")).toBeFocused();
   await expect(page.getByRole("tabpanel")).toHaveCSS("outline-style", "solid");
