@@ -59,7 +59,8 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `POST /pair/claim` | none (needs a valid code) | DT-12 |
 | `GET /devices`, `DELETE /devices/{device_id}` | viewer / local only | DT-12 |
 | `GET /timeline` | viewer | DT-13 |
-| `GET /categories`, `PUT /categories/{app}` | viewer | DT-14 |
+| `GET /categories` | viewer | DT-14 |
+| `PUT /categories/{key}`, `DELETE /categories/{key}` | dashboard (viewer token or the hub computer) | DT-14 |
 | `GET /ai/status`, `GET /story`, `POST /ask` | viewer | DT-37, DT-39, DT-40 |
 | `GET /insights/{tab}`, `GET /wrapped` | viewer | DT-41 |
 | `GET /streaks`, `GET /goals`, `PUT /goals/{goal_id}`, `GET /achievements` | viewer | DT-53 |
@@ -275,14 +276,23 @@ How the numbers are made (`hub/daytrace_hub/sessions.py`):
 
 ### Categories
 
-Every session has one category, looked up in this order (`hub/daytrace_hub/categories.py`):
+Every session has one category (`hub/daytrace_hub/categories.py`). For apps, in this order:
 
-1. The user's override, or one the local AI saved (DT-42). The user's choice always wins over the AI's.
-2. The built-in list (`hub/daytrace_hub/data/categories.json`, about 200 apps): the Android package or iOS/macOS
-   bundle id, then the app name (case-insensitive, `.exe` ignored), and for web sessions the domain, where the
-   longest matching suffix wins (`m.youtube.com` is `youtube.com`; `music.youtube.com` has its own entry).
-3. The category the collector sent.
-4. `other`. Browsers, music and utilities are `other` on purpose; the web lane shows what the browser was for.
+1. The user's override on the app id or the app name.
+2. The category the collector sent (the schema's `category` hint).
+3. The built-in list (`hub/daytrace_hub/data/categories.json`, about 200 apps): by app id (Android package,
+   iOS/macOS bundle id, Windows exe name), then by app name.
+4. A guess the local AI saved (DT-42), which only fills in apps the list does not know.
+5. `other`. Browsers, music and utilities are `other` on purpose; the web lane shows what the browser was for.
+
+For websites, a user override on the exact domain and then the collector's hint come first; after that the
+most specific domain wins: each suffix is tried from longest to shortest (`m.youtube.com`, then `youtube.com`),
+and at each level a user override beats the built-in list, which beats an AI guess. So setting `google.com` to
+study leaves `mail.google.com` as comms.
+
+Keys are compared Unicode-normalized and without case, `.exe`, `www.`, a port or a trailing dot. Every
+consumer of sessions (timeline, stats, goals, insights) gets them already categorized from
+`sessions.sessions_for()`, so they always agree.
 
 `GET /categories` (any paired device's token, or no token from the hub computer) lists the categories and every
 app or site seen in the last 30 days, most used first (at most 500):
@@ -290,18 +300,25 @@ app or site seen in the last 30 days, most used first (at most 500):
 ```json
 { "categories": ["social", "video", "work", "study", "comms", "games", "health", "other"],
   "apps": [ { "key": "com.instagram.android", "app": "Instagram", "app_id": "com.instagram.android", "kind": "app",
-              "category": "social", "source": "builtin", "events": 212 },
+              "category": "social", "source": "builtin", "override": null, "events": 212 },
+            { "key": "md.obsidian", "app": "Obsidian", "app_id": "md.obsidian", "kind": "app",
+              "category": "study", "source": "user", "override": "md.obsidian", "events": 57 },
             { "key": "m.youtube.com", "app": "m.youtube.com", "app_id": null, "kind": "web",
-              "category": "video", "source": "builtin", "events": 40 } ],
+              "category": "video", "source": "builtin", "override": null, "events": 40 } ],
   "overrides": [ { "key": "md.obsidian", "category": "study", "source": "user", "updated_at": "2026-09-25T18:00:00.000000Z" } ] }
 ```
 
-`source` is `user`, `ai`, `builtin`, `collector` or `default`.
-
+- One row per app, however it was spelled (`Code` and `Code.exe`, `www.youtube.com` and `youtube.com`). `app` is
+  the name to show (the app id or domain when there is no name).
+- `source` is `user`, `ai`, `builtin`, `collector` or `default`. `override` is the override that decided (it
+  may be saved under the name or a parent domain rather than `key`); DELETE it to undo.
+- Only the dashboard can change categories: a `viewer` token, or no token from the hub computer. Collector
+  tokens get `403 forbidden`.
 - `PUT /categories/{key}` with `{ "category": "study" }` saves the user's choice for that key (an app id, app
-  name or domain; matched without case and `.exe`) and returns `{ "key", "category", "source", "updated_at" }`.
-  A domain also covers its subdomains.
-- `DELETE /categories/{key}` goes back to the built-in category (`204`, or `404` if there was no override).
+  name or domain; slashes are fine) and returns `{ "key", "category", "source", "updated_at" }`. A domain also
+  covers its subdomains, except where a more specific entry exists. Keys with control or formatting characters,
+  or longer than 200 characters, get `400`.
+- `DELETE /categories/{key}` removes an override (`204`, or `404` if there was none).
 
 ### AI
 

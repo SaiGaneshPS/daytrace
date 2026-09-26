@@ -33,7 +33,8 @@
   },
   "comms": {
     "apps": ["WhatsApp", "Messenger", "Telegram", "Signal", "Discord", "Messages", "Phone", "Gmail", "Outlook",
-             "Slack", "Teams", "Microsoft Teams", "ms-teams", "Zoom", "FaceTime", "Google Meet", "Meet", "Skype",
+             "Microsoft Outlook", "Slack", "Teams", "Microsoft Teams", "ms-teams", "Zoom", "FaceTime", "Google Meet",
+             "Meet", "Skype",
              "WeChat", "LINE", "Mail", "Thunderbird", "Viber", "KakaoTalk", "Google Voice", "Spark"],
     "ids": ["com.whatsapp", "com.whatsapp.w4b", "net.whatsapp.whatsapp", "com.facebook.orca",
             "org.telegram.messenger", "ph.telegra.telegraph", "org.thoughtcrime.securesms",
@@ -49,13 +50,14 @@
     "domains": ["whatsapp.com", "messenger.com", "telegram.org", "signal.org", "discord.com", "discord.gg",
                 "mail.google.com", "outlook.live.com", "outlook.office.com", "outlook.office365.com",
                 "slack.com", "teams.microsoft.com", "teams.live.com", "zoom.us", "meet.google.com",
-                "messages.google.com", "voice.google.com", "web.skype.com", "mail.yahoo.com", "proton.me"]
+                "messages.google.com", "voice.google.com", "web.skype.com", "mail.yahoo.com", "mail.proton.me"]
   },
   "work": {
     "apps": ["Visual Studio Code", "Code", "Cursor", "Visual Studio", "devenv", "IntelliJ IDEA", "idea64",
              "PyCharm", "pycharm64", "WebStorm", "webstorm64", "Rider", "rider64", "Android Studio", "studio64",
              "Xcode", "Terminal", "WindowsTerminal", "Windows Terminal", "powershell", "pwsh", "cmd", "iTerm2",
-             "Word", "WINWORD", "Excel", "PowerPoint", "POWERPNT", "Notion", "Figma", "Canva", "Photoshop",
+             "Word", "WINWORD", "Microsoft Word", "Excel", "Microsoft Excel", "PowerPoint", "POWERPNT",
+             "Microsoft PowerPoint", "Notion", "Figma", "Canva", "Photoshop", "Gemini",
              "Illustrator", "Adobe Premiere Pro", "Premiere Pro", "After Effects", "AfterFX", "Acrobat",
              "Acrobat Reader", "AcroRd32", "Postman", "Docker Desktop", "GitHub Desktop", "Blender", "Sublime Text",
              "sublime_text", "Notepad++", "Obsidian", "Logseq", "Todoist", "Trello", "Asana", "Linear", "Jira",
@@ -74,11 +76,12 @@
             "com.google.android.apps.docs", "com.google.docs", "com.google.drive", "com.apple.iwork.numbers",
             "com.apple.iwork.pages", "com.apple.iwork.keynote", "com.apple.ical", "com.apple.mobilecal",
             "com.google.android.calendar", "com.samsung.android.calendar", "dev.zed.zed", "dev.warp.warp-stable",
-            "com.realtimeboard"],
+            "com.realtimeboard", "com.google.android.apps.bard"],
     "domains": ["github.com", "gitlab.com", "bitbucket.org", "stackoverflow.com", "docs.google.com",
                 "sheets.google.com", "slides.google.com", "drive.google.com", "calendar.google.com", "notion.so",
                 "notion.site", "figma.com", "atlassian.net", "trello.com", "asana.com", "linear.app",
-                "office.com", "sharepoint.com", "onedrive.live.com", "chatgpt.com", "claude.ai", "canva.com",
+                "office.com", "sharepoint.com", "onedrive.live.com", "chatgpt.com", "claude.ai", "gemini.google.com",
+                "canva.com",
                 "vercel.com", "netlify.com", "miro.com", "todoist.com", "airtable.com", "replit.com",
                 "codepen.io", "npmjs.com", "pypi.org", "developer.mozilla.org", "learn.microsoft.com",
                 "cloud.google.com", "aws.amazon.com", "huggingface.co", "kaggle.com"]
@@ -86,7 +89,7 @@
   "study": {
     "apps": ["Duolingo", "Quizlet", "Anki", "AnkiDroid", "Khan Academy", "Coursera", "edX", "Udemy", "Brilliant",
              "Photomath", "Google Classroom", "Classroom", "Canvas Student", "Canvas", "Blackboard", "Moodle",
-             "OneNote", "ONENOTE", "GoodNotes", "Goodnotes 5", "Notability", "Kindle", "Books", "Wikipedia",
+             "OneNote", "ONENOTE", "Microsoft OneNote", "GoodNotes", "Goodnotes 5", "Notability", "Kindle", "Books", "Wikipedia",
              "Zotero", "Mendeley", "Wolfram Alpha", "Desmos", "GeoGebra", "Busuu", "Babbel", "Memrise",
              "Forest", "Libby", "Perlego", "Socratic"],
     "ids": ["com.duolingo", "com.duolingo.duolingoapp", "com.quizlet.quizletandroid", "com.quizlet.quizlet",
@@ -105,12 +108,13 @@
                 "udemy.com", "brilliant.org", "classroom.google.com", "instructure.com", "blackboard.com",
                 "moodle.org", "wikipedia.org", "wolframalpha.com", "desmos.com", "geogebra.org", "chegg.com",
                 "scholar.google.com", "arxiv.org", "jstor.org", "leetcode.com", "codecademy.com",
-                "freecodecamp.org", "w3schools.com", "coursehero.com", "studocu.com", "overleaf.com", "zotero.org"]
+                "freecodecamp.org", "w3schools.com", "coursehero.com", "studocu.com", "overleaf.com", "zotero.org",
+                "read.amazon.com"]
   },
   "games": {
     "apps": ["Minecraft", "Roblox", "RobloxPlayerBeta", "Fortnite", "FortniteClient-Win64-Shipping",
              "Clash of Clans", "Clash Royale", "Brawl Stars", "Candy Crush Saga", "Genshin Impact", "GenshinImpact",
-             "PUBG Mobile", "Call of Duty", "Among Us", "Pokemon GO", "Subway Surfers", "Steam", "steamwebhelper",
+             "PUBG Mobile", "Call of Duty", "Among Us", "Pokemon GO", "Pokémon GO", "Subway Surfers", "Steam", "steamwebhelper",
              "EpicGamesLauncher", "VALORANT", "VALORANT-Win64-Shipping", "League of Legends", "LeagueClientUx",
              "cs2", "Counter-Strike 2", "Chess", "Chess.com", "8 Ball Pool", "Xbox", "Stumble Guys", "Free Fire",
              "Honkai: Star Rail", "StarRail", "Overwatch", "Rocket League", "RocketLeague", "Apex Legends",

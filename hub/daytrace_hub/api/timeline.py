@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from ..auth import Reader, get_database
 from ..categories import Categorizer
 from ..db import Database
-from ..sessions import Session, StoredEvent, build_sessions, load_events, snap
+from ..sessions import Session, StoredEvent, build_sessions, load_events, snap, with_categories
 from . import API_PREFIX, ApiError
 
 LANE_ORDER = {"windows": 0, "macos": 1, "android": 2, "ios": 3, "browser": 4, "viewer": 5}
@@ -175,16 +175,13 @@ def build_timeline(database: Database, day: date, tz: tzinfo, tz_name: str) -> T
         events = load_events(conn, start, end)
         devices = {row["device_id"]: row for row in conn.execute("SELECT device_id, name, device_type FROM devices")}
         categorizer = Categorizer.from_db(conn)
-    sessions = build_sessions(events, start, until) if until > start else []
+    sessions = with_categories(build_sessions(events, start, until), categorizer) if until > start else []
 
     grouped: dict[str, list[Session]] = defaultdict(list)
     for session in sessions:
         grouped[session.device_id].append(session)
     lanes = sorted(
-        (
-            _lane(device_id, device_sessions, devices.get(device_id), tz, categorizer)
-            for device_id, device_sessions in grouped.items()
-        ),
+        (_lane(device_id, device_sessions, devices.get(device_id), tz) for device_id, device_sessions in grouped.items()),
         key=lambda lane: (LANE_ORDER.get(lane.device_type, 99), lane.device_id),
     )
 
@@ -225,9 +222,9 @@ def build_timeline(database: Database, day: date, tz: tzinfo, tz_name: str) -> T
     )
 
 
-def _lane(device_id: str, sessions: list[Session], device: object, tz: tzinfo, categorizer: Categorizer) -> Lane:
+def _lane(device_id: str, sessions: list[Session], device: object, tz: tzinfo) -> Lane:
     device_type = device["device_type"] if device else "unknown"  # type: ignore[index]
-    shown = [_shown(s, tz, categorizer) for s in sessions]
+    shown = [_shown(s, tz) for s in sessions]
     seconds = sum(s.seconds for s in shown)
     return Lane(
         device_id=device_id,
@@ -251,7 +248,7 @@ def _source(
     return "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real"
 
 
-def _shown(session: Session, tz: tzinfo, categorizer: Categorizer) -> TimelineSession:
+def _shown(session: Session, tz: tzinfo) -> TimelineSession:
     return TimelineSession(
         start=session.start.astimezone(tz),
         end=session.end.astimezone(tz),
@@ -260,7 +257,7 @@ def _shown(session: Session, tz: tzinfo, categorizer: Categorizer) -> TimelineSe
         app=session.app,
         app_id=session.app_id,
         title=session.title,
-        category=categorizer.category(session.app, session.app_id, session.kind, session.category),
+        category=session.category or "other",
         kind=session.kind,  # type: ignore[arg-type]
         estimated=session.estimated,
     )

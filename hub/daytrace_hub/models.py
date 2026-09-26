@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -213,6 +214,15 @@ class Event(BaseModel):
 
 def _is_blank(value: Any) -> bool:
     return isinstance(value, str) and not value.strip()
+
+
+ZERO_WIDTH_JOINER = chr(0x200D)
+
+
+def has_hidden_characters(text: str) -> bool:
+    """True for control or formatting characters (Unicode Cc, Cf), such as U+202E, which flips text and can
+    disguise a name in a list. The zero-width joiner is allowed: emoji such as a person at a laptop need it."""
+    return any(unicodedata.category(char) in ("Cc", "Cf") and char != ZERO_WIDTH_JOINER for char in text)
 
 
 def _check_storable(event: Event) -> None:
