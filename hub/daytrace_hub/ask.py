@@ -8,40 +8,41 @@ calls the stats engine (stats.py) and returns facts, so every number the model s
 - get_sessions: the sessions themselves, with their times;
 - get_focus: focused time, focus score, phone pickups and app switches per day;
 - get_sleep: sleep per night, and screen time after 11 pm the night before;
-- get_calendar: calendar blocks (not all-day events);
-- compare_plan: how calendar time was spent (as planned, off plan).
+- get_calendar: calendar events (not all-day ones), upcoming ones included;
+- compare_plan: how calendar time was spent (as planned, off plan), up to now.
 
-The model may call at most 4 tools per question, each over at most 31 days, then answers in a few sentences. The
-answer goes through the day story's number check (story.py): every amount in it must match one of the facts the
-tools returned (`facts_used`), and a date must be one the tools looked at. An answer that fails gets one retry,
-told what was wrong; after that the facts themselves are shown (`fallback`). Questions that are not about the
-person's own day are declined politely: the model answers OFF_TOPIC and the hub words the reply. Streaks get a
-tool when their engine (DT-53) exists.
+The model may call at most 4 tools per question, each over at most 31 days and returning at most 40 facts (the
+summary first), then answers in a few sentences. The answer goes through the day story's number check (story.py):
+every amount in it must match one of the facts the tools returned (`facts_used`), and a date must be one the tools
+looked at. An answer that fails gets one retry, told what was wrong; after that the facts themselves are shown
+(`fallback`). Questions that are not about the person's own day are declined politely: the model answers
+OFF_TOPIC and the hub words the reply. Streaks get a tool when their engine (DT-53) exists.
 """
 from __future__ import annotations
 
 import json
 import re
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 
-from .api.timeline import EARLIEST, LATEST
+from .api.timeline import EARLIEST, LATEST, day_window
 from .categories import CATEGORIES
 from .db import Database
 from .llm import LLM, LLMError
-from .sessions import Session
+from .sessions import Session, snap
 from .stats import GROUPINGS, Stats
 from .story import Fact, clean_reply, duration, sentences, unsupported_numbers
 
 MAX_TOOL_CALLS = 4
 MAX_RANGE_DAYS = 31
+MAX_FACTS = 40  # per tool call: enough for a month by day, few enough for a small model's context
 MAX_QUESTION_CHARS = 500
 MAX_ANSWER_CHARS = 1000
 MAX_SENTENCES = 6  # the model is asked for 1 to 4
 MAX_TOKENS = 2048  # room for a reasoning model to think before it answers
-MAX_ITEMS = 10  # items per grouping sent to the model
+MAX_ITEMS = 10  # apps, categories or devices listed by name (hours and days are all listed)
 MAX_SESSIONS = 25
 SESSION_JOIN = timedelta(seconds=60)  # pieces of the same app this close are one session in a list
 OFF_TOPIC = "OFF_TOPIC"
@@ -50,10 +51,16 @@ DECLINED = ("I can only answer questions about your own day: screen time, apps a
 NO_ANSWER = ("Sorry, I couldn't answer that from your data. Try asking about your screen time, apps, focus, sleep "
              "or calendar.")
 DEVICES = {"phone": frozenset({"android", "ios"}), "computer": frozenset({"windows", "macos"})}
+NOUNS = {"app": "apps", "category": "categories", "device": "devices"}  # a count's unit, per grouping
 
 
 class ToolError(ValueError):
-    """Arguments a tool can't use. The model is told why and may try again (within its 4 calls)."""
+    """Arguments a tool can't use. The model is told why and may try again (within its 4 calls); `facts` hold any
+    number the message gives (a limit), so an answer may repeat it."""
+
+    def __init__(self, message: str, facts: Sequence[Fact] = ()) -> None:
+        super().__init__(message)
+        self.facts = list(facts)
 
 
 @dataclass
@@ -76,10 +83,19 @@ class ToolOutput:
 # --- arguments -----------------------------------------------------------------------------------------------------
 
 
+def _text(args: dict[str, Any], name: str) -> str | None:
+    value = args.get(name)
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ToolError(f"{name} must be text")
+    return value.strip() or None
+
+
 def _day(args: dict[str, Any], name: str) -> date:
     try:
-        day = date.fromisoformat(str(args.get(name)))
-    except ValueError:
+        day = date.fromisoformat(_text(args, name) or "")
+    except (ToolError, ValueError):
         raise ToolError(f"{name} must be a date like 2026-09-25") from None
     if not EARLIEST <= day <= LATEST:
         raise ToolError(f"{name} is out of range")
@@ -92,22 +108,26 @@ def _range(args: dict[str, Any]) -> list[date]:
     if last < first:
         raise ToolError("last_day must not be before first_day")
     if (last - first).days >= MAX_RANGE_DAYS:
-        raise ToolError(f"at most {MAX_RANGE_DAYS} days at a time: ask for a shorter range")
+        raise ToolError(f"at most {MAX_RANGE_DAYS} days at a time: ask for a shorter range",
+                        [Fact("the most days one question can look at", MAX_RANGE_DAYS, "days")])
     return [first + timedelta(days=i) for i in range((last - first).days + 1)]
 
 
 def _clock(args: dict[str, Any], name: str) -> time | None:
-    value = str(args.get(name) or "").strip()
-    if not value:
+    value = _text(args, name)
+    if value is None:
         return None
     if re.fullmatch(r"\d:\d\d", value):
         value = "0" + value
     if value in ("24:00", "24:00:00"):
         return time(0)
     try:
-        return time.fromisoformat(value)
+        clock = time.fromisoformat(value)
     except ValueError:
-        raise ToolError(f"{name} must be a 24-hour time like 23:00") from None
+        clock = None
+    if clock is None or clock.tzinfo is not None:  # "23:00Z": local times only
+        raise ToolError(f"{name} must be a 24-hour local time like 23:00")
+    return clock
 
 
 def _between(args: dict[str, Any]) -> tuple[time, time] | None:
@@ -126,11 +146,11 @@ class _Filters:
 
     @classmethod
     def read(cls, args: dict[str, Any]) -> _Filters:
-        app = str(args.get("app") or "").strip()[:80] or None
-        category = args.get("category") or None
+        app = (_text(args, "app") or "")[:80] or None
+        category = _text(args, "category")
         if category is not None and category not in CATEGORIES:
             raise ToolError(f"category must be one of {', '.join(CATEGORIES)}")
-        device = args.get("device") or None
+        device = _text(args, "device")
         if device is not None and device not in DEVICES:
             raise ToolError("device must be phone or computer")
         return cls(app, category, device, _between(args))
@@ -140,8 +160,9 @@ class _Filters:
         return DEVICES[self.device] if self.device else None
 
     def subject(self) -> str:
-        """What is counted, in words: "time in YouTube on phones between 23:00 and 03:00"."""
-        text = f"time in {self.app}" if self.app else f"time on {self.category}" if self.category else "screen time"
+        """What is counted, in words: "time in apps matching YouTube on phones between 23:00 and 03:00". An app
+        filter matches words of names, so the total is never labelled as if it were one app."""
+        text = f"time in apps matching {self.app}" if self.app else f"time on {self.category}" if self.category else "screen time"
         if self.app and self.category:
             text += f" ({self.category})"
         return text + self.scope(app=False, category=False)
@@ -190,20 +211,32 @@ def _in_progress_note(stats: Stats, days: Sequence[date], out: ToolOutput) -> No
 
 def get_totals(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     days, filters = _range(args), _Filters.read(args)
-    group_by = args.get("group_by") or "app"
+    group_by = _text(args, "group_by") or "app"
     if group_by not in GROUPINGS:
         raise ToolError(f"group_by must be one of {', '.join(GROUPINGS)}")
     result = stats.totals(days[0], days[-1], group_by, between=filters.between, app=filters.app,
                           category=filters.category, device_types=filters.device_types)
     subject, when = filters.subject(), _when(days)
     out = ToolOutput(days=set(days))
-    out.facts.append(Fact(f"{subject}, {when}", round(result["total_minutes"]), "minutes"))
+    _in_progress_note(stats, days, out)
+    for device, missing in sorted(result["missing"].items()):
+        out.notes.append(f"{device} sent nothing on {', '.join(missing)}: its time then is unknown, not zero")
+    if result["missing_days"]:
+        out.notes.append(f"no screen data at all on {', '.join(result['missing_days'])}")
     counted = [d for d in days if d.isoformat() not in result["missing_days"] and stats.part(d, filters.between).until
                > stats.part(d, filters.between).start]
-    if len(days) > 1 and counted:
+    if not counted:  # missing is not zero: no total to give
+        out.notes.append("no screen data on any of those days, so there is nothing to count")
+        return out
+    out.facts.append(Fact(f"{subject}, {when}", round(result["total_minutes"]), "minutes"))
+    if len(days) > 1:
         out.facts.append(Fact(f"daily average of {subject} over the {len(counted)} days with data, {when}",
                               round(result["total_minutes"] / len(counted)), "minutes"))
-    items = [item for item in result["items"] if item["seconds"] or group_by in ("day", "hour")][:MAX_ITEMS]
+    used = [item for item in result["items"] if item["seconds"]]
+    if group_by in NOUNS:
+        out.facts.append(Fact(f"number of {NOUNS[group_by]} used{filters.scope(app=group_by != 'app')}, {when}",
+                              len(used), NOUNS[group_by]))
+    items = used[:MAX_ITEMS] if group_by in NOUNS else result["items"]  # every hour and day, in order
     points = []
     for item in items:
         key = item["key"]
@@ -217,59 +250,68 @@ def get_totals(stats: Stats, args: dict[str, Any]) -> ToolOutput:
             label, point = f"{subject} on {_on(date.fromisoformat(key))}", key
         out.facts.append(Fact(label, round(item["minutes"]), "minutes"))
         points.append((point, round(item["minutes"])))
-    if result["missing_days"]:
-        out.notes.append(f"no screen data on {', '.join(result['missing_days'])}")
+    if group_by in NOUNS and len(used) > MAX_ITEMS:
+        out.notes.append(f"only the {NOUNS[group_by]} with the most time are listed by name")
     if filters.between and filters.between[1] <= filters.between[0]:
         out.days |= {d + timedelta(days=1) for d in days}  # the time after midnight belongs to the night before
         out.notes.append("time after midnight counts for the evening it started on")
-    _in_progress_note(stats, days, out)
     out.chart = _chart(f"{subject}, {when}", "minutes", points)
     return out
 
 
-def _joined(pieces: Iterable[Session]) -> list[Session]:
-    """Pieces of the same app on the same device, less than a minute apart, as one session."""
-    joined: list[Session] = []
+@dataclass
+class _Run:
+    """Pieces of one app on one device, less than a minute apart: one session in a list. `seconds` is the time in
+    use (the gaps are not), so it adds up to what get_totals counts."""
+
+    first: Session
+    end: datetime
+    seconds: int
+
+
+def _runs(pieces: Iterable[Session]) -> list[_Run]:
+    runs: list[_Run] = []
     for piece in sorted(pieces, key=lambda s: (s.device_id, s.start)):
-        last = joined[-1] if joined else None
-        if (last is not None and last.device_id == piece.device_id and (last.app, last.app_id, last.kind)
-                == (piece.app, piece.app_id, piece.kind) and piece.start - last.end <= SESSION_JOIN):
-            joined[-1] = replace(last, end=max(last.end, piece.end))
+        last = runs[-1] if runs else None
+        if (last is not None and last.first.device_id == piece.device_id and piece.start - last.end <= SESSION_JOIN
+                and (last.first.app, last.first.app_id, last.first.kind) == (piece.app, piece.app_id, piece.kind)):
+            last.end, last.seconds = max(last.end, piece.end), last.seconds + piece.seconds
         else:
-            joined.append(piece)
-    return sorted(joined, key=lambda s: s.start)
+            runs.append(_Run(piece, piece.end, piece.seconds))
+    return sorted(runs, key=lambda run: run.first.start)
 
 
 def get_sessions(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     days, filters = _range(args), _Filters.read(args)
-    found: list[Session] = []
+    pieces: list[Session] = []
     for day in days:
         window = stats.part(day, filters.between)
-        found += _joined(stats.matching(window, app=filters.app, category=filters.category,
-                                        device_types=filters.device_types))
-    found.sort(key=lambda s: s.start)
+        pieces += stats.matching(window, app=filters.app, category=filters.category, device_types=filters.device_types)
+    runs = _runs(pieces)  # across days too: a session running past midnight is one session
     when = _when(days)
     out = ToolOutput(days=set(days))
-    out.facts.append(Fact(f"number of sessions{filters.scope()}, {when}", len(found), "times"))
-    out.facts.append(Fact(f"time in those sessions, {when}", round(sum(s.seconds for s in found) / 60), "minutes"))
-    for session in found[:MAX_SESSIONS]:
-        local = session.start.astimezone(stats.tz)
+    _in_progress_note(stats, days, out)
+    out.facts.append(Fact(f"number of sessions{filters.scope()}, {when}", len(runs), "sessions"))
+    out.facts.append(Fact(f"time in those sessions, {when}", round(sum(run.seconds for run in runs) / 60), "minutes"))
+    for run in runs[:MAX_SESSIONS]:
+        session, local = run.first, run.first.start.astimezone(stats.tz)
         out.days.add(local.date())
         name = session.app or session.app_id or "unknown"
         out.facts.append(Fact(
             f"{name} ({session.category or 'other'}) on {session.device_id}, {_on(local.date())} "
-            f"{_hhmm(session.start, stats.tz)} to {_hhmm(session.end, stats.tz)}", round(session.seconds / 60), "minutes"))
-    if len(found) > MAX_SESSIONS:
+            f"{_hhmm(session.start, stats.tz)} to {_hhmm(run.end, stats.tz)}", round(run.seconds / 60), "minutes"))
+    if len(runs) > MAX_SESSIONS:
         out.notes.append("only the first sessions are listed: ask for fewer days or a filter to see the rest")
-    _in_progress_note(stats, days, out)
     return out
 
 
 def get_focus(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     days = _range(args)
     out = ToolOutput(days=set(days))
+    _in_progress_note(stats, days, out)
+    per_day: list[Fact] = []
     focused: list[float] = []
-    scores: list[float] = []
+    scores: list[tuple[str, float]] = []
     for day in days:
         on = f"on {_on(day)}"
         focus, score = stats.focused_minutes(day), stats.focus_score(day)
@@ -279,31 +321,30 @@ def get_focus(stats: Stats, args: dict[str, Any]) -> ToolOutput:
             continue
         if focus["value"] is not None:
             focused.append(focus["value"])
-            out.facts.append(Fact(f"focused time (work or study blocks of 10+ minutes) {on}", round(focus["value"]), "minutes"))
+            per_day.append(Fact(f"focused time (work or study blocks of 10+ minutes) {on}", round(focus["value"]), "minutes"))
         if score["value"] is not None:
-            scores.append(score["value"])
-            out.facts.append(Fact(f"focus score (0 to 100) {on}", score["value"], "score"))
+            scores.append((day.isoformat(), score["value"]))
+            per_day.append(Fact(f"focus score (0 to 100) {on}", score["value"], "score"))
         if pickups["value"] is not None:
-            out.facts.append(Fact(f"phone pickups {on}", pickups["value"], "times"))
+            per_day.append(Fact(f"phone pickups {on}", pickups["value"], "times"))
         if switches["value"] is not None:
-            out.facts.append(Fact(f"app switches per hour of screen time {on}", switches["value"], "per hour"))
+            per_day.append(Fact(f"app switches per hour of screen time {on}", switches["value"], "per hour"))
     if len(days) > 1 and focused:
         out.facts.append(Fact(f"average focused time per day over the {len(focused)} days with data, {_when(days)}",
                               round(sum(focused) / len(focused)), "minutes"))
     if len(days) > 1 and scores:
         out.facts.append(Fact(f"average focus score over the {len(scores)} days with a score, {_when(days)}",
-                              round(sum(scores) / len(scores)), "score"))
-    _in_progress_note(stats, days, out)
-    out.chart = _chart(f"focus score, {_when(days)}", "score",
-                       ((f.label.rsplit(" ", 1)[-1], float(f.value)) for f in out.facts if f.label.startswith("focus score")))
+                              round(sum(score for _, score in scores) / len(scores)), "score"))
+    out.facts += per_day
+    out.chart = _chart(f"focus score, {_when(days)}", "score", scores)
     return out
 
 
 def get_sleep(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     days = _range(args)
     out = ToolOutput(days=set(days) | {d - timedelta(days=1) for d in days})
-    slept: list[float] = []
-    points = []
+    per_night: list[Fact] = []
+    slept: list[tuple[str, float]] = []
     for day in days:
         night = f"the night before {_on(day)}"
         sleep = stats.sleep_estimate(day)
@@ -312,39 +353,53 @@ def get_sleep(stats: Stats, args: dict[str, Any]) -> ToolOutput:
         else:
             how = ("" if sleep.get("measured") else " (estimated from when the phone was not used)"
                    if sleep["method"] == "idle_gap" else " (estimated)")
-            slept.append(sleep["value"])
-            out.facts.append(Fact(f"sleep {night}{how}", round(sleep["value"]), "minutes"))
-            points.append((day.isoformat(), round(sleep["value"])))
+            slept.append((day.isoformat(), round(sleep["value"])))
+            per_night.append(Fact(f"sleep {night}{how}", round(sleep["value"]), "minutes"))
             if sleep.get("start") and sleep.get("end"):
-                out.facts.append(Fact(f"fell asleep, {night}", _hhmm(sleep["start"], stats.tz), "time"))
-                out.facts.append(Fact(f"woke up on {_on(day)}", _hhmm(sleep["end"], stats.tz), "time"))
+                per_night.append(Fact(f"fell asleep, {night}", _hhmm(sleep["start"], stats.tz), "time"))
+                per_night.append(Fact(f"woke up on {_on(day)}", _hhmm(sleep["end"], stats.tz), "time"))
         late = stats.late_night_minutes(day - timedelta(days=1))
         if late["value"] is not None:
-            out.facts.append(Fact(f"screen time after 11 pm {night}", round(late["value"]), "minutes"))
+            per_night.append(Fact(f"screen time after 11 pm {night}", round(late["value"]), "minutes"))
     if len(days) > 1 and slept:
         out.facts.append(Fact(f"average sleep over the {len(slept)} nights with data, {_when(days)}",
-                              round(sum(slept) / len(slept)), "minutes"))
-    out.chart = _chart(f"sleep, {_when(days)}", "minutes", points)
+                              round(sum(minutes for _, minutes in slept) / len(slept)), "minutes"))
+    out.facts += per_night
+    out.chart = _chart(f"sleep, {_when(days)}", "minutes", slept)
     return out
 
 
 def get_calendar(stats: Stats, args: dict[str, Any]) -> ToolOutput:
+    """Every timed calendar event of those days as planned, upcoming ones included (compare_plan says how the
+    time went, up to now). The same event from two phones is listed once."""
     days = _range(args)
     out = ToolOutput(days=set(days))
+    events: list[Fact] = []
     for day in days:
-        for block in stats.planned_vs_actual(day)["blocks"]:
-            title = " ".join(str(block["title"] or "untitled").split())[:80]
-            out.facts.append(Fact(f"calendar: {title}, {_on(day)} {_hhmm(block['start'], stats.tz)} to "
-                                  f"{_hhmm(block['end'], stats.tz)}", round(block["planned_seconds"] / 60), "minutes"))
-    if not out.facts:
-        out.notes.append("no calendar events then (all-day events are not listed)")
+        start, end = day_window(day, stats.tz)
+        seen: set[tuple[str | None, datetime, datetime]] = set()
+        for event in sorted(stats.day(day).events, key=lambda e: e.start):
+            if event.kind != "calendar_event" or event.end is None or event.data.get("all_day") is True:
+                continue
+            begins, ends = max(snap(event.start), start), min(snap(event.end), end)
+            key = (event.title, begins, ends)
+            if ends <= begins or key in seen:
+                continue
+            seen.add(key)
+            title = " ".join(str(event.title or "untitled").split())[:80]
+            events.append(Fact(f"calendar: {title}, {_on(day)} {_hhmm(begins, stats.tz)} to {_hhmm(ends, stats.tz)}",
+                               round((ends - begins).total_seconds() / 60), "minutes"))
+    out.facts.append(Fact(f"number of calendar events (not all-day ones), {_when(days)}", len(events), "events"))
+    out.facts += events
     return out
 
 
 def compare_plan(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     days = _range(args)
     out = ToolOutput(days=set(days))
+    _in_progress_note(stats, days, out)
     totals = dict.fromkeys(("planned", "on_plan", "off_plan"), 0)
+    per_day: list[Fact] = []
     points = []
     for day in days:
         plan = stats.planned_vs_actual(day)
@@ -357,22 +412,24 @@ def compare_plan(stats: Stats, args: dict[str, Any]) -> ToolOutput:
         seconds = plan["totals_seconds"]
         for name in totals:
             totals[name] += seconds[name]
-        out.facts.append(Fact(f"planned calendar time {on}", round(seconds["planned"] / 60), "minutes"))
-        out.facts.append(Fact(f"share of planned time spent as planned {on}", plan["value"], "percent"))
+        per_day.append(Fact(f"planned calendar time up to now {on}", round(seconds["planned"] / 60), "minutes"))
+        per_day.append(Fact(f"share of planned time spent as planned {on}", plan["value"], "percent"))
         points.append((day.isoformat(), plan["value"]))
-    if totals["planned"]:
-        when = _when(days)
-        if len(days) > 1:
-            out.facts.append(Fact(f"planned calendar time, {when}", round(totals["planned"] / 60), "minutes"))
-            out.facts.append(Fact(f"share of planned time spent as planned, {when}",
-                                  round(100 * totals["on_plan"] / totals["planned"]), "percent"))
-        out.facts.append(Fact(f"time spent as planned (work, study or meetings) during calendar blocks, {when}",
-                              round(totals["on_plan"] / 60), "minutes"))
-        out.facts.append(Fact(f"time off plan (social, video or games) during calendar blocks, {when}",
-                              round(totals["off_plan"] / 60), "minutes"))
-    elif not out.notes:
-        out.notes.append("no calendar events then (all-day events are not counted)")
-    out.chart = _chart(f"share of planned time spent as planned, {_when(days)}", "percent", points)
+    if not totals["planned"]:
+        if not out.notes:
+            out.notes.append("no calendar events up to now then (all-day events are not counted)")
+        return out
+    when = _when(days)
+    if len(days) > 1:
+        out.facts.append(Fact(f"planned calendar time up to now, {when}", round(totals["planned"] / 60), "minutes"))
+        out.facts.append(Fact(f"share of planned time spent as planned, {when}",
+                              round(100 * totals["on_plan"] / totals["planned"]), "percent"))
+    out.facts.append(Fact(f"time spent as planned (work, study or meetings) during calendar blocks, {when}",
+                          round(totals["on_plan"] / 60), "minutes"))
+    out.facts.append(Fact(f"time off plan (social, video or games) during calendar blocks, {when}",
+                          round(totals["off_plan"] / 60), "minutes"))
+    out.facts += per_day
+    out.chart = _chart(f"share of planned time spent as planned, {when}", "percent", points)
     return out
 
 
@@ -384,7 +441,7 @@ _RANGE = {
                                                   f"most {MAX_RANGE_DAYS} days in all)"},
 }
 _FILTERS = {
-    "app": {"type": "string", "description": "only apps and sites whose name contains this, e.g. YouTube"},
+    "app": {"type": "string", "description": "only apps and sites with this in their name, e.g. YouTube"},
     "category": {"type": "string", "enum": list(CATEGORIES)},
     "device": {"type": "string", "enum": list(DEVICES)},
     "from_time": {"type": "string", "description": "only from this local time each day, HH:MM (24-hour)"},
@@ -416,15 +473,15 @@ TOOLS: dict[str, tuple[Tool, dict[str, Any]]] = {
         "get_sleep", "Per day: sleep the night before (with bedtime and wake time) and screen time after 11 pm that "
         "night.")),
     "get_calendar": (get_calendar, _schema(
-        "get_calendar", "Calendar events per day, with their times (not all-day events).")),
+        "get_calendar", "Calendar events per day with their times, upcoming ones included (not all-day events).")),
     "compare_plan": (compare_plan, _schema(
-        "compare_plan", "How calendar time was spent: planned time, the share spent as planned (work, study or "
-        "meetings) and time off plan (social, video or games).")),
+        "compare_plan", "How calendar time was spent, up to now: planned time, the share spent as planned (work, "
+        "study or meetings) and time off plan (social, video or games).")),
 }
 TOOL_SCHEMAS = [schema for _, schema in TOOLS.values()]
 
 
-def run_tool(database: Database, tz: tzinfo, tz_name: str, now: datetime | None, name: str, arguments: str | None) -> ToolOutput:
+def run_tool(stats: Stats, name: str, arguments: str | None) -> ToolOutput:
     """One tool call from the model. Raises ToolError for a tool or arguments it can't use."""
     if name not in TOOLS:
         raise ToolError(f"there is no tool called {name}; use one of {', '.join(TOOLS)}")
@@ -434,8 +491,11 @@ def run_tool(database: Database, tz: tzinfo, tz_name: str, now: datetime | None,
         raise ToolError("the arguments were not valid JSON") from None
     if not isinstance(args, dict):
         raise ToolError("the arguments must be a JSON object")
-    with database.connect() as conn:
-        return TOOLS[name][0](Stats(conn, tz, tz_name, now), args)
+    output = TOOLS[name][0](stats, args)
+    if len(output.facts) > MAX_FACTS:  # the summary comes first, so it is kept
+        output.facts = output.facts[:MAX_FACTS]
+        output.notes.append("only the first facts are listed: ask for fewer days to see the rest")
+    return output
 
 
 # --- asking --------------------------------------------------------------------------------------------------------
@@ -456,13 +516,14 @@ def system_prompt(today: date, tz_name: str) -> str:
 
 
 def answer_problems(answer: str, facts: Sequence[Fact], days: Iterable[date], cut_off: bool = False) -> list[str]:
-    """Why an answer can't be used, in words the model can act on; empty when it is fine."""
+    """Why an answer can't be used, in words the model can act on; empty when it is fine. Counts of apps and
+    categories come from facts here, not from how many are listed (unlike the story's top 3)."""
     if cut_off:
         return ["it was cut off before it finished"]
     if not answer:
         return ["it was empty"]
     problems = []
-    wrong = unsupported_numbers(answer, facts, days)
+    wrong = unsupported_numbers(answer, facts, days, count_listed=False)
     if wrong:
         hint = "; call a tool to get facts first" if not facts else ""
         problems.append(f"it used numbers that are not in the tool results ({', '.join(wrong)}){hint}")
@@ -483,7 +544,9 @@ def _value_text(fact: Fact) -> str:
         return f"{fact.value}%"
     if fact.unit == "per hour":
         return f"{fact.value} per hour"
-    return str(fact.value)
+    if fact.unit in ("times", "time"):
+        return str(fact.value)
+    return f"{fact.value} {fact.unit}"  # a count of something: "4 sessions"
 
 
 def facts_answer(facts: Sequence[Fact]) -> str:
@@ -510,9 +573,11 @@ def _unique(facts: Iterable[Fact]) -> list[Fact]:
 
 
 def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, now: datetime | None = None) -> AskResult:
-    """Answer one question from the data. Raises LLMError when the model can't be used before any facts are in."""
+    """Answer one question from the data. Raises LLMError when the model can't be used before any facts are in.
+    One read connection serves the whole question, so the tools share what the stats engine has loaded."""
     question = " ".join(question.split())[:MAX_QUESTION_CHARS]
-    today = (now or datetime.now(UTC)).astimezone(tz).date()
+    now = now or datetime.now(UTC)
+    today = now.astimezone(tz).date()
     model = llm.current_model()
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt(today, tz_name)},
@@ -522,57 +587,63 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
     days: set[date] = {today}
     called: list[str] = []
     chart: dict[str, Any] | None = None
-    problems: list[str] = []
     retried = False
 
     def fallback(reason: str) -> AskResult:
         return AskResult(facts_answer(_unique(facts)), _unique(facts), called, chart, None, True, False, reason)
 
-    while True:
-        offer_tools = len(called) < MAX_TOOL_CALLS
-        try:
-            choice = llm.complete(messages, tools=TOOL_SCHEMAS if offer_tools else None, temperature=0.2,
-                                  max_tokens=MAX_TOKENS, model=model)
-        except LLMError as error:
-            if not facts:
-                raise
-            return fallback(str(error))
-        message = choice.message
-        calls = [call for call in (getattr(message, "tool_calls", None) or []) if getattr(call, "function", None)]
-        if calls and offer_tools:
-            messages.append({"role": "assistant", "content": message.content, "tool_calls": [
-                {"id": call.id or f"call_{i}", "type": "function",
-                 "function": {"name": call.function.name, "arguments": call.function.arguments or "{}"}}
-                for i, call in enumerate(calls)
-            ]})
-            for i, call in enumerate(calls):
-                if len(called) >= MAX_TOOL_CALLS:
-                    content: dict[str, Any] = {"error": f"only {MAX_TOOL_CALLS} tool calls per question: answer with the facts you have"}
-                else:
-                    called.append(call.function.name)
-                    try:
-                        output = run_tool(database, tz, tz_name, now, call.function.name, call.function.arguments)
-                    except ToolError as error:
-                        content = {"error": str(error)}
+    with database.connect() as conn:
+        stats = Stats(conn, tz, tz_name, now)
+        while True:
+            offer_tools = len(called) < MAX_TOOL_CALLS
+            try:
+                choice = llm.complete(messages, tools=TOOL_SCHEMAS if offer_tools else None, temperature=0.2,
+                                      max_tokens=MAX_TOKENS, model=model)
+            except LLMError as error:
+                if not facts:
+                    raise
+                return fallback(str(error))
+            message = choice.message
+            calls = [call for call in (getattr(message, "tool_calls", None) or []) if getattr(call, "function", None)]
+            if calls and offer_tools:
+                ids = [call.id or f"call_{len(called)}_{i}" for i, call in enumerate(calls)]
+                messages.append({"role": "assistant", "content": message.content, "tool_calls": [
+                    {"id": call_id, "type": "function",
+                     "function": {"name": call.function.name, "arguments": call.function.arguments or "{}"}}
+                    for call_id, call in zip(ids, calls, strict=True)
+                ]})
+                for call_id, call in zip(ids, calls, strict=True):
+                    if len(called) >= MAX_TOOL_CALLS:
+                        content: dict[str, Any] = {"error": "no more tool calls for this question: answer with the "
+                                                            "facts you have"}
                     else:
-                        facts += output.facts
-                        days |= output.days
-                        chart = output.chart or chart
-                        content = output.content()
-                messages.append({"role": "tool", "tool_call_id": call.id or f"call_{i}",
-                                 "content": json.dumps(content, ensure_ascii=False)})
-            continue
-        answer = clean_reply(message.content)
-        if OFF_TOPIC in answer.upper():
-            return AskResult(DECLINED, [], called, None, model, False, True)
-        problems = answer_problems(answer, facts, days, cut_off=getattr(choice, "finish_reason", None) == "length")
-        if not problems:
-            return AskResult(answer, _unique(facts), called, chart, model)
-        if retried:
-            return fallback(f"the answer from {model} could not be used, even after a retry: {'; '.join(problems)}")
-        retried = True
-        messages += [
-            {"role": "assistant", "content": answer or "(no answer)"},
-            {"role": "user", "content": f"That answer cannot be used: {'; '.join(problems)}. Answer again in 1 to 4 "
-                                        "sentences, using only numbers from the tool results."},
-        ]
+                        called.append(call.function.name)
+                        try:
+                            output = run_tool(stats, call.function.name, call.function.arguments)
+                        except ToolError as error:
+                            facts += error.facts
+                            content = {"error": str(error)}
+                        except (TypeError, ValueError) as error:  # arguments of a shape no check foresaw
+                            content = {"error": f"those arguments could not be used ({error})"}
+                        else:
+                            facts += output.facts
+                            days |= output.days
+                            chart = output.chart or chart
+                            content = output.content()
+                    messages.append({"role": "tool", "tool_call_id": call_id,
+                                     "content": json.dumps(content, ensure_ascii=False)})
+                continue
+            answer = clean_reply(message.content)
+            if OFF_TOPIC in answer.upper():
+                return AskResult(DECLINED, [], called, None, model, False, True)
+            problems = answer_problems(answer, facts, days, cut_off=getattr(choice, "finish_reason", None) == "length")
+            if not problems:
+                return AskResult(answer, _unique(facts), called, chart, model)
+            if retried:
+                return fallback(f"the answer from {model} could not be used, even after a retry: {'; '.join(problems)}")
+            retried = True
+            messages += [
+                {"role": "assistant", "content": answer or "(no answer)"},
+                {"role": "user", "content": f"That answer cannot be used: {'; '.join(problems)}. Answer again in 1 to 4 "
+                                            "sentences, using only numbers from the tool results."},
+            ]

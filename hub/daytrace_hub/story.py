@@ -58,7 +58,8 @@ STORY_VERSION = f"{CHECK_VERSION}:{hashlib.sha256(SYSTEM_PROMPT.encode('utf-8'))
 
 @dataclass(frozen=True)
 class Fact:
-    """One number the story may use. `unit` is minutes, times, score, percent, per hour, or time (HH:MM)."""
+    """One number the story may use. `unit` is minutes, times, score, percent, per hour, or time (HH:MM); any other
+    unit is a plural noun counted ("sessions", "apps"), which a number followed by that noun may match."""
 
     label: str
     value: float | int | str
@@ -183,6 +184,8 @@ class Amount:
     - percent, score, count, rate (per hour), items (apps or categories), ordinal ("25th")
     - date: `calendar_day` is (day, month, year or None)
     - other: a unit no fact has ("seconds", "days"); bare: no unit at all
+
+    `unit` is the word that said what a count, items or other amount counts ("times", "apps", "sessions").
     """
 
     written: str
@@ -191,6 +194,7 @@ class Amount:
     precision: str = "exact"
     times: tuple[int, ...] = ()
     calendar_day: tuple[int, int, int | None] | None = None
+    unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -376,11 +380,12 @@ class _Reader:
         if unit in ("points", "point", "pts"):
             return self.amount(i, j + 1, "score", value=value)
         if unit in _COUNTS or (unit == "pick" and self.word(j + 1) in ("ups", "up")):
-            return self.amount(i, j + (2 if unit == "pick" else 1), "count", value=value)
+            return self.amount(i, j + (2 if unit == "pick" else 1), "count", value=value,
+                               unit="pickups" if unit == "pick" else unit)
         if unit in _ITEMS:
-            return self.amount(i, j + 1, "items", value=value)
+            return self.amount(i, j + 1, "items", value=value, unit=unit)
         if unit in _OTHER_UNITS or (unit == "s" and self.attached(j)):
-            return self.amount(i, j + 1, "other", value=value)
+            return self.amount(i, j + 1, "other", value=value, unit=unit)
         return self.amount(i, j, "bare", value=value)
 
     def after_hours(self, start: int, hours: float, j: int, half: bool) -> tuple[Amount, int]:
@@ -460,19 +465,29 @@ _FACT_KINDS = {"minutes": "duration", "time": "clock", "score": "score", "percen
 @dataclass(frozen=True)
 class Allowed:
     """What a story's amounts may match: each fact's (kind, value), the amounts written in the facts' labels, how
-    many apps and categories are listed, and the days it may name (the story's day; for an answer, every day the
-    tools looked at)."""
+    many apps and categories are listed, counts of a named noun ("sessions"), and the days it may name (the story's
+    day; for an answer, every day the tools looked at)."""
 
     values: list[tuple[str, float]]
     labels: list[Amount]
     items: set[int]
     days: frozenset[date]
+    nouns: list[tuple[str, float]]
 
 
-def allowed_values(facts: Iterable[Fact], days: date | Iterable[date]) -> Allowed:
+def _singular(word: str) -> str:
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    return word[:-1] if word.endswith("s") and not word.endswith("ss") else word
+
+
+def allowed_values(facts: Iterable[Fact], days: date | Iterable[date], count_listed: bool = True) -> Allowed:
+    """`count_listed`: how many "time in ..." and "time on ..." facts there are is how many apps and categories
+    the story may say it lists (the story's top 3). Answers (DT-40) give those counts as facts instead."""
     facts = list(facts)
     values: list[tuple[str, float]] = []
     labels: list[Amount] = []
+    nouns: list[tuple[str, float]] = []
     for fact in facts:
         labels += numbers_in(fact.label)
         kind = _FACT_KINDS.get(fact.unit, "count")
@@ -481,8 +496,11 @@ def allowed_values(facts: Iterable[Fact], days: date | Iterable[date]) -> Allowe
             values.append((kind, hours * 60 + minutes))
         else:
             values.append((kind, float(fact.value)))
+        if fact.unit not in _FACT_KINDS:
+            nouns.append((_singular(fact.unit.lower()), float(fact.value)))
     listed = {sum(f.label.startswith("time in ") for f in facts), sum(f.label.startswith("time on ") for f in facts)}
-    return Allowed(values, labels, listed - {0}, frozenset([days] if isinstance(days, date) else days))
+    return Allowed(values, labels, (listed - {0}) if count_listed else set(),
+                   frozenset([days] if isinstance(days, date) else days), nouns)
 
 
 def _duration_fits(minutes: float, precision: str, fact: float) -> bool:
@@ -556,14 +574,17 @@ def supported(amount: Amount, allowed: Allowed) -> bool:
         return True
     if amount.kind in ("items", "bare") and amount.value in allowed.items:
         return True
-    if amount.kind == "bare" and any(amount.value in (day.day, day.year) for day in days):
-        return True
+    if amount.kind in ("count", "items", "other") and any(
+            (noun, value) == (_singular(amount.unit), amount.value) for noun, value in allowed.nouns):
+        return True  # "4 sessions" for a count of sessions
+    if amount.kind == "bare" and any(amount.value == day.year for day in days):
+        return True  # a plain day of the month is not: "the 25th" and "25 September" are dates
     return any(_fits(amount, kind, value) for kind, value in allowed.values)
 
 
-def unsupported_numbers(text: str, facts: Sequence[Fact], days: date | Iterable[date]) -> list[str]:
+def unsupported_numbers(text: str, facts: Sequence[Fact], days: date | Iterable[date], count_listed: bool = True) -> list[str]:
     """The amounts in `text`, as written, that match no fact. `days` are the days it may name."""
-    allowed = allowed_values(facts, days)
+    allowed = allowed_values(facts, days, count_listed)
     return [amount.written for amount in numbers_in(text) if not supported(amount, allowed)]
 
 

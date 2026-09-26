@@ -372,22 +372,24 @@ app or site seen in the last 30 days, most used first (at most 500):
 
   ```json
   { "answer": "Last week you watched 1 hour 50 minutes of YouTube after 11 pm, ...",
-    "facts_used": [ { "label": "time in YouTube between 23:00 and 03:00, from Monday 2026-09-21 to Sunday 2026-09-27",
+    "facts_used": [ { "label": "time in apps matching YouTube between 23:00 and 03:00, from Monday 2026-09-21 to Sunday 2026-09-27",
                       "value": 110, "unit": "minutes" } ],
     "tools_called": ["get_totals"],
     "chart": { "kind": "bar", "title": "...", "unit": "minutes", "points": [ { "label": "2026-09-21", "value": 30 } ] },
     "model": "qwen3-14b", "fallback": false, "declined": false, "reason": null }
   ```
 
-  - The model calls tools that read the stats engine, at most 4 per question, each over at most 31 days:
+  - The model calls tools that read the stats engine, at most 4 per question, each over at most 31 days and
+    returning at most 40 facts (summaries first):
     - `get_totals`: screen time grouped by app, category, device, hour or day. It can be narrowed to an app or
-      site, a category, phones or computers, and a time of day. 23:00 to 03:00 runs into the next morning and
-      counts for the evening it started on.
+      site (a word of its name, or part of it for 4 letters or more), a category, phones or computers, and a
+      time of day. 23:00 to 03:00 runs into the next morning and counts for the evening it started on. A range
+      with no data gets no total: missing is not zero.
     - `get_sessions`: the sessions themselves, with their times.
     - `get_focus`: focused time, focus score, pickups and switches per hour, per day.
     - `get_sleep`: sleep per night, and screen time after 11 pm the night before.
-    - `get_calendar`: calendar blocks (not all-day events).
-    - `compare_plan`: how calendar time was spent.
+    - `get_calendar`: calendar events with their times, upcoming ones included (not all-day events).
+    - `compare_plan`: how calendar time was spent, up to now.
 
     Streaks get a tool with DT-53.
   - `facts_used` is every fact the tools returned, and the answer goes through the story's number check against

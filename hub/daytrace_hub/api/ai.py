@@ -82,7 +82,7 @@ def get_story(
 
 
 class AskIn(BaseModel):
-    question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+    question: str = Field(max_length=MAX_QUESTION_CHARS, description="An empty one gets 400.")
     tz: str | None = Field(default=None, description="IANA time zone, e.g. America/Toronto; default: the hub's")
 
 

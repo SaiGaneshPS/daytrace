@@ -15,7 +15,17 @@ from daytrace_hub import ask as ask_module
 from daytrace_hub.api import ai as ai_api
 from daytrace_hub.api.events import store_events
 from daytrace_hub.app import create_app
-from daytrace_hub.ask import DECLINED, MAX_TOOL_CALLS, TOOLS, ToolError, ask, facts_answer, run_tool
+from daytrace_hub.ask import (
+    DECLINED,
+    MAX_FACTS,
+    MAX_TOOL_CALLS,
+    TOOLS,
+    ToolError,
+    answer_problems,
+    ask,
+    facts_answer,
+    run_tool,
+)
 from daytrace_hub.auth import register_device
 from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database, transaction
@@ -51,6 +61,8 @@ def add(db: Database, device_id: str, device_type: str, events: list[dict[str, A
     with db.connect() as conn:
         if not conn.execute("SELECT 1 FROM devices WHERE device_id = ?", (device_id,)).fetchone():
             register_device(conn, device_id=device_id, name=device_id, device_type=device_type)
+            with transaction(conn):  # paired well before the week, whatever today's real date
+                conn.execute("UPDATE devices SET paired_at = ? WHERE device_id = ?", ("2026-09-01T00:00:00.000000Z", device_id))
         with transaction(conn):
             store_events(conn, device_id, [(i, Event.model_validate({"device_id": device_id, **e})) for i, e in enumerate(events)])
 
@@ -84,8 +96,9 @@ def asked(db: Database, fake: FakeModelServer, question: str = QUESTION) -> ask_
     return ask(db, fake.llm(), question, ZONE, TZ, NOW)
 
 
-def tool(db: Database, name: str, args: dict[str, Any], now: datetime = NOW) -> ask_module.ToolOutput:
-    return run_tool(db, ZONE, TZ, now, name, json.dumps(args))
+def tool(db: Database, name: str, args: dict[str, Any] | str, now: datetime = NOW) -> ask_module.ToolOutput:
+    with db.connect() as conn:
+        return run_tool(Stats(conn, ZONE, TZ, now), name, args if isinstance(args, str) else json.dumps(args))
 
 
 # --- the stats filters ask uses --------------------------------------------------------------------------------------
@@ -127,14 +140,18 @@ def test_bad_arguments_are_refused_with_a_reason(week: Database) -> None:
         tool(week, "get_totals", {"first_day": "2026-08-01", "last_day": "2026-09-27"})
     with pytest.raises(ToolError, match="a date like"):
         tool(week, "get_totals", {"first_day": "last monday", "last_day": "2026-09-27"})
-    with pytest.raises(ToolError, match="24-hour time"):
+    with pytest.raises(ToolError, match="24-hour local time"):
         tool(week, "get_totals", {**LAST_WEEK, "from_time": "11pm"})
     with pytest.raises(ToolError, match="category must be one of"):
         tool(week, "get_totals", {**LAST_WEEK, "category": "fun"})
     with pytest.raises(ToolError, match="not valid JSON"):
-        run_tool(week, ZONE, TZ, NOW, "get_totals", "{oops")
+        tool(week, "get_totals", "{oops")
     with pytest.raises(ToolError, match="no tool called get_streaks"):
-        run_tool(week, ZONE, TZ, NOW, "get_streaks", "{}")
+        tool(week, "get_streaks", "{}")
+    with pytest.raises(ToolError, match="device must be text"):
+        tool(week, "get_totals", {**LAST_WEEK, "device": ["phone"]})
+    with pytest.raises(ToolError, match="local time"):
+        tool(week, "get_totals", {**LAST_WEEK, "from_time": "23:00Z", "until_time": "03:00"})
 
 
 @pytest.fixture(scope="module")
@@ -173,7 +190,8 @@ def test_the_youtube_question_gets_the_right_figure(week: Database, fake_llm: Fa
     assert (result.answer, result.fallback, result.declined, result.tools_called) == (GOOD, False, False, ["get_totals"])
     assert result.model == "qwen3-14b"
     total = result.facts[0]
-    assert (total.value, total.unit) == (110, "minutes") and total.label.startswith("time in YouTube between 23:00 and 03:00")
+    assert (total.value, total.unit) == (110, "minutes")
+    assert total.label.startswith("time in apps matching YouTube between 23:00 and 03:00")
     assert result.chart is not None
     assert [(p["label"], p["value"]) for p in result.chart["points"] if p["value"]] == [
         ("2026-09-21", 30), ("2026-09-22", 45), ("2026-09-24", 20), ("2026-09-26", 15)]
@@ -207,8 +225,8 @@ def test_wrong_numbers_twice_show_the_facts_instead(week: Database, fake_llm: Fa
     fake_llm.reply_text("You watched 3 hours of YouTube after 11 pm last week.")
     result = asked(week, fake_llm)
     assert result.fallback is True and result.model is None and "3 hours" in (result.reason or "")
-    assert result.answer.startswith("Here is what I found: time in YouTube between 23:00 and 03:00, from Monday "
-                                    "2026-09-21 to Sunday 2026-09-27: 1 hour 50 minutes;")
+    assert result.answer.startswith("Here is what I found: time in apps matching YouTube between 23:00 and 03:00, "
+                                    "from Monday 2026-09-21 to Sunday 2026-09-27: 1 hour 50 minutes;")
     assert unsupported_numbers(result.answer, result.facts, WEEK_DAYS) == []  # the facts never fail their own check
 
 
@@ -241,7 +259,7 @@ def test_calls_past_the_limit_are_refused(week: Database, fake_llm: FakeModelSer
     fake_llm.reply_text("Done.")
     result = asked(week, fake_llm, "How did I sleep and focus last week?")
     assert result.tools_called == ["get_focus"] * 3 + ["get_sleep"]
-    assert "only 4 tool calls" in fake_llm.chats()[-1]["body"]["messages"][-1]["content"]
+    assert "no more tool calls" in fake_llm.chats()[-1]["body"]["messages"][-1]["content"]
 
 
 def test_a_bad_call_is_explained_to_the_model(week: Database, fake_llm: FakeModelServer) -> None:
@@ -300,6 +318,7 @@ def test_the_ask_endpoint(week: Database, settings: Settings, fake_llm: FakeMode
     with TestClient(create_app(settings, llm=fake_llm.llm()), client=("127.0.0.1", 50000), base_url="http://localhost:8765") as hub:
         body = hub.post("/api/v1/ask", json={"question": QUESTION, "tz": TZ}).json()
         assert hub.post("/api/v1/ask", json={"question": "   ", "tz": TZ}).status_code == 400
+        assert hub.post("/api/v1/ask", json={"question": "", "tz": TZ}).status_code == 400
         assert hub.post("/api/v1/ask", json={"question": QUESTION, "tz": "Mars/Base"}).status_code == 400
         phone = TestClient(hub.app, client=("192.168.1.50", 40000))
         assert phone.post("/api/v1/ask", json={"question": QUESTION}).status_code == 401
@@ -309,3 +328,99 @@ def test_the_ask_endpoint(week: Database, settings: Settings, fake_llm: FakeMode
     assert (body["answer"], body["tools_called"], body["model"], body["fallback"], body["declined"]) == (
         GOOD, ["get_totals"], "qwen3-14b", False, False)
     assert body["facts_used"][0]["value"] == 110 and body["chart"]["kind"] == "bar"
+
+
+# --- review fixes ----------------------------------------------------------------------------------------------------
+
+
+def test_every_hour_is_listed_and_apps_are_counted(db: Database) -> None:
+    add(db, "android-1", "android", [phone(*YT, at(25, f"{hour:02d}:00:00"), at(25, f"{hour:02d}:10:00"), hour)
+                                     for hour in range(6, 23)])
+    by_hour = tool(db, "get_totals", {"first_day": "2026-09-25", "last_day": "2026-09-25", "group_by": "hour"})
+    assert len([f for f in by_hour.facts if " between " in f.label]) == 17  # 06:00 to 22:00, not just the first 10
+    by_app = tool(db, "get_totals", {"first_day": "2026-09-25", "last_day": "2026-09-25"})
+    assert unsupported_numbers("You used 1 app.", by_app.facts, by_app.days, count_listed=False) == []
+    assert unsupported_numbers("You used 10 apps.", by_app.facts, by_app.days, count_listed=False) == ["10 apps"]
+
+
+def test_a_short_app_name_matches_whole_words_only(week: Database) -> None:
+    assert tool(week, "get_totals", {**LAST_WEEK, "app": "X"}).facts[0].value == 0  # not every ".exe"
+    assert tool(week, "get_totals", {**LAST_WEEK, "app": "edge"}).facts[0].value == 5  # Edge, not the site it showed
+
+
+def test_labels_never_repeat_with_different_values(week: Database) -> None:
+    out = tool(week, "get_totals", {**YOUTUBE_AFTER_11, "group_by": "app"})
+    assert len({f.label for f in out.facts}) == len(out.facts)
+    assert [(f.label.split(" between")[0], f.value) for f in out.facts[2:]] == [("number of apps used", 2),
+                                                                                 ("time in YouTube", 95),
+                                                                                 ("time in youtube.com", 15)]
+
+
+def test_the_calendar_shows_what_is_still_ahead(db: Database) -> None:
+    def event(title: str, start: str, end: str, seq: int) -> dict[str, Any]:
+        return span("calendar_event", at(28, start), at(28, end), source="calendar", title=title, seq=seq, data={"all_day": False})
+
+    add(db, "android-1", "android", [event("Past", "09:00:00", "10:00:00", 1), event("Now", "11:30:00", "13:00:00", 2),
+                                     event("Later", "14:00:00", "15:00:00", 3)])
+    out = tool(db, "get_calendar", {"first_day": "2026-09-28", "last_day": "2026-09-29"})  # NOW is 12:00 on the 28th
+    assert [(f.label, f.value) for f in out.facts] == [
+        ("number of calendar events (not all-day ones), from Monday 2026-09-28 to Tuesday 2026-09-29", 3),
+        ("calendar: Past, Monday 2026-09-28 09:00 to 10:00", 60),
+        ("calendar: Now, Monday 2026-09-28 11:30 to 13:00", 90),  # as planned, not cut at now
+        ("calendar: Later, Monday 2026-09-28 14:00 to 15:00", 60),
+    ]
+
+
+def test_a_session_past_midnight_is_one_session_and_gaps_are_not_counted(week: Database) -> None:
+    out = tool(week, "get_sessions", {**LAST_WEEK, "app": "YouTube"})
+    assert out.facts[0].value == 5
+    assert ("YouTube (video) on android-1, Tuesday 2026-09-22 23:45 to 00:30", 45) in [(f.label, f.value) for f in out.facts]
+    assert unsupported_numbers("You had 5 sessions of YouTube last week.", out.facts, out.days, count_listed=False) == []
+
+
+def test_joined_sessions_count_only_the_time_in_use(db: Database) -> None:
+    add(db, "android-1", "android", [phone(*YT, at(25, f"10:{3 * i:02d}:00"), at(25, f"10:{3 * i + 2:02d}:00"), i + 1)
+                                     for i in range(10)])  # 2 minutes on, 1 minute off
+    one_day = {"first_day": "2026-09-25", "last_day": "2026-09-25", "app": "YouTube"}
+    sessions, totals = tool(db, "get_sessions", one_day), tool(db, "get_totals", one_day)
+    assert [(f.label, f.value) for f in sessions.facts[1:]] == [
+        ("time in those sessions, on Friday 2026-09-25", 20),
+        ("YouTube (video) on android-1, Friday 2026-09-25 10:00 to 10:29", 20),
+    ]
+    assert totals.facts[0].value == 20
+
+
+def test_a_range_of_days_does_not_let_day_numbers_pass(week: Database) -> None:
+    out = tool(week, "get_focus", LAST_WEEK)
+    assert answer_problems("Your focus score was 25 on Monday.", out.facts, out.days) != []
+    assert answer_problems("On 25 September you picked up your phone.", out.facts, out.days) == []  # a date is fine
+
+
+def test_missing_data_is_not_zero(week: Database) -> None:
+    before = tool(week, "get_totals", {"first_day": "2026-08-01", "last_day": "2026-08-07", "app": "YouTube"})
+    assert before.facts == [] and any("nothing to count" in note for note in before.notes)
+    out = tool(week, "get_totals", LAST_WEEK)
+    assert any(note.startswith("windows-1 sent nothing on 2026-09-21") for note in out.notes)
+
+
+def test_long_ranges_are_capped_with_the_summary_kept(seeded: Database) -> None:
+    out = tool(seeded, "get_focus", {"first_day": "2026-09-01", "last_day": "2026-09-28"})
+    assert len(out.facts) == MAX_FACTS and out.facts[0].label.startswith("average focused time per day")
+    assert any("only the first facts" in note for note in out.notes)
+
+
+def test_a_limit_the_model_passes_on_is_allowed(week: Database, fake_llm: FakeModelServer) -> None:
+    fake_llm.reply_tool_call("get_totals", {"first_day": "2026-01-01", "last_day": "2026-09-27", "app": "YouTube"})
+    fake_llm.reply_text("I can only look at 31 days at a time, so ask about a shorter stretch.")
+    result = asked(week, fake_llm, "How much YouTube this year?")
+    assert result.fallback is False and result.answer.startswith("I can only look at 31 days")
+
+
+def test_a_part_of_the_day_sees_devices_without_building_the_whole_day(week: Database) -> None:
+    with week.connect() as conn:
+        quick = Stats(conn, ZONE, TZ, NOW)
+        full = Stats(conn, ZONE, TZ, NOW)
+        for day in sorted(WEEK_DAYS):
+            assert quick._screen_devices(day) == full.day(day).counted_devices_with_data
+        quick.totals(date(2026, 9, 21), date(2026, 9, 27), between=(time(23), time(3)))
+        assert not any(key == (full.day(date(2026, 9, 21)).start, full.day(date(2026, 9, 21)).end) for key in quick._windows)

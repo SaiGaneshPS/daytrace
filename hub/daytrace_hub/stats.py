@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 import sqlite3
 import warnings
 from collections import defaultdict
@@ -36,6 +37,7 @@ from scipy import stats as scipy_stats
 
 from .api.timeline import DETAIL_ONLY_TYPES, day_window, minutes, union_seconds
 from .categories import Categorizer
+from .db import utc_text
 from .sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
 
 GroupBy = Literal["app", "category", "device", "hour", "day"]
@@ -101,6 +103,23 @@ def subtract_intervals(intervals: Iterable[Interval], cuts: Iterable[Interval]) 
 
 def clip_to(intervals: Iterable[Interval], start: datetime, end: datetime) -> list[Interval]:
     return [(max(a, start), min(b, end)) for a, b in intervals if a < end and b > start]
+
+
+_ID_NOISE = frozenset({"com", "org", "net", "io", "app", "apps", "android", "google", "apple", "microsoft", "exe", "www"})
+
+
+def app_matches(needle: str, piece: Session) -> bool:
+    """Whether an app filter ("youtube", lower case) names this piece: a word of its app or site name, or a
+    part of the name when the filter is 4 letters or more; for apps, also a word of the app id other than
+    com, exe and the like. So "x" is the X app and not every ".exe", and "youtube" is YouTube on a phone and
+    youtube.com in a browser. A site keeps its browser's id, which never matches (as in totals by app)."""
+    name = (piece.app or "").lower()
+    if needle in re.findall(r"[a-z0-9]+", name) or (len(needle) >= 4 and needle in name):
+        return True
+    if piece.kind == "web":
+        return False
+    words = [w for w in re.findall(r"[a-z0-9]+", (piece.app_id or "").lower()) if w not in _ID_NOISE]
+    return needle in words or (len(needle) >= 4 and any(w.startswith(needle) for w in words))
 
 
 def is_meeting(session: Session) -> bool:
@@ -321,7 +340,7 @@ class Stats:
         for day, window in zip(days, windows, strict=True):
             if window.until <= window.start:  # a day (or part of one) that has not begun is neither missing nor zero
                 continue
-            with_data = window.counted_devices_with_data | (self.day(day).counted_devices_with_data if between else set())
+            with_data = window.counted_devices_with_data | (self._screen_devices(day) if between else set())
             if device_types is not None:
                 with_data = {d for d in with_data if self._device_types.get(d) in device_types}
             for device in sorted(self._expected(window, device_types or COUNTED_TYPES) - with_data):
@@ -368,8 +387,24 @@ class Stats:
             piece for piece in window.pieces
             if (device_types is None or window.type_of(piece) in device_types)
             and (category is None or (piece.category or "other") == category)
-            and (not needle or any(needle in (text or "").lower() for text in (piece.app, piece.app_id)))
+            and (not needle or app_matches(needle, piece))
         ]
+
+    def _screen_devices(self, day: date) -> set[str]:
+        """Counted devices that sent screen data on `day` (up to now), as the day's window would say, from one
+        query instead of building the whole day's sessions (a part of the day needs only this from the rest)."""
+        key = day_window(day, self.tz)
+        if key in self._windows:
+            return self._windows[key].counted_devices_with_data
+        start, end = key
+        until = max(start, min(end, self.now))
+        kinds = sorted(SCREEN_KINDS)
+        rows = self._conn.execute(
+            f"SELECT DISTINCT device_id FROM events WHERE kind IN ({', '.join('?' for _ in kinds)}) AND ("
+            "(end_utc IS NOT NULL AND end_utc > ? AND start_utc < ?) OR (end_utc IS NULL AND start_utc >= ? AND start_utc < ?))",
+            [*kinds, utc_text(start), utc_text(until), utc_text(start), utc_text(until)],
+        ).fetchall()
+        return {row[0] for row in rows if self._device_types.get(row[0]) in COUNTED_TYPES}
 
     def _keys(self, piece: Session, group_by: str, day: date) -> list[tuple[str, int]]:
         if group_by == "app":
