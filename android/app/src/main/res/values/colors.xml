@@ -1,5 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- DT-19 app colors, plus DT-52's design tokens for DT-58 (the Android dashboard tab and widget). The values mirror
+     dashboard/src/theme/tokens.css; keep the two in step. "fill" colors are for chart marks and swatches, "ink"
+     colors for text; each has a light and a dark version (_dark). -->
 <resources>
     <color name="daytrace_background">#FFFFF8F2</color>
     <color name="daytrace_icon_background">#FF3B2A8C</color>
+
+    <!-- surfaces, text and accent -->
+    <color name="daytrace_bg">#FFF5F6FB</color>
+    <color name="daytrace_surface">#FFFFFFFF</color>
+    <color name="daytrace_text">#FF111827</color>
+    <color name="daytrace_muted">#FF4B5563</color>
+    <color name="daytrace_accent">#FF4F46E5</color>
+    <color name="daytrace_on_accent">#FFFFFFFF</color>
+    <color name="daytrace_bg_dark">#FF0B1020</color>
+    <color name="daytrace_surface_dark">#FF121A2E</color>
+    <color name="daytrace_text_dark">#FFE8EAF2</color>
+    <color name="daytrace_muted_dark">#FFA3ACC2</color>
+    <color name="daytrace_accent_dark">#FF818CF8</color>
+    <color name="daytrace_on_accent_dark">#FF0B1020</color>
+
+    <!-- hero gradient stops (white text stays readable across it) -->
+    <color name="daytrace_hero_start">#FF4F46E5</color>
+    <color name="daytrace_hero_middle">#FF7C3AED</color>
+    <color name="daytrace_hero_end">#FFDB2777</color>
+
+    <!-- categories: fill -->
+    <color name="category_social">#FFEC4899</color>
+    <color name="category_video">#FFF26B4F</color>
+    <color name="category_work">#FF3B82F6</color>
+    <color name="category_study">#FF8B5CF6</color>
+    <color name="category_comms">#FF14B8A6</color>
+    <color name="category_games">#FF84CC16</color>
+    <color name="category_health">#FF22C55E</color>
+    <color name="category_other">#FF64748B</color>
+    <color name="category_social_dark">#FFF472B6</color>
+    <color name="category_video_dark">#FFFB8A6E</color>
+    <color name="category_work_dark">#FF60A5FA</color>
+    <color name="category_study_dark">#FFA78BFA</color>
+    <color name="category_comms_dark">#FF2DD4BF</color>
+    <color name="category_games_dark">#FFA3E635</color>
+    <color name="category_health_dark">#FF4ADE80</color>
+    <color name="category_other_dark">#FF94A3B8</color>
+
+    <!-- categories: ink (text) -->
+    <color name="category_social_ink">#FFBE185D</color>
+    <color name="category_video_ink">#FFB63B20</color>
+    <color name="category_work_ink">#FF1D4ED8</color>
+    <color name="category_study_ink">#FF6D28D9</color>
+    <color name="category_comms_ink">#FF0F766E</color>
+    <color name="category_games_ink">#FF3F6212</color>
+    <color name="category_health_ink">#FF166534</color>
+    <color name="category_other_ink">#FF475569</color>
+    <color name="category_social_ink_dark">#FFF9A8D4</color>
+    <color name="category_video_ink_dark">#FFFDBCA6</color>
+    <color name="category_work_ink_dark">#FF93C5FD</color>
+    <color name="category_study_ink_dark">#FFC4B5FD</color>
+    <color name="category_comms_ink_dark">#FF5EEAD4</color>
+    <color name="category_games_ink_dark">#FFBEF264</color>
+    <color name="category_health_ink_dark">#FF86EFAC</color>
+    <color name="category_other_ink_dark">#FFCBD5E1</color>
 </resources>

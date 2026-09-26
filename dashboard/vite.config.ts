@@ -46,6 +46,8 @@ export default defineConfig({
       },
     }),
   ],
+  // ECharts alone is about 600 kB; it is split out and loaded only by pages with charts.
+  build: { chunkSizeWarningLimit: 700 },
   server: {
     host: "localhost",
     proxy: {

@@ -1,4 +1,5 @@
-# DT-6: dashboard type-check and production build.
+# DT-6: dashboard type-check and production build. DT-52: Playwright end-to-end tests of the build (desktop and
+# phone screens, accessibility with axe), with the hub's API mocked.
 # Runs on every PR (no path filter) so the required "dashboard" check always reports.
 name: dashboard
 
@@ -38,3 +39,14 @@ jobs:
         run: npm ci
       - name: Type-check and build
         run: npm run build
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end tests (Playwright)
+        run: npm run test:e2e
+      - name: Keep the test results when they fail
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results
+          path: dashboard/test-results/
+          retention-days: 7
