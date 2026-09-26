@@ -8,6 +8,7 @@ Kotlin + Jetpack Compose. Distributed as an APK (a signed release on GitHub Rele
   are in `gradle/libs.versions.toml`.
 - No cloud backup: `allowBackup` is off and the backup rules exclude everything, so the event store and the hub token
   stay on the phone.
+- Room 2.8 (the event store), WorkManager 2.12 (background sync), OkHttp 5 (talking to the hub).
 
 ## Build
 
@@ -17,16 +18,20 @@ You need a JDK 17 or newer (Android Studio's bundled one works) and the Android 
 ```powershell
 # Windows
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-.\gradlew.bat assembleDebug testDebugUnitTest
+.\gradlew.bat assembleDebug testDebugUnitTest lintDebug
 ```
 
 ```bash
 # macOS / Linux
-./gradlew assembleDebug testDebugUnitTest
+./gradlew assembleDebug testDebugUnitTest lintDebug
 ```
 
 The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/android.yml`) builds the same
 APK on every PR and keeps it as an artifact for 14 days.
+
+The database and sync tests run on the JVM with Robolectric, which downloads an Android jar (about 200 MB) on the
+first run. It is kept in `$GRADLE_USER_HOME/robolectric` (on this PC `D:\Hackathon\Cache\gradle\robolectric`)
+instead of Robolectric's default `~/.m2`.
 
 ## Install on your phone
 
@@ -68,6 +73,34 @@ while the status screen is open, and from DT-21 in the background):
 
 Known limits (Android does not expose them to apps): time in a **work profile**, Secure Folder or Dual Messenger
 (separate Android users), and video playing in a **picture-in-picture** window (Android logs it as paused).
+
+## Storing and syncing (DT-21)
+
+Every event goes into the phone's database (`data/`, Room, in private storage and never backed up) before the
+usage checkpoint moves past it, and each commit waits until it is on disk. Events collected by the first builds (a
+`files/events-pending.jsonl` file) are moved in on first start.
+
+- **Numbering.** Each event gets the next `seq` (0, 1, 2, ...). An event that changes (a session collected again
+  after a crash, now known to run longer) gets a new, higher `seq` and is queued again. It is sent with an
+  `external_id` too, so the hub replaces its shorter copy instead of adding a second one (docs/api.md).
+- **Sending.** `sync/SyncWorker.kt` runs every 15 minutes on Wi-Fi (an unmetered network) and when you tap
+  **Sync now** (any network). Each run collects new usage, then sends 200 events at a time, lowest `seq` first.
+  An event is marked sent only after the hub answers 200, and only if it has not changed since it was read, so a
+  sync cut off at any point just sends it again and the hub keeps one copy.
+- **Answers.** Events the hub refuses (`invalid`) are kept on the phone and never sent again; the status screen
+  counts them. A batch too large for the hub (413) is halved. A revoked token (401) or a token for another device
+  stops the sync until you pair again. Anything else (the hub off or busy, a 400 or 500, a 413 for a single event)
+  stops this run and keeps everything for the next one: nothing is ever refused on the phone's own guess.
+- **After a reinstall** the phone reads the hub's cursor once (recorded in the database) and numbers everything above it.
+- **Only your own network.** `sync/HubClient.kt` refuses any hub address that is not loopback, a private LAN range,
+  link-local or Tailscale. IP addresses must be written as plain `a.b.c.d`, host names are checked each time they
+  resolve, and the address actually connected to is checked before a byte of the request is written. No proxy,
+  no redirects.
+- **Known limit until DT-22 and DT-47.** "Private" means any private address, not the network you paired on: on
+  another Wi-Fi that uses the same addresses, the phone could reach a stranger's device at your hub's address.
+  Until DT-47 adds HTTPS, events and the token cross the network as plain HTTP.
+
+Until DT-22 adds pairing, the phone is not paired: events wait safely in the database and **Sync now** stays off.
 
 ## Files by ticket
 

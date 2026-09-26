@@ -151,8 +151,11 @@ object ClockCheck {
  */
 data class TodaySummary(val totalMs: Long, val topApps: List<Pair<String, Long>>) {
     companion object {
+        fun startOfDay(nowMs: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
+            Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
+
         fun from(events: List<PhoneEvent>, nowMs: Long, zone: ZoneId = ZoneId.systemDefault(), top: Int = 3): TodaySummary {
-            val dayStart = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
+            val dayStart = startOfDay(nowMs, zone)
             val sessions = events.mapNotNull { event ->
                 val endMs = event.endMs ?: return@mapNotNull null
                 if (event.kind != "app_session") return@mapNotNull null
@@ -206,7 +209,7 @@ class UsageCollector(private val context: Context, private val store: EventStore
         val usageStats = context.getSystemService(UsageStatsManager::class.java)
         val raw = read(usageStats.queryEvents(state.checkpointMs, untilMs))
         val collected = UsageSessionizer.collect(raw, state, untilMs, ignoredPackages(), ::label)
-        store.add(collected.events) // on disk (synced) before the checkpoint moves: a crash repeats work, never loses it
+        store.add(collected.events) // committed to disk before the checkpoint moves: a crash repeats work, never loses it
         saveState(collected.state, nowUptimeMs - LATENESS_MS)
         return collected.events.size
     }

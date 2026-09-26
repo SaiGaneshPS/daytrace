@@ -5,4 +5,5 @@ plugins {
     // makes the whole build use one Kotlin version, the one the Compose compiler plugin below needs.
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.ksp) apply false
 }

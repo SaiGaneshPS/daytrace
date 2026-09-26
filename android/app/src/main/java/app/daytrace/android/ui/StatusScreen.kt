@@ -1,9 +1,11 @@
-// DT-19 / DT-21: permission and sync status. DT-21 adds the last sync and "Sync now"; DT-22 the hub pairing.
+// DT-19 / DT-21: permission and sync status: today's app time, the hub card (events waiting, the last sync and
+// "Sync now") and the permissions. DT-22 adds pairing with the hub.
 package app.daytrace.android.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -38,12 +40,13 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,11 +54,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.daytrace.android.BuildConfig
 import app.daytrace.android.data.EventStore
+import app.daytrace.android.data.StoreCounts
+import app.daytrace.android.sync.PairingStore
+import app.daytrace.android.sync.SyncResult
+import app.daytrace.android.sync.SyncStatus
+import app.daytrace.android.sync.SyncStatusStore
+import app.daytrace.android.sync.SyncWorker
+import app.daytrace.android.sync.Syncer
 import app.daytrace.android.ui.theme.Blush
+import app.daytrace.android.ui.theme.LocalDaytraceExtras
 import app.daytrace.android.ui.theme.Mint
+import app.daytrace.android.ui.theme.Sky
 import app.daytrace.android.ui.theme.Sunrise
 import app.daytrace.android.usage.TodaySummary
 import app.daytrace.android.usage.UsageCollector
@@ -64,17 +82,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.unit.dp
-import app.daytrace.android.BuildConfig
-import app.daytrace.android.ui.theme.LocalDaytraceExtras
-import app.daytrace.android.ui.theme.Sky
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 @Composable
 fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOnboarding: () -> Unit) {
+    val context = LocalContext.current
     val usageOn = readyToContinue(states)
+    val syncing by remember(context) { SyncWorker.running(context) }.collectAsStateWithLifecycle(initialValue = false)
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
@@ -108,7 +125,11 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
             if (usageOn) {
                 item(key = "today") { Box(Modifier.padding(horizontal = 16.dp)) { TodayCard(rememberToday()) } }
             }
-            item(key = "hub") { Box(Modifier.padding(horizontal = 16.dp)) { HubCard() } }
+            item(key = "hub") {
+                Box(Modifier.padding(horizontal = 16.dp)) {
+                    HubCard(rememberSyncCard(), syncing, onSyncNow = { SyncWorker.syncNow(context) })
+                }
+            }
             item(key = "title") {
                 Text(
                     "Permissions",
@@ -154,7 +175,8 @@ private fun rememberToday(): Today {
                 today = withContext(Dispatchers.IO) {
                     runCatching {
                         UsageCollector(context).collect()
-                        TodaySummary.from(EventStore.get(context).all(), System.currentTimeMillis())
+                        val now = System.currentTimeMillis()
+                        TodaySummary.from(EventStore.get(context).sessionsEndingAfter(TodaySummary.startOfDay(now)), now)
                     }.fold({ Today.Ready(it) }, { Today.Failed })
                 }
                 delay(60_000)
@@ -248,39 +270,129 @@ private fun UsageOffBanner(onFix: () -> Unit) {
     }
 }
 
+/** What the hub card shows: pairing, what is waiting to be sent, and how the last sync went. */
+private data class SyncCard(val paired: Boolean, val counts: StoreCounts, val status: SyncStatus)
+
+/** Read every few seconds while the screen is in front, so a sync's result shows up as soon as it finishes. */
 @Composable
-private fun HubCard() {
-    // A soft pulse on the dot says "looking for your hub" (discovery and pairing arrive in DT-22). The value is
-    // read in the draw phase (graphicsLayer), so the card does not recompose on every animation frame.
+private fun rememberSyncCard(): SyncCard? {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var card by remember { mutableStateOf<SyncCard?>(null) }
+    LifecycleResumeEffect(Unit) {
+        val job = scope.launch {
+            while (isActive) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        SyncCard(PairingStore.load() != null, EventStore.get(context).counts(), SyncStatusStore(context).read())
+                    }.getOrNull()
+                }?.let { card = it }
+                delay(3_000)
+            }
+        }
+        onPauseOrDispose { job.cancel() }
+    }
+    return card
+}
+
+/** "today at 10:42" or a date and time. */
+private fun whenText(epochMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+    val zone = ZoneId.systemDefault()
+    val at = Instant.ofEpochMilli(epochMs).atZone(zone)
+    return if (at.toLocalDate() == Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()) {
+        "today at " + at.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+    } else {
+        at.format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT))
+    }
+}
+
+@Composable
+private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit) {
+    val paired = card?.paired == true
+    val status = card?.status
+    val healthy = paired && status?.result == SyncResult.SENT
+    // The dot pulses while looking for the hub or syncing, and stays still once all is well. The value is read in
+    // the draw phase (graphicsLayer), so the card does not recompose on every animation frame.
     val pulse = rememberInfiniteTransition(label = "hub").animateFloat(
         initialValue = 0.35f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "pulse",
     )
+    val still = healthy && !syncing
+    val dot = if (healthy) Mint else Sky
+    val needed = LocalDaytraceExtras.current.needed
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
-            Box(Modifier.size(44.dp).clip(CircleShape).background(Sky.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Home, contentDescription = null, tint = Sky)
-            }
-            Spacer(Modifier.size(14.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Your hub", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.size(8.dp))
-                    Box(Modifier.size(8.dp).graphicsLayer { alpha = pulse.value }.clip(CircleShape).background(Sky))
+        Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(Sky.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Home, contentDescription = null, tint = Sky)
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.size(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Your hub", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.size(8.dp))
+                        Box(Modifier.size(8.dp).graphicsLayer { alpha = if (still) 1f else pulse.value }.clip(CircleShape).background(dot))
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (paired) {
+                            "Paired with the Daytrace hub on your PC."
+                        } else {
+                            "Not paired yet. Pairing with the Daytrace hub on your PC is coming next; until then, everything waits safely on this phone."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (card != null) {
+                val waiting = card.counts.waiting
+                Spacer(Modifier.height(12.dp))
                 Text(
-                    "Not paired yet. Pairing with the Daytrace hub on your PC is coming next.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    when {
+                        waiting == 0 && paired && status?.lastSuccessMs != null && card.counts.refused == 0 ->
+                            "Everything on this phone is on your hub"
+                        waiting == 0 -> "Nothing waiting to send"
+                        paired -> "${Syncer.events(waiting)} waiting to go to your hub"
+                        else -> "${Syncer.events(waiting)} saved on this phone, ready to send once you pair"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+                val lastSync = status?.lastSuccessMs?.let { "Last synced ${whenText(it)}" } ?: if (paired) "Not synced yet" else null
+                if (lastSync != null) {
+                    Text(lastSync, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                val problem = status?.message?.takeIf { paired && status.result in PROBLEMS }
+                if (problem != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(problem, style = MaterialTheme.typography.bodySmall, color = needed)
+                }
+                if (card.counts.refused > 0) {
+                    Text(
+                        "Your hub refused ${Syncer.events(card.counts.refused)}. They stay on this phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                FilledTonalButton(onClick = onSyncNow, enabled = paired && !syncing) {
+                    if (syncing) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(8.dp))
+                        Text("Syncing...")
+                    } else {
+                        Text("Sync now")
+                    }
+                }
             }
         }
     }
 }
+
+private val PROBLEMS = setOf(SyncResult.PAIR_AGAIN, SyncResult.BLOCKED, SyncResult.UNREACHABLE)
