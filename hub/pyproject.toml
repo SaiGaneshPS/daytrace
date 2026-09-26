@@ -45,6 +45,7 @@ daytrace_hub = ["migrations/*.sql", "data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["real_network: may open real sockets on this computer (the model guard's own connection tests)"]
 
 [tool.ruff]
 line-length = 110

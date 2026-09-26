@@ -334,9 +334,12 @@ app or site seen in the last 30 days, most used first (at most 500):
   - `tool_calling` is whether that model calls a tool when asked to. It is checked with one short reply and
     remembered for 10 minutes; it is `null` when there is no usable model.
   - `error` says, in plain words, what is wrong: no server, the model not loaded, or an address that isn't local.
-  - The model server must be on this computer, the LAN or the tailnet: `DAYTRACE_LLM_BASE_URL` (default LM Studio
-    `http://127.0.0.1:1234/v1`; Ollama is `http://127.0.0.1:11434/v1`). Host names are resolved, and every
-    address is checked before anything is sent.
+  - The model server must be on this computer or the profile's LAN ranges (`DAYTRACE_LAN_NETWORKS` narrows them),
+    or on the tailnet for profiles without real data (never personal): `DAYTRACE_LLM_BASE_URL` (default LM Studio
+    `http://127.0.0.1:1234/v1`; Ollama is `http://127.0.0.1:11434/v1`). Host names are resolved by the hub, every
+    address is checked, and the connection goes to a checked address. Cloud metadata addresses are always refused.
+    Only plain request headers are sent, never credentials.
+  - A malformed `DAYTRACE_LLM_BASE_URL` does not stop the hub: `error` explains it.
 - `GET /story?date=` returns `{ "date": "...", "story": "...", "facts_used": [ { "label": "...", "value": 125, "unit": "minutes" } ], "model": "...", "cached": false }`.
 - `POST /ask` with `{ "question": "...", "tz": "..." }` returns `{ "answer": "...", "facts_used": [...], "tools_called": ["get_totals"], "chart": null }`. `chart`, when present, is a small series the dashboard can draw.
 

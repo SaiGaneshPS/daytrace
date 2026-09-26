@@ -24,7 +24,7 @@ from .api import timeline as timeline_api
 from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
 from .discovery import Advertiser
-from .llm import LLM, load_llm_settings
+from .llm import LLM, load_llm_settings, model_networks
 
 # 1008 = policy violation; closing before accept makes the server answer the handshake with 403.
 WEBSOCKET_POLICY_VIOLATION = 1008
@@ -78,7 +78,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None) -> Fast
     """
     settings = settings or load_settings()
     database = Database(settings.database_path)
-    model_server = llm or LLM(load_llm_settings())
+    model_server = llm or LLM(load_llm_settings(), networks=model_networks(settings))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

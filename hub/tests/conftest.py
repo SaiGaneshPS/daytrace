@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import httpcore
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +15,7 @@ from fastapi.testclient import TestClient
 from daytrace_hub.app import create_app
 from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database
-from daytrace_hub.llm import LLM, LLMSettings
+from daytrace_hub.llm import LLM, LLMSettings, LocalOnlyTransport
 
 LOCAL_CLIENT = ("127.0.0.1", 50000)
 LOCAL_URL = "http://localhost:8765"  # the hub computer's own dashboard address (trusted as local)
@@ -30,6 +32,19 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return data_dir
 
 
+@pytest.fixture(autouse=True)
+def _no_real_model_server(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test that reaches for a real model server (LM Studio on this PC, say) fails loudly instead. The guard's own
+    checks still run first; only the final connect is refused. Tests marked real_network may open local sockets."""
+    if request.node.get_closest_marker("real_network"):
+        return
+
+    def refuse(*_: object, **__: object) -> None:
+        raise AssertionError("tests must not connect to a real model server; use the fake_llm fixture")
+
+    monkeypatch.setattr(httpcore.SyncBackend, "connect_tcp", refuse)
+
+
 class FakeModelServer:
     """Stands in for LM Studio: answers GET /models and POST /chat/completions like an OpenAI-compatible server.
 
@@ -44,6 +59,11 @@ class FakeModelServer:
         self.status_codes: list[int] = []  # answered in turn before anything else, e.g. [500] for one failure
         self.replies: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
+        self.hold_chats: threading.Event | None = None  # set: chat replies wait until it is set
+        self.chat_started = threading.Event()
+        self.reject_tools = False  # True: 400 "does not support tools", as Ollama answers for such models
+        self.models_body: Any = None  # not None: sent as-is for GET /models (a server that is not OpenAI-like)
+        self.error_message = "fake failure"
 
     def reply_text(self, text: str) -> None:
         self.replies.append({"role": "assistant", "content": text})
@@ -63,10 +83,19 @@ class FakeModelServer:
         if self.down:
             raise httpx.ConnectError("connection refused", request=request)
         body = json.loads(request.content) if request.content else None
-        self.requests.append({"method": request.method, "path": request.url.path, "body": body})
+        headers = {name.lower(): value for name, value in request.headers.items()}
+        self.requests.append({"method": request.method, "path": request.url.path, "body": body, "headers": headers})
+        if request.url.path.endswith("/chat/completions"):
+            self.chat_started.set()
+            if self.hold_chats is not None:
+                self.hold_chats.wait(timeout=10)
         if self.status_codes:
             code = self.status_codes.pop(0)
-            return httpx.Response(code, json={"error": {"message": f"fake failure {code}"}})
+            return httpx.Response(code, json={"error": {"message": f"{self.error_message} {code}"}})
+        if request.url.path.endswith("/models") and self.models_body is not None:
+            return httpx.Response(200, json=self.models_body)
+        if request.url.path.endswith("/chat/completions") and self.reject_tools and (body or {}).get("tools"):
+            return httpx.Response(400, json={"error": {"message": "this model does not support tools"}})
         if request.url.path.endswith("/models"):
             data = [{"id": model, "object": "model", "created": 0, "owned_by": "fake"} for model in self.models]
             return httpx.Response(200, json={"object": "list", "data": data})
@@ -93,7 +122,8 @@ class FakeModelServer:
         }
 
     def llm(self, model: str | None = None) -> LLM:
-        http = httpx.Client(transport=httpx.MockTransport(self.handle))
+        """An LLM talking to this fake through the real guard (headers, address checks); only the socket is fake."""
+        http = httpx.Client(transport=LocalOnlyTransport(inner=httpx.MockTransport(self.handle)))
         return LLM(LLMSettings(base_url="http://127.0.0.1:1234/v1", model=model), http_client=http)
 
 
