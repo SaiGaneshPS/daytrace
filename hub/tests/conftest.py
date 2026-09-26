@@ -77,8 +77,9 @@ class FakeModelServer:
         self.models_body: Any = None  # not None: sent as-is for GET /models (a server that is not OpenAI-like)
         self.error_message = "fake failure"
 
-    def reply_text(self, text: str) -> None:
-        self.replies.append({"role": "assistant", "content": text})
+    def reply_text(self, text: str, finish_reason: str = "stop") -> None:
+        """Queue a text reply; finish_reason "length" is a reply that max_tokens cut off."""
+        self.replies.append({"role": "assistant", "content": text, "finish_reason": finish_reason})
 
     def reply_tool_call(self, name: str, arguments: dict[str, Any]) -> None:
         call = {
@@ -116,8 +117,10 @@ class FakeModelServer:
         return httpx.Response(404, json={"error": {"message": "not found"}})
 
     def _completion(self, body: dict[str, Any]) -> dict[str, Any]:
+        finish = None
         if self.replies:
-            message = self.replies.pop(0)
+            message = dict(self.replies.pop(0))
+            finish = message.pop("finish_reason", None)
         elif body.get("tools") and self.tool_calling:
             name = body["tools"][0]["function"]["name"]
             call = {"id": "call_probe", "type": "function", "function": {"name": name, "arguments": "{}"}}
@@ -129,7 +132,8 @@ class FakeModelServer:
             "object": "chat.completion",
             "created": 0,
             "model": body.get("model", ""),
-            "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if message.get("tool_calls") else "stop"}],
+            "choices": [{"index": 0, "message": message,
+                         "finish_reason": finish or ("tool_calls" if message.get("tool_calls") else "stop")}],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
 
