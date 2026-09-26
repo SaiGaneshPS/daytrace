@@ -54,8 +54,9 @@ class Story(BaseModel):
     facts_used: list[FactOut] = Field(description="Every number in the story matches one of these.")
     model: str | None = Field(description="The local model that wrote it; null for the template story.")
     cached: bool
-    fallback: bool = Field(description="True when the template story was used (model away, or numbers wrong twice).")
+    fallback: bool = Field(description="True when the template story was used (model away, or unusable twice).")
     reason: str | None = Field(description="Why the template story was used.")
+    in_progress: bool = Field(description="True while the day is not over: the story is of the day so far.")
 
 
 @router.get("/story", response_model=Story, summary="A short story of one day, every number checked")
@@ -75,4 +76,5 @@ def get_story(
     return Story(
         date=day, tz=zone_name, story=result.story, facts_used=[FactOut(**f.as_dict()) for f in result.facts],
         model=result.model, cached=result.cached, fallback=result.fallback, reason=result.reason,
+        in_progress=result.in_progress,
     )

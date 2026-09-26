@@ -10,7 +10,8 @@ tailnet), never the internet:
   model server needs: the OpenAI SDK would otherwise pass on credentials it finds in OPENAI_* variables.
 - No proxy from the environment, no redirects.
 
-`LLM.chat()` is what the day story (DT-39) and "Ask your day" (DT-40) use. `LLM.status()` feeds
+`LLM.chat()` is what "Ask your day" (DT-40) uses, and `LLM.complete()` (the reply with its finish reason) what
+the day story (DT-39) uses. `LLM.status()` feeds
 GET /api/v1/ai/status: whether a model server answers, which model is used, and whether it can call tools.
 """
 from __future__ import annotations
@@ -347,6 +348,20 @@ class LLM:
         retry: bool = True,
     ) -> Any:
         """One chat completion; returns the reply message (content, tool_calls). Raises LLMError."""
+        return self.complete(messages, tools, temperature, max_tokens, model, timeout, retry).message
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        model: str | None = None,
+        timeout: httpx.Timeout | None = None,
+        retry: bool = True,
+    ) -> Any:
+        """Like chat(), but returns the whole choice: `.message`, and `.finish_reason`, which is "length" when
+        `max_tokens` cut the reply off (a reasoning model can spend them all thinking). Raises LLMError."""
         extra: dict[str, Any] = {}
         if tools:
             extra["tools"] = tools
@@ -362,7 +377,7 @@ class LLM:
             response = client.chat.completions.create(
                 model=model or self.current_model(), messages=messages, temperature=temperature, **extra  # type: ignore[arg-type]
             )
-            return response.choices[0].message
+            return response.choices[0]
         except openai.OpenAIError as exc:
             raise self._explain(exc) from exc
         except LLMError:

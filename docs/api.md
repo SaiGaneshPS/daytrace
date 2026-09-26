@@ -345,19 +345,28 @@ app or site seen in the last 30 days, most used first (at most 500):
   ```json
   { "date": "2026-09-25", "tz": "America/Toronto", "story": "...",
     "facts_used": [ { "label": "screen time", "value": 155, "unit": "minutes" } ],
-    "model": "qwen3-14b", "cached": false, "fallback": false, "reason": null }
+    "model": "qwen3-14b", "cached": false, "fallback": false, "reason": null, "in_progress": false }
   ```
 
   - The facts come from the stats engine. `unit` is one of `minutes`, `times`, `score`, `percent`, `per hour`
-    or `time` (HH:MM, local).
-  - Every number in `story` matches a fact: digits, number words and clock times are all read. Rounding is
-    allowed (plus or minus 1 minute, point or percent), and so are the usual ways to say a duration
-    (125 minutes, 2 hours 5 minutes, about 2 hours, 2.1 hours). A number followed by a unit only matches facts
-    of that unit.
-  - A story with any other number is retried once. After that, or when the model is away, the answer is a plain
-    template story from the same facts, with `fallback: true` and `reason` saying why. It is still `200`.
-  - Stories the model wrote are cached per day and time zone until the facts change (`cached: true`), so today's
-    story follows new data. A day without data gets a short note and no model call.
+    or `time` (HH:MM, local). A session still going at midnight is not the day's first or last screen use.
+  - Every amount in `story` is read whole and must match one fact of the same kind:
+    - Durations are read however they are written ("2 hours 35 minutes", "2h35m", "two and a half hours", "a
+      three-hour block"). So are clock times ("11:40 pm", "9 am", "half past eight"), percents, scores ("81 out
+      of 100"), counts ("12 times", "twice"), rates ("4 switches an hour"), dates and number words.
+    - A duration matches to the minute (plus or minus 1), or at the precision it was said in ("about 2 hours",
+      "2.6 hours"). A clock time matches to the minute, "9 am" to the hour; without am or pm, either half of the
+      day. Scores and percents match within 1, counts exactly.
+    - A number with a unit no fact has ("155 seconds", "81 apps") only matches an amount written in a fact's
+      label ("10+ minutes"). A date must be the story's day.
+  - A story with any other number, the wrong length, or cut off is retried once, told what was wrong. After that,
+    or when the model is away, the answer is a plain template story from the same facts, with `fallback: true`,
+    `model: null` and `reason` saying why. It is still `200`.
+  - Stories the model wrote are cached per day and time zone (`cached: true`, with the facts they were written
+    from). A new one is written when the facts, the prompt, the number check or the configured model change. A
+    second request while one is being written waits for it instead of asking the model again.
+  - `in_progress: true` means the day is not over: the story is of the day so far, has no "last screen use",
+    and is written again at most every 15 minutes. A day without data gets a short note and no model call.
 - `POST /ask` with `{ "question": "...", "tz": "..." }` returns `{ "answer": "...", "facts_used": [...], "tools_called": ["get_totals"], "chart": null }`. `chart`, when present, is a small series the dashboard can draw.
 
 Every number in `story` and `answer` appears in `facts_used` (the number check, DT-39). `/story` falls back to a
