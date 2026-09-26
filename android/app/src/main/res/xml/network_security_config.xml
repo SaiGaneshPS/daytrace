@@ -1,3 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- DT-19: allow plain HTTP to the hub on the LAN. DT-47 switches to HTTPS with the mkcert CA. -->
-<network-security-config />
+<!-- DT-19: the app only talks to your own hub on your own network, whose address (a LAN IP) is not known in
+     advance, so plain HTTP is allowed. DT-47 switches the hub to HTTPS and pins its local CA here. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
