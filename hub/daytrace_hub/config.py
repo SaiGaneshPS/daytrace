@@ -35,6 +35,8 @@ class Profile:
     port: int
     allow_tailscale: bool
     description: str
+    # False for profiles that hold real data: the seed generator (DT-15) refuses them.
+    seedable: bool = True
     # 0.0.0.0 (IPv4) so phones on the same Wi-Fi can connect even when the router hands out a new address;
     # which clients are actually accepted is decided by client_allowed() and host_allowed().
     host: str = "0.0.0.0"
@@ -53,6 +55,7 @@ PROFILE_SETTINGS: dict[str, Profile] = {
             "Your real data. Reachable from your local network (your phone syncs here), never over Tailscale."
             " On Wi-Fi you do not trust, set DAYTRACE_LAN_NETWORKS or stop this profile."
         ),
+        seedable=False,
     ),
     "shared-dev": Profile(
         name="shared-dev",

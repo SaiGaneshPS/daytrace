@@ -22,9 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="start the hub (DT-10)")
     run.add_argument("--profile", choices=PROFILES, default="personal")
 
-    seed = sub.add_parser("seed", help="generate demo data (DT-15)")
+    seed = sub.add_parser("seed", help="fill a demo profile with 14 days of believable data (DT-15)")
     seed.add_argument("--profile", choices=PROFILES, default="demo")
     seed.add_argument("--days", type=int, default=14)
+    seed.add_argument("--tz", default=None, help="IANA time zone for the demo days (default: this computer's)")
 
     tracker = sub.add_parser("tracker", help="run only the desktop activity tracker (DT-16)")
     tracker.add_argument("--profile", choices=PROFILES, default="personal")
@@ -39,7 +40,49 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "run":
         return run(args.profile)
+    if args.command == "seed":
+        return seed(args.profile, args.days, args.tz)
     print(f"'{args.command}' is not implemented yet. See its ticket.", file=sys.stderr)
+    return 2
+
+
+def seed(profile_name: str, days: int, tz_name: str | None) -> int:
+    """Replace a demo profile's seed data. Profiles with real data (personal) are refused.
+
+    Expected problems get a one-line message and exit code 2; anything else is a bug and keeps its traceback.
+    """
+    import sqlite3
+    from zoneinfo import ZoneInfo
+
+    from .api.timeline import known_zones, local_zone_name
+    from .seed import SeedRefused
+    from .seed import seed as fill
+
+    zone_name = tz_name or local_zone_name()
+    if zone_name not in known_zones():
+        return _not_seeded(f"unknown time zone {zone_name!r}; use an IANA name such as America/Toronto")
+    try:
+        settings = load_settings(profile_name)
+    except ValueError as error:  # a bad DAYTRACE_* environment variable
+        return _not_seeded(str(error))
+    try:
+        result = fill(settings, days, ZoneInfo(zone_name))
+    except SeedRefused as error:
+        return _not_seeded(str(error))
+    except sqlite3.OperationalError as error:
+        return _not_seeded(f"the {profile_name} database is busy or unreadable ({error}); stop its hub and retry")
+    except RuntimeError as error:  # a database from a newer hub, or seed data the hub refused
+        return _not_seeded(str(error))
+    print(f"Seeded the {profile_name} profile: {result.first_day} to {result.last_day} ({zone_name}),"
+          f" {result.total} events (the first night's sleep starts the evening before)")
+    for device_id, count in result.events.items():
+        print(f"  {device_id}: {count}")
+    print(f"  Database: {settings.database_path}")
+    return 0
+
+
+def _not_seeded(message: str) -> int:
+    print(f"Not seeded: {message}", file=sys.stderr)
     return 2
 
 
