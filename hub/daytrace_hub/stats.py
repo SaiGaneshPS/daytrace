@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 import sqlite3
 import warnings
 from collections import defaultdict
@@ -36,6 +37,7 @@ from scipy import stats as scipy_stats
 
 from .api.timeline import DETAIL_ONLY_TYPES, day_window, minutes, union_seconds
 from .categories import Categorizer
+from .db import utc_text
 from .sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
 
 GroupBy = Literal["app", "category", "device", "hour", "day"]
@@ -101,6 +103,23 @@ def subtract_intervals(intervals: Iterable[Interval], cuts: Iterable[Interval]) 
 
 def clip_to(intervals: Iterable[Interval], start: datetime, end: datetime) -> list[Interval]:
     return [(max(a, start), min(b, end)) for a, b in intervals if a < end and b > start]
+
+
+_ID_NOISE = frozenset({"com", "org", "net", "io", "app", "apps", "android", "google", "apple", "microsoft", "exe", "www"})
+
+
+def app_matches(needle: str, piece: Session) -> bool:
+    """Whether an app filter ("youtube", lower case) names this piece: a word of its app or site name, or a
+    part of the name when the filter is 4 letters or more; for apps, also a word of the app id other than
+    com, exe and the like. So "x" is the X app and not every ".exe", and "youtube" is YouTube on a phone and
+    youtube.com in a browser. A site keeps its browser's id, which never matches (as in totals by app)."""
+    name = (piece.app or "").lower()
+    if needle in re.findall(r"[a-z0-9]+", name) or (len(needle) >= 4 and needle in name):
+        return True
+    if piece.kind == "web":
+        return False
+    words = [w for w in re.findall(r"[a-z0-9]+", (piece.app_id or "").lower()) if w not in _ID_NOISE]
+    return needle in words or (len(needle) >= 4 and any(w.startswith(needle) for w in words))
 
 
 def is_meeting(session: Session) -> bool:
@@ -283,26 +302,48 @@ class Stats:
 
     # --- totals ----------------------------------------------------------------------------------------------
 
-    def totals(self, first: date, last: date | None = None, group_by: GroupBy = "app") -> dict[str, Any]:
+    def totals(
+        self,
+        first: date,
+        last: date | None = None,
+        group_by: GroupBy = "app",
+        *,
+        between: tuple[time, time] | None = None,
+        app: str | None = None,
+        category: str | None = None,
+        device_types: frozenset[str] | None = None,
+    ) -> dict[str, Any]:
         """Screen time from `first` to `last` (inclusive, local days), grouped by app, category, device, local
         hour of the day (00 to 23, all days together) or day. Every grouping adds up to `total_seconds`.
 
         `missing` lists, per device, the days it sent no screen data although it was paired then. A day on which
         no device sent screen data is absent from the "day" grouping and listed in `missing_days`; a day (or a
         device) that sent data of which nothing counted (all AFK, say) is listed with 0.
+
+        Filters narrow what counts (DT-40 asks with them):
+        - `between`: two local clock times each day. When it ends at or before it starts (23:00 to 03:00) it runs
+          into the next morning, and that time counts for the day it started on.
+        - `app`: apps and sites whose name or id contains it, ignoring case ("youtube" is YouTube on a phone and
+          youtube.com in a desktop browser).
+        - `category`, and `device_types` (say {"android", "ios"} for phones only).
         """
         if group_by not in GROUPINGS:
             raise ValueError(f"group_by must be one of {', '.join(GROUPINGS)}")
+        if device_types is not None and not (device_types and device_types <= COUNTED_TYPES):
+            raise ValueError(f"device_types must be some of {', '.join(sorted(COUNTED_TYPES))}")
         days = self._days(first, last or first)
-        windows = [self.day(d) for d in days]
+        windows = [self.part(d, between) for d in days]
         by_key: dict[str, int] = defaultdict(int)
         missing: dict[str, list[str]] = defaultdict(list)
         missing_days: list[str] = []
+        total, estimated = 0, False
         for day, window in zip(days, windows, strict=True):
-            if window.until <= window.start:  # a day that has not begun is neither missing nor zero
+            if window.until <= window.start:  # a day (or part of one) that has not begun is neither missing nor zero
                 continue
-            with_data = window.counted_devices_with_data
-            for device in sorted(self._expected(window) - with_data):
+            with_data = window.counted_devices_with_data | (self._screen_devices(day) if between else set())
+            if device_types is not None:
+                with_data = {d for d in with_data if self._device_types.get(d) in device_types}
+            for device in sorted(self._expected(window, device_types or COUNTED_TYPES) - with_data):
                 missing[device].append(day.isoformat())
             if not with_data:
                 missing_days.append(day.isoformat())
@@ -312,10 +353,11 @@ class Stats:
             if group_by == "device":
                 for device in with_data:
                     by_key[device] += 0
-            for piece in window.pieces:
+            for piece in self.matching(window, app=app, category=category, device_types=device_types):
+                total += piece.seconds
+                estimated = estimated or piece.estimated
                 for key, seconds in self._keys(piece, group_by, day):
                     by_key[key] += seconds
-        total = sum(s.seconds for w in windows for s in w.counted)
         order = (lambda kv: kv[0]) if group_by in ("hour", "day") else (lambda kv: (-kv[1], kv[0]))
         items = [{"key": key, "seconds": seconds, "minutes": minutes(seconds)} for key, seconds in sorted(by_key.items(), key=order)]
         return {
@@ -326,8 +368,43 @@ class Stats:
             "days": len(days),
             "missing": dict(missing),
             "missing_days": missing_days,
-            **self._meta(windows[0].start, windows[-1].end, windows, any(s.estimated for w in windows for s in w.counted)),
+            **self._meta(windows[0].start, windows[-1].end, windows, estimated),
         }
+
+    def part(self, day: date, between: tuple[time, time] | None) -> Window:
+        """The day, or the part of it `between` two local clock times (into the next morning when it wraps)."""
+        if between is None:
+            return self.day(day)
+        start, until = between
+        return self.window(self.at(day, start), self.at(day if until > start else day + timedelta(days=1), until))
+
+    @staticmethod
+    def matching(window: Window, *, app: str | None = None, category: str | None = None,
+                 device_types: frozenset[str] | None = None) -> list[Session]:
+        """The window's pieces (sessions, desktop browser time credited to sites) that pass totals()' filters."""
+        needle = (app or "").strip().lower()
+        return [
+            piece for piece in window.pieces
+            if (device_types is None or window.type_of(piece) in device_types)
+            and (category is None or (piece.category or "other") == category)
+            and (not needle or app_matches(needle, piece))
+        ]
+
+    def _screen_devices(self, day: date) -> set[str]:
+        """Counted devices that sent screen data on `day` (up to now), as the day's window would say, from one
+        query instead of building the whole day's sessions (a part of the day needs only this from the rest)."""
+        key = day_window(day, self.tz)
+        if key in self._windows:
+            return self._windows[key].counted_devices_with_data
+        start, end = key
+        until = max(start, min(end, self.now))
+        kinds = sorted(SCREEN_KINDS)
+        rows = self._conn.execute(
+            f"SELECT DISTINCT device_id FROM events WHERE kind IN ({', '.join('?' for _ in kinds)}) AND ("
+            "(end_utc IS NOT NULL AND end_utc > ? AND start_utc < ?) OR (end_utc IS NULL AND start_utc >= ? AND start_utc < ?))",
+            [*kinds, utc_text(start), utc_text(until), utc_text(start), utc_text(until)],
+        ).fetchall()
+        return {row[0] for row in rows if self._device_types.get(row[0]) in COUNTED_TYPES}
 
     def _keys(self, piece: Session, group_by: str, day: date) -> list[tuple[str, int]]:
         if group_by == "app":
