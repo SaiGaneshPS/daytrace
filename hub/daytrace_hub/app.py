@@ -18,6 +18,7 @@ from . import __version__
 from .api import API_PREFIX, error_response, install_error_handlers
 from .api import devices as devices_api
 from .api import events as events_api
+from .api import timeline as timeline_api
 from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
 from .discovery import Advertiser
@@ -101,4 +102,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(events_api.router)
     app.include_router(devices_api.router)
+    app.include_router(timeline_api.router)
     return app
