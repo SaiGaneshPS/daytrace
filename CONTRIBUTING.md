@@ -11,9 +11,10 @@
 5. **Every PR is reviewed for bugs before it is merged.** Post the findings on the PR, fix them on the same
    branch, and post a reply saying what happened to each one (fixed, or why no change is needed). Only
    then tick the review box in the PR description and merge.
-6. CI must pass. The **notion-sync** check moves the Notion ticket named in the PR title (or branch) for you:
-   opening, reopening or editing the PR sets it to **In progress** with the PR link, merging sets it to **Done**,
-   and closing without merging sets it back to In progress (a ticket already Done stays Done).
+6. The required checks must pass (listed below; **notion-sync** isn't one of them). That check moves the Notion
+   ticket named in the PR title (or branch) for you, forward only: opening, reopening or editing the PR moves a
+   Not started ticket to **In progress** with the PR link, and merging into `development` moves it to **Done**.
+   Closing without merging changes nothing, and a Done ticket is never moved back.
 7. Merge with **Squash and merge** (the only merge method the repo allows). The squash commit takes the PR
    title, so `development` gets one `DT-<id>: ...` commit per ticket.
 

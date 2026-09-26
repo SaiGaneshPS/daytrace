@@ -1,18 +1,17 @@
-# DT-5: move the Notion ticket named in a PR's title (or branch) when the PR opens, changes, merges or closes.
+# DT-5: move the Notion ticket named in a PR's title (or branch) when the PR opens, changes or merges.
 # Needs the NOTION_TOKEN and NOTION_TICKETS_DB secrets (gh secret set); without them it notes that and passes.
 name: notion-sync
 
 on:
   pull_request:
     types: [opened, reopened, edited, closed]
+    branches: [development]  # only PRs into development: merging a stacked PR into a feature branch isn't Done
 
 permissions:
   contents: read
 
-concurrency:
-  # One run per PR at a time, in order (an open quickly followed by a merge must not finish out of order).
-  group: notion-sync-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+# No concurrency group: GitHub would cancel a queued run when a newer one queues, dropping that event. Runs may
+# finish in any order, which is fine because a PR only ever moves its ticket forward (see the script).
 
 jobs:
   sync:
