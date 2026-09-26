@@ -275,15 +275,33 @@ How the numbers are made (`hub/daytrace_hub/sessions.py`):
 
 ### Categories
 
-`GET /categories`:
+Every session has one category, looked up in this order (`hub/daytrace_hub/categories.py`):
+
+1. The user's override, or one the local AI saved (DT-42). The user's choice always wins over the AI's.
+2. The built-in list (`hub/daytrace_hub/data/categories.json`, about 200 apps): the Android package or iOS/macOS
+   bundle id, then the app name (case-insensitive, `.exe` ignored), and for web sessions the domain, where the
+   longest matching suffix wins (`m.youtube.com` is `youtube.com`; `music.youtube.com` has its own entry).
+3. The category the collector sent.
+4. `other`. Browsers, music and utilities are `other` on purpose; the web lane shows what the browser was for.
+
+`GET /categories` (any paired device's token, or no token from the hub computer) lists the categories and every
+app or site seen in the last 30 days, most used first (at most 500):
 
 ```json
 { "categories": ["social", "video", "work", "study", "comms", "games", "health", "other"],
-  "apps": { "Instagram": "social", "Code": "work" },
-  "overrides": { "Obsidian": { "category": "study", "source": "user" } } }
+  "apps": [ { "key": "com.instagram.android", "app": "Instagram", "app_id": "com.instagram.android", "kind": "app",
+              "category": "social", "source": "builtin", "events": 212 },
+            { "key": "m.youtube.com", "app": "m.youtube.com", "app_id": null, "kind": "web",
+              "category": "video", "source": "builtin", "events": 40 } ],
+  "overrides": [ { "key": "md.obsidian", "category": "study", "source": "user", "updated_at": "2026-09-25T18:00:00.000000Z" } ] }
 ```
 
-`PUT /categories/{app}` with `{ "category": "study" }` returns the saved override.
+`source` is `user`, `ai`, `builtin`, `collector` or `default`.
+
+- `PUT /categories/{key}` with `{ "category": "study" }` saves the user's choice for that key (an app id, app
+  name or domain; matched without case and `.exe`) and returns `{ "key", "category", "source", "updated_at" }`.
+  A domain also covers its subdomains.
+- `DELETE /categories/{key}` goes back to the built-in category (`204`, or `404` if there was no override).
 
 ### AI
 

@@ -16,6 +16,7 @@ from starlette.websockets import WebSocketClose
 
 from . import __version__
 from .api import API_PREFIX, error_response, install_error_handlers
+from .api import categories as categories_api
 from .api import devices as devices_api
 from .api import events as events_api
 from .api import timeline as timeline_api
@@ -103,4 +104,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(events_api.router)
     app.include_router(devices_api.router)
     app.include_router(timeline_api.router)
+    app.include_router(categories_api.router)
     return app
