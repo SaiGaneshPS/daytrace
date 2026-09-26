@@ -35,9 +35,11 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | 401 | `unauthorized` | Missing, unknown or revoked token |
 | 403 | `forbidden_network` | The request came from a network this profile does not serve: the public internet, a LAN outside `DAYTRACE_LAN_NETWORKS`, or Tailscale on a profile other than shared-dev. Applies to every path, before auth |
 | 403 | `forbidden_host` | The `Host` header is a public DNS name (possible DNS rebinding). Applies to every path, before auth |
+| 403 | `forbidden` | The token is valid but may not do this: a `viewer` token sending events, or a device asking for another device's cursor |
 | 403 | `local_only` | A local-only endpoint was called from another machine |
+| 405 | `method_not_allowed` | The path exists but not with this method |
 | 404 | `not_found` | Unknown device, tab or resource |
-| 413 | `batch_too_large` | More than 500 events in one request (checked before any event is validated) |
+| 413 | `batch_too_large` | More than 500 events in one request (checked before any event is validated), or a body over 2 MB (refused before it is read) |
 | 422 | `invalid_request` | Invalid input for endpoints other than `POST /events` (bad events there are reported per event, see below) |
 | 429 | `too_many_attempts` | Too many wrong pairing codes |
 | 503 | `ai_unavailable` | The local model server is not reachable |
@@ -62,15 +64,19 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 
 ### GET /health
 
+No token needed; the network and Host checks still apply.
+
 ```json
 { "status": "ok", "profile": "personal", "version": "0.1.0" }
 ```
 
 ### POST /events
 
-Send one event object, or a batch `{ "events": [ ... ] }` of 1 to 500 events.
+Send one event object, or a batch `{ "events": [ ... ] }` of 1 to 500 events, at most 2 MB. The token is
+checked before the body is read. `viewer` tokens cannot send events (`403 forbidden`).
 
 **Every event's `device_id` must be the device the token belongs to**; events for any other device are rejected.
+All good events in one request are stored in a single transaction.
 
 #### Resending is always safe (deduplication)
 
@@ -79,9 +85,9 @@ The hub stores each event under one key per device, `UNIQUE(device_id, dedup_key
 
 | The event has | Key | When the key already exists |
 |---|---|---|
-| `external_id` | `ext:<external_id>` | The new copy **replaces** the stored one (counted as `replaced`). Use this for anything that can change after it was first sent: Health Connect records, HealthKit samples, calendar events, and daily totals. |
-| `seq` (no `external_id`) | `seq:<seq>` | Ignored (counted as `duplicates`). Collectors with a local store (Android, desktop tracker, Mac bridge, browser extension) number their events 0, 1, 2, ... per device. |
-| neither | `content:<hash>` of kind, start, end, app, app_id, title and data | Ignored. For stateless collectors such as iPhone Shortcuts: two different events in the same second get different keys, and resending the same event gives the same key. |
+| `external_id` | `ext:<external_id>` | If anything changed, the new copy **replaces** the stored one (counted as `replaced`); an identical resend counts as `duplicates`. Use this for anything that can change after it was first sent: Health Connect records, HealthKit samples, calendar events, and daily totals. |
+| `seq` (no `external_id`) | `seq:<seq>` | An identical resend is ignored (counted as `duplicates`). If the stored event with that `seq` is a **different** event (kind, source, start, end, app, app_id, title or data differ), the new one is listed in `rejected`: the collector restarted its numbering, for example after a reinstall, and must continue after `last_seq`. Collectors with a local store (Android, desktop tracker, Mac bridge, browser extension) number their events 0, 1, 2, ... per device. |
+| neither | `content:<hash>` of kind, start, end, app, app_id, title and data | Ignored (`duplicates`). For stateless collectors such as iPhone Shortcuts: two different events in the same second get different keys, and resending the same event gives the same key. |
 
 Daily totals use a derived `external_id` such as `steps:2026-09-25`, so the evening sync replaces the morning
 number instead of being dropped or double counted.
@@ -115,7 +121,7 @@ Response (`200` whenever the body has the right shape, even if some events were 
 ```
 
 `last_seq` is the highest `seq` stored for that device (null for devices that never send `seq`). A device can
-only read its own cursor.
+only read its own cursor (`403 forbidden` otherwise).
 
 How collectors use it: an event counts as synced only after the request that carried it got a `200`, and
 collectors resend **all** events that are not synced yet (never just "everything after `last_seq`", which would
