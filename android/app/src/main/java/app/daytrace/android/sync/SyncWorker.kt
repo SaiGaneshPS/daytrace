@@ -19,6 +19,8 @@ import app.daytrace.android.data.EventEntity
 import app.daytrace.android.data.EventStore
 import app.daytrace.android.usage.UsageCollector
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -50,20 +52,11 @@ class SyncStatusStore(context: Context) {
         if (report.result == SyncResult.SENT) putLong(KEY_SUCCESS, nowMs)
     }
 
-    /**
-     * The device whose hub cursor was read (once per install and pairing, see [Syncer]). Losing it only means the
-     * cursor is read once more; the numbers it set are kept in the database.
-     */
-    var cursorDevice: String?
-        get() = prefs.getString(KEY_CURSOR_DEVICE, null)
-        set(value) = prefs.edit { putString(KEY_CURSOR_DEVICE, value) }
-
     private companion object {
         const val KEY_SUCCESS = "last_success_ms"
         const val KEY_ATTEMPT = "last_attempt_ms"
         const val KEY_RESULT = "last_result"
         const val KEY_MESSAGE = "last_message"
-        const val KEY_CURSOR_DEVICE = "cursor_device"
     }
 }
 
@@ -83,24 +76,21 @@ class Syncer(
         withContext(Dispatchers.IO) { syncLocked().also { status.save(it, clock()) } }
     }
 
-    private fun syncLocked(): SyncReport {
+    private suspend fun syncLocked(): SyncReport {
         val hub = pairing.load() ?: return SyncReport(SyncResult.NOT_PAIRED, "Not paired with a hub yet")
         val client = clientFor(hub)
         // After a reinstall the phone counts from 0 again, but the hub may already hold higher seqs from before.
-        if (status.cursorDevice != hub.deviceId) {
+        if (!store.hubCursorRead(hub.deviceId)) {
             when (val cursor = client.cursor()) {
-                is HubResult.Ok -> {
-                    cursor.value?.let(store::raiseSeqFloor)
-                    status.cursorDevice = hub.deviceId
-                }
+                is HubResult.Ok -> store.raiseSeqFloor(cursor.value, hub.deviceId)
                 else -> return stopped(cursor, 0, 0)
             }
         }
         var size = BATCH
         var sent = 0
         var refused = 0
-        var stuck = 0
         while (true) {
+            currentCoroutineContext().ensureActive() // a stopped worker sends nothing more
             val batch = store.pending(size)
             if (batch.isEmpty()) break
             when (val reply = client.send(batch)) {
@@ -109,40 +99,37 @@ class Syncer(
                     sent += applied.sent
                     refused += applied.refused
                     if (applied.wrongDevice) return SyncReport(SyncResult.PAIR_AGAIN, PAIR_AGAIN_MESSAGE, sent, refused)
-                    // Renumbered events go again; a hub that keeps refusing the same numbers is not looped forever.
-                    stuck = if (applied.sent + applied.refused == 0) stuck + 1 else 0
-                    if (stuck >= MAX_STUCK) return SyncReport(SyncResult.UNREACHABLE, "Your hub keeps refusing these events", sent, refused)
                     size = minOf(size * 2, BATCH)
                 }
-                is HubResult.Split -> if (batch.size == 1) {
-                    refused += store.markRejected(batch[0], reply.message)
-                } else {
-                    size = batch.size / 2
-                }
+                // One event always fits (the hub caps its size), so a 413 for a single event means the request
+                // went somewhere that is not behaving like the hub: stop and keep it, never refuse it for good.
+                is HubResult.Split -> if (batch.size > 1) size = batch.size / 2 else return stopped(HubResult.Retry(reply.message), sent, refused)
                 else -> return stopped(reply, sent, refused)
             }
         }
-        val message = if (sent == 0) "Everything was already on your hub" else "Sent ${events(sent)} to your hub"
-        return SyncReport(SyncResult.SENT, message, sent, refused)
+        return SyncReport(SyncResult.SENT, doneMessage(sent, refused), sent, refused)
     }
 
     private class Applied(val sent: Int, val refused: Int, val wrongDevice: Boolean)
 
+    /**
+     * Refused events (invalid, or any code this app does not know) are kept on the phone and not sent again.
+     * wrong_device means the token belongs to another device: those events stay queued until you pair again.
+     * seq_conflict cannot happen: every event carries an external_id, which the hub deduplicates on instead.
+     */
     private fun apply(batch: List<EventEntity>, reply: IngestReply): Applied {
         val byIndex = reply.rejected.associateBy { it.index }
         var refused = 0
-        val conflicts = mutableListOf<EventEntity>()
         var wrongDevice = false
         batch.forEachIndexed { index, event ->
             val rejection = byIndex[index] ?: return@forEachIndexed
-            when (rejection.code) {
-                "seq_conflict" -> conflicts += event
-                "wrong_device" -> wrongDevice = true // the token is for another device: re-pair, keep the events
-                else -> refused += store.markRejected(event, "${rejection.code}: ${rejection.reason}")
+            if (rejection.code == "wrong_device") {
+                wrongDevice = true
+            } else {
+                refused += store.markRejected(event, "${rejection.code}: ${rejection.reason}")
             }
         }
         val sent = store.markSynced(batch.filterIndexed { index, _ -> index !in byIndex })
-        if (conflicts.isNotEmpty()) store.renumber(conflicts, reply.lastSeq)
         return Applied(sent, refused, wrongDevice)
     }
 
@@ -150,13 +137,19 @@ class Syncer(
         is HubResult.Unauthorized -> SyncReport(SyncResult.PAIR_AGAIN, PAIR_AGAIN_MESSAGE, sent, refused)
         is HubResult.Blocked -> SyncReport(SyncResult.BLOCKED, result.message, sent, refused)
         is HubResult.Retry -> SyncReport(SyncResult.UNREACHABLE, "Couldn't reach your hub (${result.message})", sent, refused)
-        is HubResult.Split -> SyncReport(SyncResult.UNREACHABLE, result.message, sent, refused)
-        is HubResult.Ok -> SyncReport(SyncResult.SENT, "", sent, refused)
+        is HubResult.Split -> SyncReport(SyncResult.UNREACHABLE, "Couldn't reach your hub (${result.message})", sent, refused)
+        is HubResult.Ok -> SyncReport(SyncResult.SENT, doneMessage(sent, refused), sent, refused)
+    }
+
+    private fun doneMessage(sent: Int, refused: Int) = when {
+        sent > 0 && refused > 0 -> "Sent ${events(sent)} to your hub; it refused ${events(refused)}"
+        sent > 0 -> "Sent ${events(sent)} to your hub"
+        refused > 0 -> "Your hub refused ${events(refused)}"
+        else -> "Everything was already on your hub"
     }
 
     companion object {
         const val BATCH = 200
-        private const val MAX_STUCK = 3
         private const val PAIR_AGAIN_MESSAGE = "Your hub no longer accepts this phone. Pair again."
         private val LOCK = Mutex()
 
@@ -175,9 +168,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         // New usage first. A failure there (no usage access, a full disk) never stops what is stored from going.
         withContext(Dispatchers.IO) { runCatching { UsageCollector(applicationContext).collect() } }
-        val report = Syncer.get(applicationContext).sync()
-        // Only the background sync retries (with backoff); after "Sync now" the next periodic run tries again.
-        return if (report.result == SyncResult.UNREACHABLE && NOW !in tags) Result.retry() else Result.success()
+        Syncer.get(applicationContext).sync()
+        // Always a success, even when the hub was out of reach: a retry would swap the 15-minute period for
+        // WorkManager's backoff (up to 5 hours), and the next run tries again anyway. The result is on the screen.
+        return Result.success()
     }
 
     companion object {

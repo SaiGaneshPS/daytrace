@@ -38,7 +38,10 @@ data class EventEntity(
     @ColumnInfo(name = "end_ms") val endMs: Long?,
     val app: String?,
     @ColumnInfo(name = "app_id") val appId: String?,
-    /** The time zone when it was collected, so the hub gets the UTC offset in force then, not at sync time. */
+    /**
+     * The time zone when it was first collected (at most minutes after it happened in normal use), so the hub gets
+     * the UTC offset in force then, not at sync time.
+     */
     val zone: String,
     val state: Int = SyncState.PENDING,
     @ColumnInfo(name = "reject_reason") val rejectReason: String? = null,

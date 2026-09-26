@@ -356,7 +356,8 @@ private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     when {
-                        waiting == 0 && paired && status?.lastSuccessMs != null -> "Everything on this phone is on your hub"
+                        waiting == 0 && paired && status?.lastSuccessMs != null && card.counts.refused == 0 ->
+                            "Everything on this phone is on your hub"
                         waiting == 0 -> "Nothing waiting to send"
                         paired -> "${Syncer.events(waiting)} waiting to go to your hub"
                         else -> "${Syncer.events(waiting)} saved on this phone, ready to send once you pair"

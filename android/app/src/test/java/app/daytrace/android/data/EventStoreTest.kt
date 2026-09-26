@@ -71,7 +71,7 @@ class EventStoreTest {
     @Test
     fun afterAReinstallNewNumbersStartAboveTheHubs() {
         store.add(listOf(session(100, 200), session(300, 400)))
-        store.raiseSeqFloor(41)
+        store.raiseSeqFloor(41, "android-1")
         assertEquals(listOf(42L, 43L), queued().map { it.seq })
         store.add(listOf(session(500, 600)))
         assertEquals(44L, queued().last().seq)
@@ -79,18 +79,32 @@ class EventStoreTest {
 
     @Test
     fun theHubsNumbersAreRespectedEvenBeforeAnythingIsCollected() {
-        store.raiseSeqFloor(9)
+        store.raiseSeqFloor(9, "android-1")
         store.add(listOf(session(100, 200)))
         assertEquals(listOf(10L), queued().map { it.seq })
     }
 
     @Test
-    fun conflictingEventsGetNumbersAboveEverything() {
-        store.add(listOf(session(100, 200), session(300, 400), session(500, 600)))
-        store.renumber(queued().take(1), hubLastSeq = 99)
-        assertEquals(listOf(1L, 2L, 100L), queued().map { it.seq })
-        store.add(listOf(session(700, 800)))
-        assertEquals(101L, queued().last().seq)
+    fun theCursorIsRecordedPerDeviceInTheDatabase() {
+        store.add(listOf(session(100, 200)))
+        assertFalse(store.hubCursorRead("android-1"))
+        store.raiseSeqFloor(null, "android-1") // the hub has nothing from this device yet
+        assertTrue(store.hubCursorRead("android-1"))
+        assertFalse(store.hubCursorRead("android-2")) // pairing as another device reads it again
+        assertEquals(listOf(0L), queued().map { it.seq })
+    }
+
+    @Test
+    fun anExtendedEventKeepsTheZoneItWasFirstCollectedIn() {
+        store.add(listOf(session(100, 200)), ZoneId.of("America/St_Johns"))
+        store.add(listOf(session(100, 300)), ZoneId.of("Asia/Tokyo")) // extended after a flight
+        assertEquals(listOf("America/St_Johns" to 300L), queued().map { it.zone to it.endMs })
+    }
+
+    @Test
+    fun collectingNothingChangesNothing() {
+        assertEquals(0, store.add(emptyList()))
+        assertEquals(StoreCounts(waiting = 0, refused = 0), store.counts())
     }
 
     @Test

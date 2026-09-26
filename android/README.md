@@ -87,14 +87,18 @@ usage checkpoint moves past it, and each commit waits until it is on disk. Event
   **Sync now** (any network). Each run collects new usage, then sends 200 events at a time, lowest `seq` first.
   An event is marked sent only after the hub answers 200, and only if it has not changed since it was read, so a
   sync cut off at any point just sends it again and the hub keeps one copy.
-- **Answers.** Refused events (`invalid`) are kept on the phone and never sent again; the status screen counts
-  them. `seq_conflict` gets new numbers and goes again. A batch too large for the hub (413) is halved. A revoked
-  token (401) or a token for another device stops the sync until you pair again. A hub that is off or busy is
-  tried again later, and nothing is lost meanwhile.
-- **After a reinstall** the phone reads the hub's cursor once and numbers everything above it.
+- **Answers.** Events the hub refuses (`invalid`) are kept on the phone and never sent again; the status screen
+  counts them. A batch too large for the hub (413) is halved. A revoked token (401) or a token for another device
+  stops the sync until you pair again. Anything else (the hub off or busy, a 400 or 500, a 413 for a single event)
+  stops this run and keeps everything for the next one: nothing is ever refused on the phone's own guess.
+- **After a reinstall** the phone reads the hub's cursor once (recorded in the database) and numbers everything above it.
 - **Only your own network.** `sync/HubClient.kt` refuses any hub address that is not loopback, a private LAN range,
-  link-local or Tailscale, checks host names each time they resolve, and uses no proxy and no redirects. Until
-  DT-47 adds HTTPS, events and the token cross your Wi-Fi as plain HTTP.
+  link-local or Tailscale. IP addresses must be written as plain `a.b.c.d`, host names are checked each time they
+  resolve, and the address actually connected to is checked before a byte of the request is written. No proxy,
+  no redirects.
+- **Known limit until DT-22 and DT-47.** "Private" means any private address, not the network you paired on: on
+  another Wi-Fi that uses the same addresses, the phone could reach a stranger's device at your hub's address.
+  Until DT-47 adds HTTPS, events and the token cross the network as plain HTTP.
 
 Until DT-22 adds pairing, the phone is not paired: events wait safely in the database and **Sync now** stays off.
 

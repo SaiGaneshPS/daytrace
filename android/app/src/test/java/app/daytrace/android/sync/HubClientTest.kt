@@ -34,7 +34,7 @@ class HubClientTest {
     @Test
     fun sendsTheBatchAsThisDeviceWithItsToken() {
         server.enqueue(reply(200, """{"accepted": 1, "replaced": 0, "duplicates": 0, "rejected": [], "last_seq": 7}"""))
-        assertEquals(HubResult.Ok(IngestReply(emptyList(), 7)), client().send(listOf(event(7))))
+        assertEquals(HubResult.Ok(IngestReply(emptyList())), client().send(listOf(event(7))))
 
         val request = server.takeRequest()
         assertEquals("POST", request.method)
@@ -55,7 +55,7 @@ class HubClientTest {
             reply(200, """{"accepted": 1, "rejected": [{"index": 1, "code": "invalid", "seq": 2, "external_id": null, "reason": "bad end"}], "last_seq": 1}"""),
         )
         val result = client().send(listOf(event(1), event(2)))
-        assertEquals(HubResult.Ok(IngestReply(listOf(Rejection(1, "invalid", "bad end")), 1)), result)
+        assertEquals(HubResult.Ok(IngestReply(listOf(Rejection(1, "invalid", "bad end")))), result)
     }
 
     @Test
@@ -65,7 +65,7 @@ class HubClientTest {
             reply(403, error("forbidden")) to HubResult.Unauthorized::class, // a viewer token
             reply(403, error("forbidden_network")) to HubResult.Retry::class, // the hub does not serve this Wi-Fi
             reply(413, error("body_too_large")) to HubResult.Split::class,
-            reply(400, error("bad_request")) to HubResult.Split::class,
+            reply(400, error("bad_request")) to HubResult.Retry::class, // not about the batch size
             reply(503, error("busy")) to HubResult.Retry::class,
             reply(200, "not json") to HubResult.Retry::class,
         )
@@ -101,10 +101,23 @@ class HubClientTest {
 
     @Test
     fun anAddressOutsideTheHomeNetworkIsNeverContacted() {
-        for (url in listOf("http://8.8.8.8:8765", "http://[2001:4860:4860::8888]:8765", "http://100.128.0.1:8765")) {
+        val public = listOf(
+            "http://8.8.8.8:8765", "http://[2001:4860:4860::8888]:8765", "http://100.128.0.1:8765",
+            // other spellings the system reads as an IP: 8.8.8.8 as one number, 8.8.0.8, octal 010 = 8
+            "http://134744072:8765", "http://8.8.8:8765", "http://010.8.8.8:8765", "http://192.168.001.5:8765",
+        )
+        for (url in public) {
             assertTrue(url, client(url).send(listOf(event(1))) is HubResult.Blocked)
         }
         assertTrue(client("not a url").cursor() is HubResult.Blocked)
+    }
+
+    @Test
+    fun theAddressActuallyConnectedToIsCheckedBeforeAnythingIsSent() {
+        val refuseAll = HubClient.httpClient(connected = PrivateNetwork.ConnectedAddressCheck { false })
+        val hub = HubClient(HubConfig(server.url("/").toString(), "dt_secret", "android-1"), refuseAll)
+        assertTrue(hub.send(listOf(event(1))) is HubResult.Blocked)
+        assertEquals(0, server.requestCount) // connected, but not one byte of the request (or the token) was written
     }
 
     @Test

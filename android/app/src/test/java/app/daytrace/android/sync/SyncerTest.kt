@@ -116,14 +116,23 @@ class SyncerTest {
     }
 
     @Test
-    fun aSingleEventTheHubCanNeverTakeIsSetAside() {
+    fun a413ForASingleEventStopsAndKeepsIt() {
+        // One event always fits in a request, so this is not the hub talking: nothing may be refused for good.
         collect(1)
         server.enqueue(cursor(null))
         server.enqueue(reply(413, """{"error": {"code": "body_too_large", "message": "too big"}}"""))
-        val report = sync()
-        assertEquals(SyncResult.SENT, report.result)
-        assertEquals(1, report.refused)
-        assertEquals(StoreCounts(waiting = 0, refused = 1), store.counts())
+        assertEquals(SyncResult.UNREACHABLE, sync().result)
+        assertEquals(StoreCounts(waiting = 1, refused = 0), store.counts())
+    }
+
+    @Test
+    fun a400StopsWithoutRefusingAnything() {
+        collect(300)
+        server.enqueue(cursor(null))
+        server.enqueue(reply(400, """{"error": {"code": "bad_request", "message": "not what I expected"}}"""))
+        assertEquals(SyncResult.UNREACHABLE, sync().result)
+        assertEquals(2, server.requestCount) // no halving down to single events
+        assertEquals(StoreCounts(waiting = 300, refused = 0), store.counts())
     }
 
     @Test
@@ -138,26 +147,30 @@ class SyncerTest {
     }
 
     @Test
-    fun aSeqConflictGetsNewNumbersAndIsSentAgain() {
-        collect(2)
+    fun anyOtherRefusalIsSetAsideAndReportedAsSuch() {
+        collect(1)
         server.enqueue(cursor(null))
-        server.enqueue(stored(99, """{"index": 0, "code": "seq_conflict", "seq": 0, "reason": "seq 0 was already used"}"""))
-        server.enqueue(stored(100))
-        assertEquals(2, sync().sent)
-        server.takeRequest()
-        server.takeRequest()
-        assertEquals(listOf(100L), seqsIn(server.takeRequest()))
-        assertEquals(0, store.counts().waiting)
+        server.enqueue(stored(0, """{"index": 0, "code": "seq_conflict", "seq": 0, "reason": "seq 0 was already used"}"""))
+        assertEquals(SyncReport(SyncResult.SENT, "Your hub refused 1 event", sent = 0, refused = 1), sync())
+        assertEquals(StoreCounts(waiting = 0, refused = 1), store.counts())
     }
 
     @Test
-    fun aHubThatKeepsRefusingTheSameNumbersIsNotLoopedForever() {
+    fun pairingAsAnotherDeviceReadsTheCursorAgain() {
         collect(1)
         server.enqueue(cursor(null))
-        repeat(3) { server.enqueue(stored(99, """{"index": 0, "code": "seq_conflict", "seq": 0, "reason": "again"}""")) }
-        assertEquals(SyncResult.UNREACHABLE, sync().result)
-        assertEquals(4, server.requestCount)
-        assertEquals(1, store.counts().waiting)
+        server.enqueue(stored(0))
+        sync()
+        hub = HubConfig(server.url("/").toString(), "dt_other", "android-2")
+        collect(1, from = 10)
+        server.enqueue(cursor(null))
+        server.enqueue(stored(1))
+        sync()
+        val paths = List(4) { server.takeRequest().url.encodedPath }
+        assertEquals(
+            listOf("/api/v1/devices/android-1/cursor", "/api/v1/events", "/api/v1/devices/android-2/cursor", "/api/v1/events"),
+            paths,
+        )
     }
 
     @Test

@@ -8,10 +8,12 @@ import app.daytrace.android.data.PhoneEvent
 import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -34,11 +36,11 @@ fun interface HubConfigSource {
 /** An event the hub did not store, and why (docs/api.md, "rejected"). [index] is its place in the batch. */
 data class Rejection(val index: Int, val code: String, val reason: String)
 
-data class IngestReply(val rejected: List<Rejection>, val lastSeq: Long?)
+data class IngestReply(val rejected: List<Rejection>)
 
 sealed interface HubResult<out T> {
     data class Ok<T>(val value: T) : HubResult<T>
-    /** 400 or 413: send fewer events at a time. A single event that still fails can never be stored. */
+    /** 413: send fewer events at a time. */
     data class Split(val message: String) : HubResult<Nothing>
     /** The token was revoked, or is not allowed to send events: pair again. */
     data class Unauthorized(val message: String) : HubResult<Nothing>
@@ -84,26 +86,48 @@ object PrivateNetwork {
     }
 
     /**
-     * An address typed as an IP is checked here, because OkHttp connects to it without a lookup. A name is
-     * checked by [FilteringDns] each time it resolves, so it cannot be pointed somewhere else later.
+     * A quick check before connecting. OkHttp connects to anything made of digits and dots without a lookup, and
+     * the system reads short and octal forms too (134744072 and 010.8.8.8 are both 8.8.8.8), so only the plain
+     * a.b.c.d form is accepted, and it must be private. Names are checked by [FilteringDns], and whatever
+     * address is finally connected to by [ConnectedAddressCheck].
      */
     fun check(url: HttpUrl) {
-        val literal = parseIpv4(url.host) ?: if (':' in url.host) InetAddress.getByName(url.host).address else null
-        if (literal != null && !isPrivate(literal)) throw NotPrivateAddressException(url.host)
+        val host = url.host
+        val literal = when {
+            ':' in host -> InetAddress.getByName(host).address // IPv6: parsed, never looked up
+            host.all { it.isDigit() || it == '.' } -> parseIpv4(host) ?: throw NotPrivateAddressException(host)
+            else -> null
+        }
+        if (literal != null && !isPrivate(literal)) throw NotPrivateAddressException(host)
     }
 
-    /** Four dotted numbers 0 to 255, or null (then it is a name). Never does a lookup. */
+    /** Four numbers 0 to 255 with no leading zeros, or null. */
     private fun parseIpv4(host: String): ByteArray? {
         val parts = host.split('.')
         if (parts.size != 4) return null
-        val bytes = parts.map { part -> part.takeIf { it.length in 1..3 && it.all(Char::isDigit) }?.toInt()?.takeIf { it <= 255 } ?: return null }
-        return ByteArray(4) { bytes[it].toByte() }
+        val numbers = parts.map { part ->
+            val plain = part.length in 1..3 && part.all(Char::isDigit) && (part == "0" || !part.startsWith('0'))
+            part.takeIf { plain }?.toInt()?.takeIf { it <= 255 } ?: return null
+        }
+        return ByteArray(4) { numbers[it].toByte() }
     }
 
     /** Resolves names as usual but keeps only private addresses; a name with none left fails to resolve. */
     class FilteringDns(private val delegate: Dns = Dns.SYSTEM) : Dns {
         override fun lookup(hostname: String): List<InetAddress> =
             delegate.lookup(hostname).filter { isPrivate(it.address) }.ifEmpty { throw NotPrivateAddressException(hostname) }
+    }
+
+    /**
+     * The last word: checks the address the connection actually reached, after connecting and before a single
+     * byte of the request (the token included) is written, however the host was spelled or resolved.
+     */
+    class ConnectedAddressCheck(private val allowed: (InetAddress) -> Boolean = { isPrivate(it.address) }) : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val peer = chain.connection()?.socket()?.inetAddress
+            if (peer == null || !allowed(peer)) throw NotPrivateAddressException(peer?.hostAddress ?: chain.request().url.host)
+            return chain.proceed(chain.request())
+        }
     }
 }
 
@@ -126,10 +150,9 @@ class HubClient(private val config: HubConfig, private val http: OkHttpClient = 
             val reply = JSONObject(text)
             val rejected = reply.optJSONArray("rejected") ?: JSONArray()
             IngestReply(
-                rejected = (0 until rejected.length()).map { rejected.getJSONObject(it) }.map {
+                (0 until rejected.length()).map { rejected.getJSONObject(it) }.map {
                     Rejection(it.getInt("index"), it.optString("code", "invalid"), it.optString("reason"))
                 },
-                lastSeq = if (reply.isNull("last_seq")) null else reply.getLong("last_seq"),
             )
         }
     }
@@ -151,7 +174,7 @@ class HubClient(private val config: HubConfig, private val http: OkHttpClient = 
                 when {
                     response.code == 200 -> runCatching { HubResult.Ok(parse(text)) }
                         .getOrElse { HubResult.Retry("The hub sent a reply Daytrace doesn't understand") }
-                    response.code == 400 || response.code == 413 -> HubResult.Split(error?.second ?: "HTTP ${response.code}")
+                    response.code == 413 -> HubResult.Split(error?.second ?: "HTTP 413")
                     response.code == 401 || (response.code == 403 && error?.first == "forbidden") ->
                         HubResult.Unauthorized(error?.second ?: "HTTP ${response.code}")
                     else -> HubResult.Retry(error?.second ?: "HTTP ${response.code}")
@@ -169,11 +192,15 @@ class HubClient(private val config: HubConfig, private val http: OkHttpClient = 
         private const val ZERO_WIDTH_JOINER = 0x200D
 
         /**
-         * No proxy (a proxy would take the traffic off the LAN and do the lookup itself), no redirects (a
-         * redirect to an IP address would skip the lookup check), and short timeouts: the hub is nearby.
+         * No proxy (a proxy would take the traffic off the LAN and do the lookup itself), no redirects, every
+         * connection checked before the request is written, and short timeouts: the hub is nearby.
          */
-        fun httpClient(dns: Dns = PrivateNetwork.FilteringDns()): OkHttpClient = OkHttpClient.Builder()
+        fun httpClient(
+            dns: Dns = PrivateNetwork.FilteringDns(),
+            connected: Interceptor = PrivateNetwork.ConnectedAddressCheck(),
+        ): OkHttpClient = OkHttpClient.Builder()
             .dns(dns)
+            .addNetworkInterceptor(connected)
             .proxy(Proxy.NO_PROXY)
             .followRedirects(false)
             .followSslRedirects(false)

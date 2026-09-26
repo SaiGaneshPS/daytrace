@@ -59,13 +59,14 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
     @Volatile private var legacyMoved = legacyFile == null
 
     /**
-     * Stores newly collected events, each with the next seq. The same moment collected again (a collection
-     * repeated after a crash) is kept once: if the new copy ends later, the stored one is extended and queued
-     * again under a new seq, so the hub replaces its copy; otherwise nothing changes. Returns how many events
-     * were added or extended. Commits are on disk before this returns (see AppDatabase).
+     * Stores newly collected events, each with the next seq, in [zone] (the zone now). The same moment collected
+     * again (a collection repeated after a crash) is kept once: if the new copy ends later, the stored one is
+     * extended and queued again under a new seq, so the hub replaces its copy; otherwise nothing changes. Returns
+     * how many events were added or extended. Commits are on disk before this returns (see AppDatabase).
      */
     fun add(events: List<PhoneEvent>, zone: ZoneId = ZoneId.systemDefault()): Int {
         moveLegacyEvents()
+        if (events.isEmpty()) return 0 // most collections find nothing new: no write transaction for that
         return transaction { addNow(events, zone.id) }
     }
 
@@ -91,15 +92,23 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
 
     fun markRejected(event: EventEntity, reason: String): Int = dao.markRejected(event.id, event.seq, reason.take(500))
 
-    /**
-     * The hub already holds seqs up to [hubLastSeq] for this device (a reinstall starts counting from 0 again).
-     * From now on every seq is higher, and queued events at or below it get new numbers above it, so the hub
-     * treats them as the newest copies.
-     */
-    fun raiseSeqFloor(hubLastSeq: Long) = transaction { renumberNow(dao.pendingUpTo(hubLastSeq), hubLastSeq) }
+    /** Whether the hub's cursor for [deviceId] was read into this database (see [raiseSeqFloor]). */
+    fun hubCursorRead(deviceId: String): Boolean = dao.meta(CURSOR_READ + deviceId) != null
 
-    /** New numbers above [hubLastSeq] (and above every seq on the phone) for these still-queued events. */
-    fun renumber(events: List<EventEntity>, hubLastSeq: Long?) = transaction { renumberNow(events, hubLastSeq) }
+    /**
+     * The hub already holds seqs up to [hubLastSeq] (null: none) for [deviceId]; a reinstall starts counting from
+     * 0 again. From now on every seq is higher, and queued events at or below it get new numbers above it, so the
+     * hub treats them as the newest copies. Recorded in the same transaction, so a database that is recreated
+     * reads the cursor again.
+     */
+    fun raiseSeqFloor(hubLastSeq: Long?, deviceId: String) = transaction {
+        if (hubLastSeq != null) {
+            if ((dao.meta(SEQ_FLOOR) ?: 0) <= hubLastSeq) dao.setMeta(MetaEntry(SEQ_FLOOR, hubLastSeq + 1))
+            var next = nextSeq()
+            dao.pendingUpTo(hubLastSeq).forEach { if (dao.renumber(it.id, it.seq, next) > 0) next++ }
+        }
+        dao.setMeta(MetaEntry(CURSOR_READ + deviceId, 1))
+    }
 
     private fun addNow(events: List<PhoneEvent>, zone: String): Int {
         var next = nextSeq()
@@ -115,22 +124,14 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
                 )
                 changed++
             } else if ((event.endMs ?: Long.MIN_VALUE) > (stored.endMs ?: Long.MIN_VALUE)) {
+                // The zone stays the one from the first collection, the closest to when the event happened.
                 dao.update(
-                    stored.copy(
-                        seq = next++, endMs = event.endMs, app = event.app ?: stored.app, zone = zone,
-                        state = SyncState.PENDING, rejectReason = null,
-                    ),
+                    stored.copy(seq = next++, endMs = event.endMs, app = event.app ?: stored.app, state = SyncState.PENDING, rejectReason = null),
                 )
                 changed++
             }
         }
         return changed
-    }
-
-    private fun renumberNow(events: List<EventEntity>, hubLastSeq: Long?) {
-        if (hubLastSeq != null && (dao.meta(SEQ_FLOOR) ?: 0) <= hubLastSeq) dao.setMeta(MetaEntry(SEQ_FLOOR, hubLastSeq + 1))
-        var next = nextSeq()
-        events.forEach { if (dao.renumber(it.id, it.seq, next) > 0) next++ }
     }
 
     private fun nextSeq(): Long = maxOf((dao.maxSeq() ?: -1) + 1, dao.meta(SEQ_FLOOR) ?: 0)
@@ -158,6 +159,7 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
 
     companion object {
         private const val SEQ_FLOOR = "seq_floor"
+        private const val CURSOR_READ = "cursor_read:"
         const val LEGACY_FILE = "events-pending.jsonl"
 
         @Volatile private var instance: EventStore? = null
