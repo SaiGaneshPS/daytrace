@@ -1,9 +1,10 @@
-"""DT-16: Windows foreground app, window title and idle time, straight from the Win32 API (ctypes; no extra
-packages).
+"""DT-16: Windows foreground app, window title and idle time, straight from the Win32 API (ctypes; psutil only as a
+fallback).
 
 - The foreground window gives the process; `QueryFullProcessImageNameW` with limited query rights gives its
-  program even when it runs as administrator (psutil is the fallback). The program's own description
-  ("Visual Studio Code" for Code.exe) is its display name, read once per program.
+  program even when it runs as administrator. Store apps (Settings, Photos, Calculator...) sit inside an
+  ApplicationFrameHost frame, so their own child window is used to find the real app. The program's own
+  description ("Visual Studio Code" for Code.exe) is its display name, read once per program.
 - `GetLastInputInfo` gives the time since the last keyboard or mouse input (the tick counter wraps every
   49.7 days, which the arithmetic allows for).
 - The screen is locked when the input desktop cannot be opened (the lock screen and UAC's secure desktop) or
@@ -25,6 +26,11 @@ from .base import Reading
 if sys.platform != "win32":  # pragma: no cover - imported only on Windows (tracker.base.platform_probe)
     raise ImportError("the Windows probe needs Windows")
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - psutil is a hub dependency; the probe works without it
+    psutil = None
+
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _powrprof = ctypes.WinDLL("powrprof")
@@ -35,16 +41,21 @@ DESKTOP_SWITCHDESKTOP = 0x0100
 SYSTEM_EXECUTION_STATE = 16
 ES_DISPLAY_REQUIRED = 0x2
 LOCK_APPS = frozenset({"lockapp.exe", "logonui.exe"})
+FRAME_HOSTS = frozenset({"applicationframehost.exe"})
+PATH_CHARS = 32768
 
 
 class _LastInputInfo(ctypes.Structure):
     _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
 
 
+_EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
 _user32.GetForegroundWindow.restype = wintypes.HWND
 _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 _user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
 _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_user32.EnumChildWindows.argtypes = [wintypes.HWND, _EnumProc, wintypes.LPARAM]
 _user32.OpenInputDesktop.restype = wintypes.HANDLE
 _user32.CloseDesktop.argtypes = [wintypes.HANDLE]
 _kernel32.OpenProcess.restype = wintypes.HANDLE
@@ -85,22 +96,43 @@ def window_title(hwnd: int) -> str | None:
     return buffer.value or None
 
 
-def process_path(pid: int) -> str | None:
+def window_pid(hwnd: int) -> int:
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def store_app_pid(frame: int, frame_pid: int) -> int | None:
+    """A Store app's own process: the child window of its ApplicationFrameHost frame that another process owns."""
+    found: list[int] = []
+
+    def visit(child: int, _: int) -> bool:
+        pid = window_pid(child)
+        if pid and pid != frame_pid:
+            found.append(pid)
+            return False  # stop: found it
+        return True
+
+    _user32.EnumChildWindows(frame, _EnumProc(visit), 0)
+    return found[0] if found else None
+
+
+def process_path(pid: int, buffer: ctypes.Array[ctypes.c_wchar] | None = None) -> str | None:
+    buffer = buffer if buffer is not None else ctypes.create_unicode_buffer(PATH_CHARS)
     handle = _kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if handle:
         try:
-            size = wintypes.DWORD(32768)
-            buffer = ctypes.create_unicode_buffer(size.value)
+            size = wintypes.DWORD(len(buffer))
             if _kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
                 return buffer.value
         finally:
             _kernel32.CloseHandle(handle)
-    try:  # psutil can sometimes read what the limited query could not
-        import psutil
-
-        return psutil.Process(pid).exe() or None
-    except Exception:  # noqa: BLE001 - access denied, a process that just exited, ...
-        return None
+    if psutil is not None:  # psutil can sometimes read what the limited query could not
+        try:
+            return psutil.Process(pid).exe() or None
+        except (psutil.Error, OSError):  # access denied, a process that just exited, ...
+            return None
+    return None
 
 
 @lru_cache(maxsize=512)
@@ -138,7 +170,10 @@ def display_name(path: str | None) -> str | None:
 
 
 class WindowsProbe:
-    """Reads the foreground window every poll (a few microseconds of work)."""
+    """Reads the foreground window every poll (a few microseconds of work, no allocation of note)."""
+
+    def __init__(self) -> None:
+        self._buffer = ctypes.create_unicode_buffer(PATH_CHARS)  # reused on every poll
 
     def read(self) -> Reading | None:
         idle = idle_seconds()
@@ -148,10 +183,14 @@ class WindowsProbe:
         hwnd = _user32.GetForegroundWindow()
         if not hwnd:  # switching desktops, or the moment a window closes
             return None
-        pid = wintypes.DWORD()
-        _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        path = process_path(pid.value) if pid.value else None
+        pid = window_pid(hwnd)
+        path = process_path(pid, self._buffer) if pid else None
         exe = os.path.basename(path) if path else None
+        if exe and exe.lower() in FRAME_HOSTS:  # a Store app: find the app inside the frame
+            app_pid = store_app_pid(hwnd, pid)
+            app_path = process_path(app_pid, self._buffer) if app_pid else None
+            if app_path:
+                path, exe = app_path, os.path.basename(app_path)
         if exe and exe.lower() in LOCK_APPS:
             return Reading(None, None, None, idle, locked=True, display_required=showing)
         return Reading(display_name(path), exe, window_title(hwnd), idle, display_required=showing)

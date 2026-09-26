@@ -59,6 +59,10 @@ def tracker(profile_name: str) -> int:
     except ValueError as error:
         print(f"Not tracking: {error}", file=sys.stderr)
         return 2
+    if not settings.track_desktop:
+        print(f"Not tracking: DAYTRACE_TRACKER is off for the {profile_name} profile (set it to on to track this"
+              " computer there)", file=sys.stderr)
+        return 2
     database = Database(settings.database_path)
     database.initialize()
     service = desktop_tracker(settings, database)

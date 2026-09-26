@@ -1,6 +1,7 @@
 """Tests for DT-16: the desktop tracker's loop (spans, AFK, sleep, flushing) and its place in the hub."""
 from __future__ import annotations
 
+import itertools
 import sys
 import threading
 from collections.abc import Iterable
@@ -14,12 +15,13 @@ from fastapi.testclient import TestClient
 from daytrace_hub import app as app_module
 from daytrace_hub.app import create_app
 from daytrace_hub.config import Settings, get_profile, load_settings
-from daytrace_hub.db import Database
+from daytrace_hub.db import Database, transaction
 from daytrace_hub.sessions import sessions_for
 from daytrace_hub.tracker.base import (
     AlreadyTracking,
     DatabaseSink,
     Reading,
+    Span,
     Tracker,
     TrackerService,
     replace_reading,
@@ -88,7 +90,7 @@ def summary(spans: Iterable[dict[str, Any]]) -> list[tuple[str, str | None, str,
 @pytest.fixture
 def rig() -> tuple[Tracker, Script, Clock, Recorder]:
     clock, probe, sink = Clock(), Script(), Recorder()
-    tracker = Tracker(probe, sink, "windows-1", first_seq=100, wall=lambda: clock.now, monotonic=lambda: clock.mono)
+    tracker = Tracker(probe, sink, "windows-1", last_seq=100, wall=lambda: clock.now, monotonic=lambda: clock.mono)
     return tracker, probe, clock, sink
 
 
@@ -134,12 +136,12 @@ def test_switching_apps_ends_one_span_and_starts_the_next(rig: tuple[Tracker, Sc
 def test_a_title_that_keeps_changing_relabels_instead_of_splitting(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
     tracker, probe, clock, sink = rig
     poll(tracker, clock)  # 13:00:00
-    for second in range(3):  # a clock in the title: a new title every 2 s
-        probe.next = replace_reading(CODE, title=f"terminal 13:00:0{second}")
+    for tick in range(30):  # a clock in the title: a new title every 2 s, for a whole minute
+        probe.next = replace_reading(CODE, title=f"terminal {tick}")
         poll(tracker, clock)
     tracker.close()
     spans = sink.spans()
-    assert len(spans) == 1 and spans[0]["title"] == "terminal 13:00:02"
+    assert len(spans) == 1 and spans[0]["title"] == "terminal 29"  # one span, not one every 10 s
 
 
 def test_a_title_change_after_it_settled_is_a_new_span(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
@@ -188,9 +190,13 @@ def test_a_window_cut_back_to_nothing_is_rewritten_too(rig: tuple[Tracker, Scrip
     tracker.close()
     edge = next(s for s in sink.spans() if s.get("app_id") == "msedge.exe")
     # Edge was written up to 13:02:58 while it looked like reading; no input ever happened in it, so it now ends
-    # where it began, and the hub gets that copy too (not the older, longer one).
+    # where it began, and the hub gets that copy too (not the older, longer one). VS Code, which ended when Edge
+    # came to the front, is cut back to the last input as well, and AFK starts there.
     assert edge["start"] == edge["end"]
-    assert sink.spans()[-1]["kind"] == "afk"
+    code = next(s for s in sink.spans() if s.get("app_id") == "Code.exe")
+    assert summary([code])[0][2:] == ("13:00:00", "13:00:00")
+    afk = [s for s in sink.spans() if s["kind"] == "afk"]
+    assert summary(afk)[0][2] == "13:00:00" and len(afk) == 1
 
 
 def test_the_lock_screen_is_afk_at_once(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
@@ -205,14 +211,40 @@ def test_the_lock_screen_is_afk_at_once(rig: tuple[Tracker, Script, Clock, Recor
     assert datetime.fromisoformat(spans[1]["start"]).astimezone(UTC) == START + timedelta(seconds=5.5)
 
 
-def test_a_video_holding_the_screen_on_is_not_afk_for_hours(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+def test_a_video_holding_the_screen_on_counts_until_three_hours(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
     tracker, probe, clock, sink = rig
-    probe.next = replace_reading(EDGE, idle_seconds=1800.0, display_required=True)  # half an hour into a film
-    poll(tracker, clock, 3)
-    probe.next = replace_reading(EDGE, idle_seconds=4 * 3600.0, display_required=True)  # asleep in front of it
-    poll(tracker, clock)
+    poll(tracker, clock)  # clicking play at 13:00:00
+    film = START
+    poll_idle(tracker, probe, clock, film, START + timedelta(hours=3) - timedelta(seconds=2),
+              showing=replace_reading(EDGE, display_required=True))  # three hours without input, video playing
+    poll_idle(tracker, probe, clock, film, START + timedelta(hours=3, seconds=10),
+              showing=replace_reading(EDGE, display_required=True))  # asleep in front of it past the 3 hours
     tracker.close()
-    assert [s["kind"] for s in sink.spans()] == ["window", "afk"]
+    # The whole film is screen time; AFK starts where the 3 hours ran out, not back at the click (13:00:00).
+    assert summary(sink.spans())[1:] == [("window", "msedge.exe", "13:00:02", "15:59:58"), ("afk", None, "15:59:58", "16:00:10")]
+
+
+def test_afk_starts_when_the_video_stops_holding_the_screen(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, probe, clock, sink = rig
+    poll(tracker, clock)  # 13:00:00, the last input
+    poll_idle(tracker, probe, clock, START, START + timedelta(minutes=10), showing=replace_reading(EDGE, display_required=True))
+    poll_idle(tracker, probe, clock, START, START + timedelta(minutes=11), showing=EDGE)  # the video ended by 13:10:02
+    tracker.close()
+    edge, afk = sink.spans()[-2:]
+    assert (edge["app_id"], afk["kind"]) == ("msedge.exe", "afk")
+    assert afk["start"] == edge["end"]
+    assert datetime.fromisoformat(afk["start"]).astimezone(UTC) == START + timedelta(minutes=10)  # not 13:00:00
+
+
+def test_a_video_starting_while_you_are_away_does_not_end_afk(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, probe, clock, sink = rig
+    poll(tracker, clock)  # the last input, 13:00:00
+    poll_idle(tracker, probe, clock, START, START + timedelta(minutes=30))  # away: AFK from 13:00:00
+    poll_idle(tracker, probe, clock, START, START + timedelta(minutes=31), showing=replace_reading(EDGE, display_required=True))
+    tracker.close()
+    spans = sink.spans()
+    assert [s["kind"] for s in spans][-1] == "afk"
+    assert summary(spans)[-1][2:] == ("13:00:00", "13:31:00")  # still away: a video or a call is not you coming back
 
 
 def test_a_sleeping_computer_is_never_screen_time(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
@@ -225,6 +257,40 @@ def test_a_sleeping_computer_is_never_screen_time(rig: tuple[Tracker, Script, Cl
         ("window", "Code.exe", "13:00:00", "13:00:04"),
         ("window", "Code.exe", "14:00:06", "14:00:08"),
     ]
+
+
+def test_waking_on_the_lock_screen_does_not_reach_back_over_the_sleep(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, probe, clock, sink = rig
+    poll(tracker, clock, 3)  # Code until 13:00:04
+    probe.next = Reading(None, None, None, 0.5, locked=True)  # Win+L, then the lid closes
+    poll(tracker, clock)
+    clock.advance(3600)
+    probe.next = Reading(None, None, None, 3600.0, locked=True)  # woken on the lock screen; idle counts the sleep
+    poll(tracker, clock, 2)
+    tracker.close()
+    afk = [s for s in sink.spans() if s["kind"] == "afk"]
+    assert [x[2:] for x in summary(afk)] == [("13:00:05", "13:00:06"), ("14:00:08", "14:00:10")]  # no overlap
+
+
+def test_on_macos_a_wall_clock_jump_alone_means_sleep(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, _, clock, sink = rig
+    poll(tracker, clock, 3)
+    clock.now += timedelta(hours=8)  # macOS: the monotonic clock stops while the lid is closed
+    poll(tracker, clock, 2)
+    tracker.close()
+    assert [x[2:] for x in summary(sink.spans())] == [("13:00:00", "13:00:04"), ("21:00:06", "21:00:08")]
+
+
+def test_a_clock_set_back_never_makes_a_span_end_before_it_starts(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, probe, clock, sink = rig
+    poll(tracker, clock, 3)
+    probe.next = EDGE
+    poll(tracker, clock)  # Edge from 13:00:06
+    clock.now -= timedelta(seconds=60)  # an NTP correction
+    poll(tracker, clock, 3)
+    tracker.close()
+    for span in sink.spans():
+        assert span["end"] >= span["start"], span
 
 
 # --- robustness ------------------------------------------------------------------------------------------------------
@@ -286,22 +352,91 @@ def test_writes_are_batched_every_few_seconds(rig: tuple[Tracker, Script, Clock,
 
 
 def test_spans_reach_the_timeline_through_the_ingest_path(db: Database) -> None:
+    sink = DatabaseSink(db, "windows", "DESKTOP-TEST")
+    assert DatabaseSink(db, "windows", "DESKTOP-TEST").device_id == sink.device_id == "windows-1"  # created once
     with db.connect() as conn:
-        device_id = tracker_device(conn, "windows", "DESKTOP-TEST")
-        assert tracker_device(conn, "windows", "DESKTOP-TEST") == device_id  # created once
-        row = conn.execute("SELECT token_hash, device_type FROM devices WHERE device_id = ?", (device_id,)).fetchone()
-    assert device_id == "windows-1" and row["token_hash"] is None and row["device_type"] == "windows"
+        row = conn.execute("SELECT token_hash, device_type FROM devices WHERE device_id = 'windows-1'").fetchone()
+    assert row["token_hash"] is None and row["device_type"] == "windows"
     clock, probe = Clock(), Script()
-    sink = DatabaseSink(db, device_id)
-    tracker = Tracker(probe, sink, device_id, first_seq=sink.first_seq(), wall=lambda: clock.now, monotonic=lambda: clock.mono)
+    assert sink.last_seq() == 0
+    tracker = Tracker(probe, sink, sink.device_id, last_seq=sink.last_seq(), wall=lambda: clock.now, monotonic=lambda: clock.mono)
     poll(tracker, clock, 31)  # a minute of VS Code
     tracker.close()
     with db.connect() as conn:
-        rows = conn.execute("SELECT COUNT(*) FROM events WHERE device_id = ?", (device_id,)).fetchone()[0]
+        rows = conn.execute("SELECT COUNT(*), MIN(seq) FROM events WHERE device_id = 'windows-1'").fetchone()
         sessions = sessions_for(conn, START, START + timedelta(hours=1), now=START + timedelta(hours=1))
-    assert rows == 1  # one span, replaced as it grew
+    assert rows[0] == 1  # one span, replaced as it grew
     assert [(s.app, s.category, s.seconds) for s in sessions] == [("Visual Studio Code", "work", 60)]
-    assert sink.first_seq() > 1  # a restart continues the numbering
+    restarted = sink.last_seq()
+    assert restarted > 1  # a restart continues the numbering, with no number skipped
+    again = Tracker(Script(), sink, sink.device_id, last_seq=restarted, wall=lambda: clock.now, monotonic=lambda: clock.mono)
+    assert again._event(Span("window", START, START, 1))["seq"] == restarted + 1
+
+
+def test_the_seed_device_is_never_taken_over(db: Database) -> None:
+    with db.connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO devices (device_id, name, device_type, token_hash, paired_at)"
+                     " VALUES ('seed-windows', 'Desk PC (demo)', 'windows', NULL, '2026-01-01T00:00:00.000000Z')")
+        assert tracker_device(conn, "windows", "DESKTOP-TEST") == "windows-1"
+
+
+def test_a_device_revoked_while_tracking_is_replaced(db: Database) -> None:
+    sink = DatabaseSink(db, "windows", "DESKTOP-TEST")
+    clock = Clock()
+    tracker = Tracker(Script(), sink, sink.device_id, wall=lambda: clock.now, monotonic=lambda: clock.mono)
+    poll(tracker, clock, 3)
+    with db.connect() as conn, transaction(conn):
+        conn.execute("UPDATE devices SET revoked_at = '2026-09-25T13:00:05.000000Z' WHERE device_id = 'windows-1'")
+    poll(tracker, clock, 3)
+    tracker.close()
+    assert sink.device_id == "windows-2"
+    with db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM events WHERE device_id = 'windows-2'").fetchone()[0] == 1
+
+
+def test_the_loop_does_not_burst_after_a_sleep_and_survives_errors(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, _, clock, sink = rig
+    stop = threading.Event()
+    steps: list[float] = []
+    original = tracker.step
+
+    def step() -> None:
+        steps.append(clock.mono)
+        if len(steps) == 3:
+            raise RuntimeError("something unexpected")  # logged; the loop keeps going
+        original()
+
+    def wait(_: threading.Event, seconds: float) -> None:
+        clock.advance(seconds)
+        if len(steps) == 5:
+            clock.advance(8 * 3600)  # the computer sleeps for the night; Windows' monotonic clock keeps counting
+        if len(steps) >= 12:
+            stop.set()
+
+    tracker.step = step  # type: ignore[method-assign]
+    tracker.wait = wait
+    tracker.run(stop)
+    gaps = [b - a for a, b in itertools.pairwise(steps)]
+    assert all(gap >= 2.0 for gap in gaps), gaps  # never a burst of back-to-back polls to catch up
+    assert sink.spans()  # and close() ran at the end
+
+
+def test_old_spans_are_forgotten(rig: tuple[Tracker, Script, Clock, Recorder]) -> None:
+    tracker, probe, clock, _ = rig
+    for n in range(100):  # 100 apps, 20 s each
+        probe.next = replace_reading(CODE, app_id=f"app{n}.exe", app=f"App {n}")
+        poll(tracker, clock, 10)
+    assert len(tracker._written) < 20 and len(tracker._recent) < 20
+
+
+def test_the_tracker_command_respects_the_setting(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from daytrace_hub.__main__ import main
+
+    monkeypatch.setenv("DAYTRACE_TRACKER", "off")
+    assert main(["tracker", "--profile", "personal"]) == 2
+    assert "DAYTRACE_TRACKER is off" in capsys.readouterr().err
+    monkeypatch.delenv("DAYTRACE_TRACKER")
+    assert main(["tracker", "--profile", "demo"]) == 2  # off by default outside personal
 
 
 def test_only_one_tracker_per_profile(tmp_path: Path) -> None:
