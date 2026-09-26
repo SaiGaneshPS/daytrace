@@ -12,6 +12,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Topic | Rule |
 |---|---|
 | Base URL | `http://<hub-host>:<port>/api/v1` (HTTPS once DT-47 lands). |
+| Dashboard | Every path outside `/api` is the dashboard (DT-30): its files, and `index.html` for any page, so reloading `/insights` works. An unknown `/api` path is still a JSON `404`. Dashboard responses carry a strict Content-Security-Policy (only this hub is contacted). |
 | Profiles and ports | personal `8765`: your real data, reachable from your own home Wi-Fi (your phone syncs here) but never over Tailscale. shared-dev `8766`: seed and test data, the only port your teammate reaches over Tailscale. demo `8767`: seeded demo data. |
 | Body format | JSON, UTF-8. |
 | Times | ISO 8601 with an offset, for example `2026-09-25T14:03:10-04:00`. Seconds and up to 9 fractional digits are optional, `T` and `Z` may be lowercase. Times without an offset, Unix numbers and impossible dates are rejected. |
