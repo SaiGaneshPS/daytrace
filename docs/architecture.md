@@ -8,7 +8,7 @@ out, and the **dashboard** shows it. All of it runs on your own devices, and the
 ```mermaid
 flowchart LR
   subgraph phones["Phones"]
-    android["Android app<br/>app use, screen on and off"]
+    android["Android app<br/>app use, screen on and off<br/>(pairing in PR #16)"]
     iphone["iPhone Shortcuts<br/>(not built yet)"]
   end
   subgraph pc["The hub computer"]
@@ -20,7 +20,7 @@ flowchart LR
   ext["Browser extension<br/>(not built yet)"]
   dash["Dashboard PWA<br/>any browser"]
 
-  android -- "POST /api/v1/events<br/>device token, Wi-Fi" --> hub
+  android -. "POST /api/v1/events<br/>device token, Wi-Fi" .-> hub
   iphone -.-> hub
   ext -.-> hub
   tracker -- "same ingest path, in process" --> hub
@@ -30,13 +30,19 @@ flowchart LR
   dash -- "GET /api/v1/..." --> hub
 ```
 
+Dashed arrows are paths that don't work yet: the collector isn't built, or (Android) it can't pair until PR #16
+merges.
+
 - **One hub per profile.** `personal` (port 8765) holds your real data, `shared-dev` (8766) holds test data a
   teammate may reach over Tailscale, and `demo` (8767) holds seeded data. Each has its own SQLite file, so a demo
   never shows real data.
 - **One contract.** Every collector sends the same events ([event-schema.json](event-schema.json)) to the same
   endpoint ([api.md](api.md)), so each one could be built against seeded data before the others existed.
-- **Worked out when asked.** The hub stores raw events only. Sessions, totals, streaks and charts are worked out
-  from them on request, so a resent or corrected event never leaves a stale number behind.
+- **Worked out when asked.** The raw events (and your settings) are the source of truth. Sessions, totals,
+  streaks and charts are worked out from them on request, so a resent or corrected event changes every number
+  that depends on it. Only a few things are kept on the side: the text of stories and Wrapped (written again when
+  their facts change), badges (once earned, a badge is kept even if later data changes), and the log of nudges
+  sent.
 
 ## Hub
 
@@ -45,14 +51,12 @@ A Python 3.12 package, `hub/daytrace_hub`, running FastAPI on uvicorn, with SQLi
 ```mermaid
 flowchart TB
   subgraph write["Write path: POST /api/v1/events"]
-    direction LR
     validate["models.py<br/>validate the batch"] --> redact["redaction.py<br/>sensitive titles out"]
     redact --> store["api/events.py<br/>store in one transaction"]
     store --> nudge["nudges.py<br/>pick a nudge after commit"]
   end
   store --> db[("SQLite")]
   subgraph read["Read path: worked out when asked"]
-    direction LR
     sessions["sessions.py<br/>events to sessions"] --> cats["categories.py<br/>app to category"]
     cats --> stats["stats.py<br/>every number"]
     stats --> streaks["streaks.py<br/>goals, streaks, badges"]
@@ -96,16 +100,20 @@ All collectors speak one contract: `POST /api/v1/events` with a batch of up to 5
 
 - **Kinds:** `app_session`, `app_open`, `app_close`, `window`, `web`, `afk`, `screen_on`, `screen_off`, `sleep`,
   `steps`, `meal`, `calendar_event`.
-- **No duplicates.** Each event has a `seq` that grows per device, and the hub keeps one event per
-  `(device_id, seq)`. An event can also carry an `external_id`, so a collector can send a longer version of a span
-  it already sent and the hub replaces it. Resending anything is always safe.
-- **The reply** says how many were accepted, replaced or already there, which were refused and why, the highest
-  `seq` stored, and the nudge, if one fired.
+- **No duplicates.** The hub keeps one event per key and device. The key is the event's `external_id` when it has
+  one, else its `seq` (a number that grows per device), else a hash of what it says (iPhone Shortcuts send neither).
+  - Sending the same event again is always safe: it is counted as a duplicate.
+  - To make a span longer, send it again with the same `external_id`: the hub replaces the stored copy. The
+    desktop tracker and the Android app both do.
+  - A different event under a `seq` already used is refused (`seq_conflict`), so a collector whose numbering
+    restarted numbers its events again instead of losing them.
+- **The reply** (`IngestResult`) has `accepted`, `replaced` and `duplicates` (counts), `rejected` (which events were
+  refused, and why), `last_seq` (the highest `seq` stored) and `nudge` (if one fired).
 
 | Collector | How it works | Status |
 |---|---|---|
 | Windows desktop tracker | Reads the foreground window every 2 s. One span per app and title, growing while it lasts. Away after 3 minutes without input, or at once when locked. Runs inside the hub and writes through the same ingest code. | Built |
-| Android app | Reads `UsageStatsManager` into a Room database on the phone. A WorkManager job syncs every 15 minutes on an unmetered network, and "Sync now" syncs at once. Sends only to private addresses. | Built; pairing in PR #16 |
+| Android app | Reads `UsageStatsManager` into a Room database on the phone. A WorkManager job syncs every 15 minutes on an unmetered network, and "Sync now" syncs at once. Sends only to private addresses. | Built, but it can't pair (and so sends nothing) until PR #16 merges |
 | Health and calendar on Android | Health Connect and the phone's calendar | DT-23 |
 | macOS desktop tracker | The same tracker on the Mac | DT-17 |
 | Browser extension | The active tab's domain, never the full address | DT-18 |
@@ -124,7 +132,8 @@ A React 19 + TypeScript app built with Vite, in `dashboard/`. The hub serves the
   colors for each category, and motion that respects reduced motion.
 - **Who may open it.** On the hub computer, `http://localhost:<port>` is trusted and needs no pairing. Any other
   browser pairs as a `viewer` on the Devices page: it can read everything and change settings, but can't send
-  events. Collector tokens can send events, but can't change settings.
+  events. A collector's token (a phone app, a Shortcut, the extension) can send events and can also read, but
+  can't change settings.
 - **Tests.** Vitest for the pieces, and Playwright on a desktop and a phone for every page: layouts from 280 px
   wide and at 200% text, touch targets, and accessibility with axe. Hub tests check that the main JSON fixtures
   the Playwright tests answer with are the hub's real answers.
@@ -161,9 +170,10 @@ sequenceDiagram
   the check fails twice, a plain template writes them instead.
 - **Limits:** at most 4 tool calls per question, 31 days per call, and 4 minutes per question. After that, the
   facts found so far are the answer.
-- **Any local server.** Any OpenAI-compatible server works: LM Studio at `http://127.0.0.1:1234/v1` by default,
-  or Ollama. `DAYTRACE_LLM_BASE_URL` and `DAYTRACE_LLM_MODEL` choose another. `GET /api/v1/ai/status` says
-  whether the model answers and whether it can call tools.
+- **Any local server.** Any OpenAI-compatible server works. LM Studio at `http://127.0.0.1:1234/v1` is the
+  default; for Ollama, set `DAYTRACE_LLM_BASE_URL=http://127.0.0.1:11434/v1`. `DAYTRACE_LLM_MODEL` picks the
+  model (else the first one the server lists). `GET /api/v1/ai/status` says whether the model answers and whether
+  it can call tools.
 
 ## Data flow and sync
 
@@ -178,7 +188,7 @@ sequenceDiagram
   U->>D: Devices, pair a device
   D->>H: POST /api/v1/pair/start (only from the hub computer)
   H-->>D: a 6-digit code for 5 minutes, and its QR code
-  P->>H: POST /api/v1/pair/claim {code, name, type}
+  P->>H: POST /api/v1/pair/claim {code, device_name, device_type}
   H->>H: a new device, its token stored only as a hash
   H-->>P: the device id and its token (shown once)
   D->>H: GET /api/v1/pair/status (every 2 s)
@@ -200,13 +210,13 @@ sequenceDiagram
   participant DB as SQLite
   A->>R: new events, each with the next seq
   Note over R: kept until the hub has them
-  A->>H: GET /devices/{id}/cursor (once, before the first batch)
-  H-->>A: the highest seq it has
-  A->>H: POST /events: a batch, with the Bearer token
+  A->>H: GET /api/v1/devices/{id}/cursor (once, before the first batch)
+  H-->>A: last_seq, the highest seq it has
+  A->>H: POST /api/v1/events: a batch, with the Bearer token
   H->>H: validate each event, redact titles
-  H->>DB: store in one transaction, one event per seq
+  H->>DB: store in one transaction, one event per key
   H->>H: pick a nudge (a rule rests 20 minutes, and any two are 5 apart)
-  H-->>A: accepted, duplicates, refused, last_seq, nudge
+  H-->>A: accepted, replaced, duplicates, rejected, last_seq, nudge
   A->>R: mark the batch as sent
 ```
 
@@ -245,8 +255,8 @@ flowchart LR
 | **Where it listens** | Only 127.0.0.1, ::1 and your Wi-Fi or Ethernet adapter's own addresses: never every interface, and never a public address. It follows a new address within about 15 s. The tailnet only for `shared-dev`. |
 | **Who it answers** | This computer and your LAN. It refuses a Host name that could be DNS rebinding, and a request made by another web page. |
 | **What it reaches** | Only the local model, through one transport that checks every address a name points to, and sends no proxy settings, redirects or stray credentials. |
-| **The socket guard** | An audit hook refuses any connection from anything in the hub process to an internet address. `GET /api/v1/privacy/network` counts every connection made, blocked, served and refused. |
+| **The socket guard** | A Python audit hook refuses every `socket.connect` and `socket.sendto` in the hub process to an internet address, whichever library asks. It can't see what doesn't go through Python's socket module: a C extension's own sockets, uvloop's (which uvicorn uses on macOS and Linux), or another process. The hub's own outgoing path, to the model, uses Python sockets. `GET /api/v1/privacy/network` counts every connection made, blocked, served and refused. |
 | **What is stored** | Redaction runs before storage, on every way in, so a sensitive title is never written. SQLite's `secure_delete` overwrites deleted rows. |
-| **Who may read and change** | The trusted dashboard on the hub computer and viewer tokens read, and change settings. Collector tokens only send events. Pairing codes, revoking, export and delete work only on the hub computer. |
+| **Who may read and change** | Reading takes any paired device's token, or no token from the dashboard on the hub computer. Changing settings takes a viewer token (a paired browser) or the hub computer: a collector's token can send events and read, but can't change settings. Pairing codes, revoking, export and delete work only on the hub computer. |
 
 The full list, and how to check each one: [privacy.md](privacy.md).

@@ -53,10 +53,13 @@ The same dashboard on a phone:
 The demo profile runs on port 8767 with 14 days of made-up data from five devices (a Windows PC, a MacBook, an
 Android phone, an iPhone and a browser), so every page has something to show and none of your own data is involved.
 
-**You need** Git, Python 3.12 or newer, and Node.js 22 or newer (we use 24 LTS). For the AI, optionally install
-[LM Studio](https://lmstudio.ai), load a chat model that can call tools (we test with Gemma 4 E4B), and start its
-server (Developer tab). The hub uses the first model the server lists. Without a model, the story and Wrapped show
-plain summaries and Ask says the model is offline.
+**You need** Git, Python 3.12 or newer, and Node.js 24 LTS (24.15 or later) or 22 LTS (22.22.2 or later).
+
+**For the AI** (optional), install [LM Studio](https://lmstudio.ai), load a chat model that can call tools (we
+test with Gemma 4 E4B), and start its server (Developer tab). The hub uses the first model the server lists.
+- **Ollama** works too: set `DAYTRACE_LLM_BASE_URL` to `http://127.0.0.1:11434/v1` before starting the hub, and
+  `DAYTRACE_LLM_MODEL` to the model's name.
+- **Without a model**, the story and Wrapped show plain summaries, and Ask says the model is offline.
 
 **Windows** (PowerShell):
 
@@ -65,20 +68,27 @@ git clone https://github.com/SaiGaneshPS/daytrace.git
 cd daytrace
 python -m venv hub\.venv
 hub\.venv\Scripts\python -m pip install -e .\hub
-cd dashboard; npm ci; npm run build; cd ..
+cd dashboard; npm.cmd ci; npm.cmd run build; cd ..
 powershell -ExecutionPolicy Bypass -File .\scripts\dev-hub.ps1 -Profile demo
 ```
+
+`npm.cmd` rather than `npm`: PowerShell's default policy blocks the `npm.ps1` script that `npm` runs. For Ollama,
+run `$env:DAYTRACE_LLM_BASE_URL = "http://127.0.0.1:11434/v1"` first.
 
 **macOS or Linux:**
 
 ```bash
 git clone https://github.com/SaiGaneshPS/daytrace.git
 cd daytrace
-python3.12 -m venv hub/.venv
+python3 -m venv hub/.venv
 hub/.venv/bin/python -m pip install -e ./hub
 (cd dashboard && npm ci && npm run build)
 scripts/dev-hub.sh --profile demo
 ```
+
+`python3 --version` must say 3.12 or newer. If it doesn't, use `python3.12` (or newer) in its place. On Debian and
+Ubuntu, install the `python3-venv` package first. For Ollama, run
+`export DAYTRACE_LLM_BASE_URL=http://127.0.0.1:11434/v1` first.
 
 The script seeds the data, starts the hub, wakes the model up by writing yesterday's story and last week's Wrapped
 ahead of time, and opens `http://localhost:8767`. Ctrl+C stops the hub. Run it again whenever you like: it only
@@ -102,7 +112,7 @@ ever replaces demo data.
 | **Windows desktop tracker** | Works: foreground app, window title and away time, using about 0.5% of one CPU core. |
 | **Local AI** (LM Studio or Ollama) | Works with any OpenAI-compatible server on this computer or your LAN. Tested with Gemma 4 E4B. |
 | **Nudges** | Work. Shown as a desktop notification (tried on Windows; the macOS and Linux paths are written but untried), and returned to the phone that triggered them. |
-| **Android app** | Records app use and screen on and off, keeps every event on the phone until the hub has it, and syncs over Wi-Fi. Finding the hub and pairing by QR code are built and reviewed, and wait for a test on a network that lets the phone reach the PC (PR #16). Not built yet: sleep, steps, meals and calendar (DT-23), live mode and showing nudges (DT-24). |
+| **Android app** | Records app use and screen on and off, and keeps every event on the phone until the hub has it. The sync code is built, but on `development` the app can't pair yet, so it sends nothing. Finding the hub and pairing by QR code are built and reviewed, and wait for a test on a network that lets the phone reach the PC (PR #16). Not built yet: sleep, steps, meals and calendar (DT-23), live mode and showing nudges (DT-24). |
 | **iPhone** | The dashboard works in Safari once the browser is paired. The Shortcuts that send app use, health and meals aren't built yet (DT-26 to DT-28). |
 | **macOS desktop tracker** | Not built yet (DT-17). |
 | **Mac bridge** for full iPhone Screen Time | Not built yet (DT-29). |
@@ -114,9 +124,10 @@ collectors exist.
 ## The privacy promise
 
 - **No cloud.** The hub runs on your computer and keeps everything in one SQLite file there.
-- **No internet.** The hub listens only on this computer and your home network. Under that, a socket guard refuses
-  any connection from the hub process to an internet address before a packet leaves, and the Privacy page shows
-  the count: 0.
+- **No internet.** The hub listens only on this computer and your home network. It reaches out only to the local
+  model, through a transport that allows nothing else. Under that, a socket guard refuses any connection made
+  through Python's sockets from the hub process to an internet address, before a packet leaves. The Privacy page
+  shows the count: 0.
 - **A local AI only.** The model runs on your machine or your LAN (the test profiles may also use your tailnet),
   and the hub refuses any other address for it.
 - **Sensitive titles are never stored.** Banking, health portals, password managers and private browser windows
@@ -132,7 +143,7 @@ The details, and how to check each one: [docs/privacy.md](docs/privacy.md).
 
 ```mermaid
 flowchart LR
-  android["Android app"] -- "events over Wi-Fi" --> hub
+  android["Android app<br/>(pairing in PR #16)"] -. "events over Wi-Fi" .-> hub
   tracker["Desktop tracker"] -- "same path, in process" --> hub
   hub["Hub: FastAPI + SQLite"] -- "facts in, words out" --> llm["Local model"]
   hub -- "serves" --> dash["Dashboard in any browser"]
@@ -140,7 +151,8 @@ flowchart LR
 ```
 
 - **Collectors** send events (an app used from one time to another, a night's sleep, a meal) to
-  `POST /api/v1/events`, each with its own token. Sending the same event twice never stores it twice.
+  `POST /api/v1/events`, each with its own token. Sending the same event twice never stores it twice. The Android
+  arrow is dashed because the app can't pair until PR #16 merges; the desktop tracker works today.
 - **The hub** turns events into sessions and works out every number in plain Python (`stats.py`): totals, focused
   time, pickups, sleep, streaks. The AI only puts those numbers into words.
 - **The dashboard** is a React app the hub serves itself, so it has one address and needs nothing else.
@@ -165,13 +177,11 @@ The folder and file layout is fixed (DT-1): changing it needs its own ticket.
 
 ## Working on it
 
-```powershell
-hub\.venv\Scripts\python -m pip install -e ".\hub[dev]"
-cd hub; .venv\Scripts\python -m ruff check .; .venv\Scripts\python -m pytest; cd ..
-cd dashboard; npm test; npm run build; npm run test:e2e; cd ..
-```
-
-- Set up a machine: [Windows](docs/setup-windows.md), [macOS](docs/setup-mac.md). Each part has its own guide:
-  [hub](hub/README.md), [dashboard](dashboard/README.md), [android](android/README.md).
-- Tickets live in Notion. Every change is a branch and a pull request with a bug review, and merges only with green
-  checks. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening one.
+- **The checks to run before pushing**, on Windows, macOS and Linux:
+  [CONTRIBUTING.md](CONTRIBUTING.md#before-you-push). For the hub's tests, install it with its dev extras
+  (`pip install -e "./hub[dev]"`).
+- **Setting up a machine:** [Windows](docs/setup-windows.md). The macOS guide is still being written (DT-8), and
+  there is no Linux guide yet; the macOS and Linux steps under [Try it](#try-it) are enough to run and test it.
+- **Each part's own guide:** [hub](hub/README.md), [dashboard](dashboard/README.md), [android](android/README.md).
+- **Tickets** live in Notion. Every change is a branch and a pull request with a bug review, and merges only with
+  green checks. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening one.

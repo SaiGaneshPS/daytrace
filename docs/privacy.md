@@ -4,11 +4,41 @@
 
 ## What is collected
 
-TODO (DT-44 / DT-45 / DT-47)
+Only what the collectors send, as events ([event-schema.json](event-schema.json)), and what you choose.
+
+- **Computers** (the desktop tracker): the app in front, its window title, and from when to when. Also away time,
+  worked out from how long ago the keyboard or mouse was last used, never from which keys.
+- **Android phones:** each app's name and package, from when to when, and when the screen turned on and off. No
+  titles, and nothing from inside the apps.
+- **Collectors not built yet:**
+  - the browser extension sends the active tab's domain only, never the full address or the page (DT-18);
+  - iPhone Shortcuts send app opens and closes, sleep, steps, calendar events and the meals you log (DT-26 to
+    DT-28);
+  - the Android app adds sleep, steps, meals and calendar from Health Connect (DT-23).
+- **About each device:** its name and type, when it paired and was last seen, and a hash of its token (never the
+  token itself).
+- **Your choices:** the categories you set, your goals, your redaction words, and your nudge settings.
+- **What the hub keeps of its own:** the text of stories and Wrapped, the badges you earned, and a log of the
+  nudges it sent.
+
+Nothing is read from inside an app: no screenshots, no keystrokes, no page contents or full web addresses. A window
+title is the most detailed thing stored, and the redaction rules below keep the sensitive ones out.
 
 ## Where it is stored
 
-TODO (DT-44 / DT-45 / DT-47)
+- **On the hub computer**, in one SQLite file per profile, `daytrace-<profile>.db` (with its `-wal` and `-shm`
+  files while the hub runs), in:
+  - Windows: `%LOCALAPPDATA%\Daytrace`
+  - macOS: `~/Library/Application Support/Daytrace`
+  - Linux: `$XDG_DATA_HOME/daytrace` (by default `~/.local/share/daytrace`)
+  - or the folder named in `DAYTRACE_DATA_DIR`.
+- **What the Privacy page shows:** the file, its size, how many events it holds and from which devices. The folder
+  is shown only on the hub computer itself.
+- **Not encrypted by the hub.** Your computer account protects the file, and so does disk encryption (BitLocker,
+  FileVault) if you use it.
+- **On an Android phone:** events wait in the app's own private storage until the hub has them. The app turns
+  Android's backups off, so neither the events nor the hub token go to a cloud backup or a new phone.
+- **No other copies.** Daytrace uploads and backs up nothing. Your computer's own backups may include the file.
 
 ## What never leaves your network
 
@@ -28,10 +58,14 @@ Nothing does. The hub never talks to the internet, and it can show you (DT-45). 
 - **What it reaches out to:** only the local model (LM Studio or Ollama), through one transport that lets a request
   through only to this computer, your LAN, or (shared-dev) your tailnet. It checks every address a name points to,
   and sends no proxy settings, no redirects and no stray credentials.
-- **The socket guard:** under that, the whole hub process refuses any connection to an internet address before a
-  packet leaves, whatever code asks: a library, an SDK, anything added later. It is a Python audit hook, which
-  can't be switched off once on. The only exceptions are the mDNS multicast group and the documentation address
-  the hub asks its route with, which never sends anything. Name lookups go to your computer's own resolver.
+- **The socket guard:** under that, the hub process refuses any connection to an internet address made through
+  Python's sockets, before a packet leaves, whatever code asks: a library, an SDK, anything added later. It is a
+  Python audit hook on `socket.connect` and `socket.sendto`, which can't be switched off once on. The only
+  exceptions are the mDNS multicast group and the documentation address the hub asks its route with, which never
+  sends anything. Name lookups go to your computer's own resolver.
+  - **What it can't see:** sockets that don't go through Python's socket module, such as a C extension's own, the
+    uvloop event loop's (uvicorn uses it on macOS and Linux), or another process's. The hub's own way out, to the
+    local model, uses Python sockets, so the guard covers it.
 - **The count:** since it started, the hub counts every connection it made or blocked, and every request it served
   or refused, by where it went or came from. `internet_connections` is always 0, and a blocked destination is
   listed by name, so you can see what tried.
