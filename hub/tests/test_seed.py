@@ -119,7 +119,8 @@ def test_the_plan_has_a_five_day_streak_that_breaks_after_a_late_night() -> None
     assert [p.focus for p in plans[5:10]] == ["good"] * 5
     assert plans[10].focus == "poor" and plans[10].late_before == 130
     assert all(p.focus == "good" for p in plans[11:])
-    assert [p.late_before for p in plans[1:5]] == [90, 20, 130, 45]
+    assert [p.late_before for p in plans[1:5]] == [90, 20, 130, 110]
+    assert plans[4].focus == "poor"  # so the streak starts on day 5
     assert all(plans[i].late_after == plans[i + 1].late_before for i in range(13))
 
 

@@ -20,12 +20,13 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..auth import Reader, get_database
-from ..db import Database
+from ..db import Database, data_version
 from ..llm import LLM
 from ..stats import DESK_TYPES, PHONE_TYPES, GroupBy, Stats, merge
 from ..story import week_facts, week_wrapped
 from . import API_PREFIX, ApiError
 from .ai import FactOut, get_llm
+from .streaks import WeekStreakOut, week_streak_highlights
 from .timeline import EARLIEST, LATEST, Meta, current_time, minutes, resolve_tz
 
 router = APIRouter(prefix=API_PREFIX, tags=["insights"])
@@ -670,12 +671,6 @@ _cache_guard = threading.Lock()
 _cache: OrderedDict[tuple[str, str, date, date, str], tuple[int, bool, float, InsightsTab]] = OrderedDict()
 
 
-def data_version(conn: sqlite3.Connection) -> int:
-    """The database's change counter (migration 0005): triggers add one for every event added, replaced or
-    deleted, every category choice, and every device paired, renamed or revoked, in any process. One row to read."""
-    return conn.execute("SELECT changes FROM data_changes WHERE id = 1").fetchone()[0]
-
-
 def build_tab(stats: Stats, conn: sqlite3.Connection, tab: str, span: RangeInfo, tz_name: str) -> InsightsTab:
     builder = TabBuilder(stats, conn, span)
     metrics, series = getattr(builder, tab)()
@@ -745,7 +740,7 @@ class Wrapped(BaseModel):
     cached: bool
     fallback: bool
     reason: str | None
-    streaks: list[dict[str, Any]] = Field(default_factory=list, description="The week's streak highlights (DT-53); empty until then.")
+    streaks: list[WeekStreakOut] = Field(description="Each streak in the week (DT-53): the days met and the longest run.")
     meta: Meta
 
 
@@ -792,4 +787,5 @@ def wrapped(
         metrics=overview, top_apps=[AppMinutes(**app) for app in top], lines=written.lines,
         facts_used=[FactOut(**fact.as_dict()) for fact in written.facts], model=written.model, cached=written.cached,
         fallback=written.fallback, reason=written.reason, meta=Meta(**meta),
+        streaks=week_streak_highlights(database, first, last, tz, now),
     )

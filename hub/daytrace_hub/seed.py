@@ -6,7 +6,8 @@ fortnight, so the dashboard, charts, streaks, AI and demo work without real devi
 
 - Late nights on the phone lower the next day's focus, in proportion to how late (the correlation the
   Insights page and the AI find).
-- A 5-day focus streak that breaks once, after a late night, then starts again.
+- A 5-day focus streak that breaks once, after a late night, then starts again: 4 hours of focused time a day,
+  the demo student's goal (DEMO_GOALS, saved with the data).
 - Weekday study blocks on the calendar (sometimes with TikTok in the middle), meals, sleep, daily steps.
 
 The data is physically possible: one person does one thing at a time with their hands (the two phones) and at
@@ -19,6 +20,7 @@ window to a new day never duplicates or conflicts. Profiles with real data (pers
 """
 from __future__ import annotations
 
+import json
 import random
 import sqlite3
 from collections import defaultdict
@@ -65,6 +67,9 @@ PHONE_APPS = {
     "video": [("YouTube", "com.google.android.youtube")],
     "comms": [("WhatsApp", "com.whatsapp"), ("Messages", "com.google.android.apps.messaging")],
 }
+# The demo student's daily goals (DT-53), saved unless a goal was chosen already: the focus streak is built around
+# 4 hours a day (the default target is 2 hours, which every seeded day reaches).
+DEMO_GOALS = {"focus_target": 240}
 STUDY_TOPICS = ("algorithms", "databases", "linear algebra", "operating systems", "statistics")
 MEALS = {
     "breakfast": [["oatmeal", "banana", "coffee"], ["toast", "eggs"], ["yogurt", "granola"], ["poha", "chai"]],
@@ -103,10 +108,11 @@ class SeedResult:
 
 def plan_days(today: date, days: int) -> list[DayPlan]:
     """How late each night runs and how focused each day is. With 14 days (index 13 is today): late nights
-    of 90, 20, 130 and 45 minutes before days 1 to 4, a 5-day focus streak on days 5 to 9 (about 4.5 h of work
-    apps a day), broken on day 10 after a 130-minute night, then sharp days again. The later the night, the
+    of 90, 20, 130 and 110 minutes before days 1 to 4, a 5-day focus streak on days 5 to 9 (about 4.5 h of work
+    apps a day), broken on day 10 after a 130-minute night, then sharp days again. Day 4's night is late enough
+    to make it a poor day, so the streak starts on day 5. The later the night, the
     less focus the next day, so the correlation is there to find, not just an on/off switch."""
-    late_by_index = {days - 13: 90, days - 12: 20, days - 11: 130, days - 10: 45, days - 4: 130}
+    late_by_index = {days - 13: 90, days - 12: 20, days - 11: 130, days - 10: 110, days - 4: 130}
     late = {index: minutes for index, minutes in late_by_index.items() if index >= 1}
     return [
         DayPlan(
@@ -405,3 +411,6 @@ def _replace(conn: sqlite3.Connection, by_device: dict[str, list[Event]]) -> Non
         stored = store_events(conn, device_id, list(enumerate(device_events)))
         if stored.rejected:
             raise RuntimeError(f"seed data was rejected for {device_id}: {stored.rejected[0].reason}")
+    for goal_id, target in DEMO_GOALS.items():
+        conn.execute("INSERT INTO goals (goal_id, target, updated_at) VALUES (?, ?, ?) ON CONFLICT (goal_id) DO NOTHING",
+                     (goal_id, json.dumps(target), paired_at))
