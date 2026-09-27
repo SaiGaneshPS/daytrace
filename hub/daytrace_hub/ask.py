@@ -1,7 +1,8 @@
 """DT-40: ask your day: tool calling over the stats engine.
 
-A question ("How much YouTube after 11 pm last week?") goes to the local model (llm.py) with six tools. Each tool
-calls the stats engine (stats.py) and returns facts, so every number the model sees comes from plain code:
+A question ("How much YouTube after 11 pm last week?") goes to the local model (llm.py) with seven tools. Each tool
+calls the stats engine (stats.py) or the streaks engine (streaks.py) and returns facts, so every number the model sees
+comes from plain code:
 
 - get_totals: screen time over a range, grouped by app, category, device, hour or day, optionally only for an app
   or site, a category, phones or computers, and a time of day (23:00 to 03:00 runs into the next morning);
@@ -9,14 +10,16 @@ calls the stats engine (stats.py) and returns facts, so every number the model s
 - get_focus: focused time, focus score, phone pickups and app switches per day;
 - get_sleep: sleep per night, and screen time after 11 pm the night before;
 - get_calendar: calendar events (not all-day ones), upcoming ones included;
-- compare_plan: how calendar time was spent (as planned, off plan), up to now.
+- compare_plan: how calendar time was spent (as planned, off plan), up to now;
+- get_streaks: each streak's days in a row up to today, its longest run and what today still needs, and each goal's
+  target and today's reading (the Streaks page's numbers, DT-53).
 
 The model may call at most 4 tools per question, each over at most 31 days and returning at most 40 facts (the
 summary first), then answers in a few sentences. The answer goes through the day story's number check (story.py):
 every amount in it must match one of the facts the tools returned (`facts_used`), and a date must be one the tools
 looked at. An answer that fails gets one retry, told what was wrong; after that the facts themselves are shown
 (`fallback`). Questions that are not about the person's own day are declined politely: the model answers
-OFF_TOPIC and the hub words the reply. Streaks get a tool when their engine (DT-53) exists.
+OFF_TOPIC and the hub words the reply.
 """
 from __future__ import annotations
 
@@ -507,6 +510,47 @@ def _schema(name: str, description: str, extra: dict[str, Any] | None = None) ->
     }}
 
 
+# What a streak to reach needs more of (a fact's unit), by what it measures.
+STILL_NEEDED = {"focused_minutes": "minutes", "meals": "meals", "devices_synced": "devices"}
+
+
+def get_streaks(stats: Stats, args: dict[str, Any]) -> ToolOutput:
+    """The streaks and goals as the Streaks page shows them, judged now: each streak's days in a row up to today, its
+    longest run and what today still needs (or what is left under a limit), and each goal's target and today's
+    reading. Any range asked for is ignored: a streak is the run up to today."""
+    from . import streaks
+
+    found = streaks.evaluate(stats.conn, stats.tz, stats.tz_name, stats.now)
+    out = ToolOutput(days={found.today})
+    words = {"met": "done for today", "missed": "missed today", "no_data": "nothing yet today (no data)", "at_risk": "not kept yet today"}
+    for track in found.streaks:
+        run, best = track.current, track.best
+        out.facts.append(Fact(f"{track.name} streak ({track.rule}): days in a row up to today", len(run), "days"))
+        out.facts.append(Fact(f"{track.name} streak: its longest run", len(best), "days"))
+        out.days |= set(run) | set(best)  # so "since Wednesday" can be said
+        today = track.today
+        if today.status == "at_risk" and today.remaining is not None and today.remaining > 0:
+            if track.kind == "at_least":  # enough to keep it: 19.2 minutes left is 20 more
+                left = math.ceil(today.remaining - 1e-9)
+                out.facts.append(Fact(f"{track.name} streak: still needed today to keep it", left, STILL_NEEDED.get(track.measure, track.unit)))
+            else:
+                out.facts.append(Fact(f"{track.name} streak: left under its limit today", math.floor(today.remaining + 1e-9), track.unit))
+        out.notes.append(f"{track.name} streak: {words[today.status]}"
+                         + (f"; this run is {run[0].isoformat()} to {run[-1].isoformat()}" if run else "; no run right now"))
+    for goal in found.goals.values():
+        if goal.target is None:
+            continue
+        if goal.unit == "time":  # a bedtime, as minutes after 18:00
+            out.facts.append(Fact(f"{goal.name} goal: {goal.rule}", streaks.clock_text(goal.target), "time"))
+            if goal.today.value is not None:
+                out.facts.append(Fact(f"{goal.name}: fell asleep last night", streaks.clock_text(goal.today.value), "time"))
+        else:
+            out.facts.append(Fact(f"{goal.name} goal: {goal.rule}", round(goal.target), "minutes"))
+            if goal.today.value is not None:
+                out.facts.append(Fact(f"{goal.name}: today so far", round(goal.today.value), "minutes"))
+    return out
+
+
 Tool = Callable[[Stats, dict[str, Any]], ToolOutput]
 TOOLS: dict[str, tuple[Tool, dict[str, Any]]] = {
     "get_totals": (get_totals, _schema(
@@ -527,6 +571,10 @@ TOOLS: dict[str, tuple[Tool, dict[str, Any]]] = {
     "compare_plan": (compare_plan, _schema(
         "compare_plan", "How calendar time was spent, up to now: planned time, the share spent as planned (work, "
         "study or meetings) and time off plan (social, video or games).")),
+    "get_streaks": (get_streaks, {"type": "function", "function": {
+        "name": "get_streaks", "description": "The streaks and daily goals now: each streak's days in a row up to today, "
+        "its longest run and what today still needs; each goal's target and today's reading. No range needed.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}}),
 }
 TOOL_SCHEMAS = [schema for _, schema in TOOLS.values()]
 

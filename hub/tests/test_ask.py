@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -147,8 +148,8 @@ def test_bad_arguments_are_refused_with_a_reason(week: Database) -> None:
         tool(week, "get_totals", {**LAST_WEEK, "category": "fun"})
     with pytest.raises(ToolError, match="not valid JSON"):
         tool(week, "get_totals", "{oops")
-    with pytest.raises(ToolError, match="no tool called get_streaks"):
-        tool(week, "get_streaks", "{}")
+    with pytest.raises(ToolError, match="no tool called get_weather"):
+        tool(week, "get_weather", "{}")
     with pytest.raises(ToolError, match="device must be text"):
         tool(week, "get_totals", {**LAST_WEEK, "device": ["phone"]})
     with pytest.raises(ToolError, match="local time"):
@@ -560,3 +561,55 @@ def test_no_new_model_call_starts_after_the_time_budget(week: Database, fake_llm
     assert result.reason is not None and "took more than 4 minutes" in result.reason
     assert result.answer.startswith("Here is what I found:") and result.facts
     assert len(fake_llm.chats()) == 1
+
+
+# --- DT-40 follow-up: the streaks tool ------------------------------------------------------------------------
+
+
+def test_the_streaks_tool_gives_the_streaks_pages_numbers(seeded: Database) -> None:
+    from daytrace_hub import streaks
+
+    out = tool(seeded, "get_streaks", "{}")
+    with seeded.connect() as conn:
+        found = streaks.evaluate(conn, ZONE, TZ, NOW)
+    facts = {f.label: f for f in out.facts}
+    for track in found.streaks:
+        run = facts[f"{track.name} streak ({track.rule}): days in a row up to today"]
+        best = facts[f"{track.name} streak: its longest run"]
+        assert (run.value, run.unit, best.value) == (len(track.current), "days", len(track.best))
+        assert set(track.current) <= out.days  # its dates may be said
+    focus = found.goals["focus_target"]
+    assert facts[f"{focus.name} goal: {focus.rule}"].value == round(focus.target or 0)
+    bedtime = found.goals["bedtime"]
+    assert facts[f"{bedtime.name} goal: {bedtime.rule}"].value == streaks.clock_text(bedtime.target or 0)
+    assert tool(seeded, "get_streaks", LAST_WEEK).facts == out.facts  # a range asked for changes nothing
+
+
+def test_the_streaks_tool_says_what_today_still_needs(seeded: Database) -> None:
+    from daytrace_hub import streaks
+
+    with seeded.connect() as conn:
+        found = streaks.evaluate(conn, ZONE, TZ, NOW)
+    at_risk = [t for t in found.streaks if t.today.status == "at_risk" and t.today.remaining]
+    out = tool(seeded, "get_streaks", "{}")
+    facts = {f.label: f for f in out.facts}
+    for track in at_risk:
+        if track.kind == "at_least":
+            assert facts[f"{track.name} streak: still needed today to keep it"].value == math.ceil((track.today.remaining or 0) - 1e-9)
+        else:
+            assert facts[f"{track.name} streak: left under its limit today"].value == math.floor((track.today.remaining or 0) + 1e-9)
+    assert all(note.split(" streak: ")[1].split(";")[0] in ("done for today", "missed today", "nothing yet today (no data)", "not kept yet today")
+               for note in out.notes)
+
+
+def test_a_streak_question_is_answered_from_the_streaks_tool(seeded: Database, fake_llm: FakeModelServer) -> None:
+    from daytrace_hub import streaks
+
+    with seeded.connect() as conn:
+        focus = next(t for t in streaks.evaluate(conn, ZONE, TZ, NOW).streaks if t.id == "focus_flame")
+    fake_llm.reply_tool_call("get_streaks", {})
+    reply = f"Your Focus flame streak is {len(focus.current)} days long, and your best is {len(focus.best)} days."
+    fake_llm.reply_text(reply)
+    result = asked(seeded, fake_llm, "How long is my focus streak?")
+    assert (result.answer, result.fallback, result.tools_called) == (reply, False, ["get_streaks"])
+

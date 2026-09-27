@@ -269,6 +269,11 @@ class Stats:
 
     # --- loading ---------------------------------------------------------------------------------------------
 
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """The connection it reads, for another engine to judge the same moment (the streaks, for ask)."""
+        return self._conn
+
     def window(self, start: datetime, end: datetime) -> Window:
         key = (start, end)
         if key not in self._windows:
