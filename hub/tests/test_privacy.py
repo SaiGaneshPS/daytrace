@@ -705,3 +705,33 @@ def test_storage_of_an_empty_profile(demo: TestClient) -> None:
     body = demo.get("/api/v1/privacy/storage").json()
     assert (body["events"], body["devices"], body["first_event"], body["last_event"]) == (0, 0, None, None)
 
+
+def test_storage_survives_the_write_ahead_log_going_away(seeded: tuple[TestClient, Settings], monkeypatch: pytest.MonkeyPatch) -> None:
+    client, settings = seeded
+    real = Path.stat
+
+    def vanishing(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name.endswith("-wal"):
+            raise FileNotFoundError(self)  # closed and removed between a check and a look
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", vanishing)
+    response = client.get("/api/v1/privacy/storage")
+    assert response.status_code == 200 and response.json()["size_bytes"] == real(settings.database_path).st_size
+
+
+def test_the_last_event_is_never_in_the_future(seeded: tuple[TestClient, Settings], monkeypatch: pytest.MonkeyPatch) -> None:
+    from daytrace_hub.api import timeline as timeline_api
+
+    client, settings = seeded
+    now = SEEDED_AT
+    monkeypatch.setattr(timeline_api, "current_time", lambda: now)
+    before = client.get("/api/v1/privacy/storage").json()
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO events (device_id, dedup_key, kind, source, start_utc, end_utc, utc_offset_min, data, received_at)"
+                     " SELECT device_id, 'future-meeting', 'calendar_event', 'calendar', ?, ?, 0, '{}', ? FROM devices LIMIT 1",
+                     (utc_text(now + timedelta(days=9)), utc_text(now + timedelta(days=9, hours=1)), utc_text(now)))
+    after = client.get("/api/v1/privacy/storage").json()
+    assert after["events"] == before["events"] + 1  # counted ...
+    assert after["last_event"] == before["last_event"] and datetime.fromisoformat(after["last_event"]) <= now  # ... but not the latest
+

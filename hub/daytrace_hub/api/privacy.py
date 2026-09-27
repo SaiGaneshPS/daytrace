@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..auth import Editor, Reader, get_database, is_trusted_local, require_local
 from ..config import LEDGER
-from ..db import Database, current_version, transaction
+from ..db import Database, current_version, transaction, utc_text
 from ..redaction import (
     MAX_CUSTOM_RULES,
     MAX_WORDS,
@@ -194,15 +194,24 @@ class Storage(BaseModel):
     size_bytes: int = Field(description="The database file with its write-ahead log.")
     events: int
     first_event: datetime | None = Field(description="When the earliest stored event started (UTC).")
-    last_event: datetime | None = Field(description="When the latest stored event started (UTC).")
+    last_event: datetime | None = Field(description="When the latest stored event started (UTC), up to now: calendar "
+                                                    "events synced ahead don't count.")
     devices: int = Field(description="Devices paired now (not revoked).")
 
 
-def storage_of(database: Database, profile: str, local: bool) -> Storage:
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:  # the write-ahead log goes when the last connection closes, at any moment
+        return 0
+
+
+def storage_of(database: Database, profile: str, local: bool, now: datetime) -> Storage:
     path = database.path
-    size = sum(part.stat().st_size for part in (path, path.with_name(path.name + "-wal")) if part.exists())
+    size = _size(path) + _size(path.with_name(path.name + "-wal"))
     with database.connect() as conn:
-        events, first, last = conn.execute("SELECT COUNT(*), MIN(start_utc), MAX(start_utc) FROM events").fetchone()
+        events, first = conn.execute("SELECT COUNT(*), MIN(start_utc) FROM events").fetchone()
+        last = conn.execute("SELECT MAX(start_utc) FROM events WHERE start_utc <= ?", (utc_text(now),)).fetchone()[0]
         devices = conn.execute("SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL").fetchone()[0]
     return Storage(
         profile=profile, folder=str(path.parent) if local else None, file=path.name, size_bytes=size, events=events,
@@ -213,8 +222,10 @@ def storage_of(database: Database, profile: str, local: bool) -> Storage:
 
 @router.get("/privacy/storage", response_model=Storage, summary="Where the data lives and how much there is")
 async def storage(request: Request, _: Reader, database: Annotated[Database, Depends(get_database)]) -> Storage:
+    from .timeline import current_time
+
     profile = request.app.state.settings.profile.name
-    return await run_in_threadpool(storage_of, database, profile, is_trusted_local(request))
+    return await run_in_threadpool(storage_of, database, profile, is_trusted_local(request), current_time())
 
 
 @router.get("/privacy/network", response_model=NetworkStatus, summary="Every connection since the hub started, by network")

@@ -28,6 +28,7 @@ from daytrace_hub.api.insights import RangeInfo
 from daytrace_hub.app import create_app
 from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database, transaction
+from daytrace_hub.redaction import tokens
 from daytrace_hub.seed import seed
 from daytrace_hub.stats import Stats
 from daytrace_hub.story import (
@@ -584,6 +585,7 @@ def detail(client: TestClient, app: str, span: str = "7d") -> dict[str, Any]:
 
 
 DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" / "fixtures"
+TOKEN_SAMPLES = ("e-mail", "E mail", "--", "Café", "STRASSE", "Straße", "Q3 2026", "naïve", "x_y", "Project-X12", "ÉCOLE", "Σίσυφος", "日本語")
 
 
 def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
@@ -619,6 +621,8 @@ def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
         "privacy.json": {
             "rules": client.get("/api/v1/privacy/redaction").json(),
             "check": client.post("/api/v1/privacy/redaction/check", json={"title": "MyBank - Account Summary"}).json(),
+            # How the hub reads words (redaction.tokens), for the dashboard's own copy to be checked against.
+            "tokens": {word: list(tokens(word)) for word in TOKEN_SAMPLES},
         },
     }
 

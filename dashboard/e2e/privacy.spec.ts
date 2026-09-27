@@ -44,8 +44,10 @@ const DEVICE = (device_id: string, name: string, device_type: string, event_coun
 const DEVICES = [DEVICE("android-1", "Galaxy phone", "android", 900), DEVICE("windows-1", "Desktop", "windows", 334),
   DEVICE("viewer-1", "Phone browser", "viewer", 0), { ...DEVICE("ios-1", "Old iPhone", "ios", 50), revoked_at: "2026-09-20T12:00:00Z" }];
 
-type Mocks = { local?: boolean; network?: () => object | "fail"; rules?: () => Rules; put?: (body: unknown) => { status: number; json: object };
-  stored?: () => number; clock?: "install" };
+type Reply = { status: number; json: object };
+type Mocks = { local?: boolean; network?: () => object | "fail"; rules?: () => Rules | "fail"; put?: (body: unknown) => Reply;
+  stored?: () => number | "fail"; clock?: "install"; health?: () => "fail" | "slow" | null; gate?: Partial<Record<"rules" | "put" | "delete" | "check", Promise<void>>>;
+  deleted?: () => Reply | "abort" | null; check?: (title: string) => object };
 
 async function mockHub(page: Page, mocks: Mocks = {}) {
   const asked: string[] = [];
@@ -54,7 +56,13 @@ async function mockHub(page: Page, mocks: Mocks = {}) {
   else await page.clock.setFixedTime(new Date("2026-09-25T14:00:00-04:00"));
   const failure = { status: 500, json: { error: { code: "internal_error", message: "The hub had a problem", details: [] } } };
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked" } } }));
-  await page.route("**/api/v1/health", (route) => route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: mocks.local ?? true } }));
+  await page.route("**/api/v1/health", async (route) => {
+    asked.push("health");
+    const how = mocks.health?.();
+    if (how === "fail") return route.fulfill(failure);
+    if (how === "slow") return; // never answers
+    return route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: mocks.local ?? true } });
+  });
   await page.route("**/api/v1/privacy/network", (route) => {
     asked.push("network");
     const found = mocks.network?.() ?? NETWORK;
@@ -65,30 +73,40 @@ async function mockHub(page: Page, mocks: Mocks = {}) {
     return route.fulfill({ json: { ...STORAGE, folder: mocks.local === false ? null : STORAGE.folder } });
   });
   await page.route("**/api/v1/devices", (route) => route.fulfill({ json: { devices: DEVICES } }));
-  await page.route("**/api/v1/privacy/redaction", (route) => {
+  await page.route("**/api/v1/privacy/redaction", async (route) => {
     if (route.request().method() === "PUT") {
       const body = route.request().postDataJSON();
       sent.push({ path: "redaction", body });
-      return route.fulfill(mocks.put?.(body) ?? { status: 200, json: mocks.rules?.() ?? FIXTURE.rules });
+      await mocks.gate?.put;
+      const rules = mocks.rules?.();
+      return route.fulfill(mocks.put?.(body) ?? { status: 200, json: rules === "fail" || rules === undefined ? FIXTURE.rules : rules });
     }
     asked.push("rules");
-    return route.fulfill({ json: mocks.rules?.() ?? FIXTURE.rules });
+    await mocks.gate?.rules;
+    const rules = mocks.rules?.() ?? FIXTURE.rules;
+    return route.fulfill(rules === "fail" ? failure : { json: rules });
   });
   await page.route("**/api/v1/privacy/redaction/stored", (route) => {
     asked.push("stored");
-    return route.fulfill({ json: { matches: mocks.stored?.() ?? 0 } });
+    const matches = mocks.stored?.() ?? 0;
+    return route.fulfill(matches === "fail" ? failure : { json: { matches } });
   });
-  await page.route("**/api/v1/privacy/redaction/check", (route) => {
-    sent.push({ path: "check", body: route.request().postDataJSON() });
-    return route.fulfill({ json: FIXTURE.check });
+  await page.route("**/api/v1/privacy/redaction/check", async (route) => {
+    const body = route.request().postDataJSON() as { title: string };
+    sent.push({ path: "check", body });
+    await mocks.gate?.check;
+    return route.fulfill({ json: mocks.check?.(body.title) ?? FIXTURE.check });
   });
   await page.route("**/api/v1/privacy/redaction/apply", (route) => {
     sent.push({ path: "apply", body: route.request().postDataJSON() });
     return route.fulfill({ json: { redacted: 3 } });
   });
-  await page.route("**/api/v1/privacy/delete", (route) => {
+  await page.route("**/api/v1/privacy/delete", async (route) => {
     sent.push({ path: "delete", body: route.request().postDataJSON() });
-    return route.fulfill({ json: { deleted: { events: 1234, devices: 2, nudge_log: 4, settings: 1 }, wiped: true } });
+    await mocks.gate?.delete;
+    const reply = mocks.deleted?.();
+    if (reply === "abort") return route.abort("connectionreset");
+    return route.fulfill(reply ?? { status: 200, json: { deleted: { events: 1234, devices: 2, nudge_log: 4, settings: 1 }, wiped: true } });
   });
   await page.route("**/api/v1/privacy/export", (route) =>
     route.fulfill({
@@ -111,7 +129,7 @@ test("the network check says 0 internet connections, with every connection by ne
   await expect(card.locator(".net-since")).toContainText("since the hub started, Fri, Sep 25");
   const row = (label: string) => card.locator(".privacy-facts div").filter({ has: page.getByText(label, { exact: true }) }).locator("dd");
   await expect(row("Served")).toHaveText("120 from this computer, 34 from your home network");
-  await expect(row("Made (to the local model)")).toHaveText("6 from this computer");
+  await expect(row("Made (to the local model)")).toHaveText("6 to this computer"); // outgoing: to, not from
   await expect(row("Refused coming in")).toHaveText("2 from your home network");
   await expect(row("Blocked going out")).toHaveText("1 request to 8.8.8.8:443");
   await expect(row("Listening on")).toHaveText("127.0.0.1:8767, 192.168.2.179:8767");
@@ -189,7 +207,7 @@ test("a built-in rule switched off and your own words are saved together", async
   await expect(card.locator(".word-chip")).toHaveText(["Falcon", "Project X"]); // the same word once, whatever its case
   await card.getByRole("button", { name: "Remove Project X" }).click();
   await save.click();
-  await expect(card.locator(".field-note").first()).toHaveText("Saved. New titles follow these rules from now on.");
+  await expect(card.locator(".redaction-note")).toHaveText("Saved. New titles follow these rules from now on.");
   expect(sent.filter((item) => item.path === "redaction").map((item) => item.body)).toEqual([
     { disabled: ["banking"], custom: [{ name: "Work projects", words: ["Falcon"] }] },
   ]);
@@ -205,7 +223,7 @@ test("the hub's reason shows when it refuses the rules", async ({ page }) => {
   const card = region(page, "Hide sensitive titles");
   await card.getByRole("switch", { name: /Password managers/ }).uncheck();
   await card.getByRole("button", { name: "Save the rules" }).click();
-  const note = card.locator(".redaction-actions + .field-note");
+  const note = card.locator(".redaction-note");
   await expect(note).toHaveText("Work: 'x' has no letters or digits to look for");
   await expect(note).not.toHaveClass(/field-hint/);
   await card.getByRole("button", { name: "Undo changes" }).click();
@@ -216,7 +234,7 @@ test("a title is tried against the rules in force", async ({ page }) => {
   const { sent } = await mockHub(page);
   await page.goto("/privacy");
   const card = region(page, "Hide sensitive titles");
-  await card.getByLabel("Try a window or event title").fill("MyBank - Account Summary");
+  await card.getByLabel("Try a window or event title against the saved rules").fill("MyBank - Account Summary");
   await card.getByRole("button", { name: "Check" }).click();
   await expect(card.locator(".try-title .field-note")).toHaveText('Stored as "[redacted]", by the Banking and payments rule.');
   expect(sent).toContainEqual({ path: "check", body: { title: "MyBank - Account Summary" } });
@@ -236,7 +254,7 @@ test("what is already stored is hidden only after asking, and then counted again
   await card.getByRole("button", { name: "Hide them in stored data" }).click();
   matches = 0;
   await confirm.getByRole("button", { name: "Hide 3 events" }).click();
-  await expect(card.locator(".redaction-actions + .field-note")).toHaveText("Hidden in 3 stored events.");
+  await expect(card.locator(".redaction-note")).toHaveText("Hidden in 3 stored events.");
   await expect(card.locator(".stored-matches")).toContainText("Nothing already stored matches these rules.");
   expect(sent.filter((item) => item.path === "apply").map((item) => item.body)).toEqual([{ confirm: true }]);
 });
@@ -334,3 +352,200 @@ test("phone: every control on Privacy can be tapped (44 px or more)", async ({ p
     expect(box).toBeGreaterThanOrEqual(44); // the whole row is the target
   }
 });
+
+// --- from the bug review ----------------------------------------------------------------------------------------------
+
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open: () => void = () => undefined;
+  const wait = new Promise<void>((resolve) => (open = resolve));
+  return { wait, open };
+}
+const withOwnRule: Rules = {
+  ...FIXTURE.rules,
+  rules: [...FIXTURE.rules.rules, { id: "custom-1", name: "Work", description: "", builtin: false, enabled: true, words: ["Falcon"] }],
+};
+
+test("the rules can't be changed before they have loaded, so a new rule never replaces the saved ones", async ({ page }) => {
+  const rules = gate();
+  const { sent } = await mockHub(page, { rules: () => withOwnRule, gate: { rules: rules.wait } });
+  await page.goto("/privacy");
+  const card = region(page, "Hide sensitive titles");
+  await expect(card).toContainText("Loading the rules...");
+  await expect(card.getByRole("button", { name: "Add a rule" })).toHaveCount(0);
+  rules.open();
+  await expect(card.locator(".word-chip")).toHaveText(["Falcon"]); // the saved rule, shown
+  await card.getByRole("button", { name: "Add a rule" }).click();
+  await card.getByLabel("A word or phrase to hide in Your words").fill("Q3 plans");
+  await card.getByLabel("A word or phrase to hide in Your words").press("Enter");
+  await card.getByRole("button", { name: "Save the rules" }).click();
+  await expect.poll(() => sent.filter((item) => item.path === "redaction").length).toBe(1);
+  expect(sent.find((item) => item.path === "redaction")?.body).toEqual({
+    disabled: [], custom: [{ name: "Work", words: ["Falcon"] }, { name: "Your words", words: ["Q3 plans"] }],
+  });
+});
+
+test("a save shows the rules as the hub answered at once, and editing waits until it has", async ({ page }) => {
+  const put = gate();
+  let failRules = false;
+  const answered: Rules = {
+    ...FIXTURE.rules,
+    rules: [...FIXTURE.rules.rules.map((rule) => (rule.id === "banking" ? { ...rule, enabled: false } : rule)),
+      { id: "custom-1", name: "Work", description: "", builtin: false, enabled: true, words: ["Falcon"] }],
+  };
+  await mockHub(page, {
+    rules: () => (failRules ? "fail" : FIXTURE.rules),
+    gate: { put: put.wait },
+    put: () => ({ status: 200, json: answered }),
+  });
+  await page.goto("/privacy");
+  const card = region(page, "Hide sensitive titles");
+  await card.getByRole("switch", { name: /Banking and payments/ }).uncheck();
+  await card.getByRole("button", { name: "Add a rule" }).click();
+  await card.getByLabel("Rule name").fill("Work");
+  await card.getByLabel("A word or phrase to hide in Work").fill("Falcon");
+  await card.getByLabel("A word or phrase to hide in Work").press("Enter");
+  failRules = true; // the reading-again after the save will fail
+  await card.getByRole("button", { name: "Save the rules" }).click();
+  await expect(card.getByRole("switch", { name: /Health portals/ })).toBeDisabled(); // nothing to lose while it saves
+  await expect(card.getByRole("button", { name: "Add a rule" })).toBeDisabled();
+  put.open();
+  await expect(card.locator(".redaction-note")).toHaveText("Saved. New titles follow these rules from now on.");
+  await page.waitForTimeout(300); // the failed reload has come and gone
+  await expect(card.getByRole("switch", { name: /Banking and payments/ })).not.toBeChecked(); // as saved, not as before
+  await expect(card.locator(".word-chip")).toHaveText(["Falcon"]);
+  await expect(card.getByRole("switch", { name: /Health portals/ })).toBeEnabled();
+});
+
+test("a word the hub would read as one already there, or as nothing, is said at once", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/privacy");
+  const card = region(page, "Hide sensitive titles");
+  await card.getByRole("button", { name: "Add a rule" }).click();
+  const word = card.getByLabel("A word or phrase to hide in Your words");
+  await word.fill("e-mail");
+  await word.press("Enter");
+  await word.fill("E mail");
+  await word.press("Enter");
+  await expect(card.locator(".custom-rule .field-note")).toHaveText('"E mail" is already in this rule.');
+  await word.fill("--");
+  await word.press("Enter");
+  await expect(card.locator(".custom-rule .field-note")).toHaveText('"--" has no letters or digits to look for.');
+  await expect(card.locator(".word-chip")).toHaveText(["e-mail"]);
+});
+
+test("a title is tried against the saved rules, and an old answer never lands under a new title", async ({ page }) => {
+  const check = gate();
+  await mockHub(page, { gate: { check: check.wait }, check: (title) => ({ ...FIXTURE.check, stored_as: `[redacted] for ${title}` }) });
+  await page.goto("/privacy");
+  const card = region(page, "Hide sensitive titles");
+  const field = card.getByLabel("Try a window or event title against the saved rules");
+  await field.fill("MyBank - statements");
+  await card.getByRole("button", { name: "Check" }).click();
+  await field.fill("Something else");
+  check.open();
+  await page.waitForTimeout(300);
+  await expect(card.locator(".try-title .field-note")).toHaveText(""); // the first title's answer is not this one's
+  await card.getByRole("switch", { name: /Private and incognito/ }).uncheck();
+  await expect(card.locator(".try-title")).toContainText("Your changes aren't saved yet: the title is tried against the rules as saved.");
+});
+
+test("when the stored events can't be counted it says so, and they can be counted again", async ({ page }) => {
+  let fail = true;
+  await mockHub(page, { stored: () => (fail ? "fail" : 7) });
+  await page.goto("/privacy");
+  const matches = region(page, "Hide sensitive titles").locator(".stored-matches");
+  await expect(matches).toContainText("The stored events couldn't be counted: The hub had a problem");
+  fail = false;
+  await matches.getByRole("button", { name: "Count again" }).click();
+  await expect(matches).toContainText("7 stored events match these rules");
+});
+
+test("a slow delete is waited for, and one that went unanswered says so", async ({ page }) => {
+  const slow = gate();
+  let unanswered = false;
+  const { asked } = await mockHub(page, { clock: "install", gate: { delete: slow.wait }, deleted: () => (unanswered ? "abort" : null) });
+  await page.goto("/privacy");
+  const card = region(page, "Export or delete");
+  const dialog = page.getByRole("dialog", { name: "Delete all your data?" });
+  await card.getByRole("button", { name: "Delete all data" }).click();
+  await dialog.getByLabel(`Type ${PHRASE} to confirm`).fill(PHRASE);
+  await dialog.getByRole("button", { name: "Delete everything" }).click();
+  await page.clock.runFor(60_000); // a big profile's delete and compaction take their time
+  await expect(dialog.getByRole("button", { name: "Deleting..." })).toBeVisible();
+  await expect(dialog.locator(".field-note")).toHaveCount(0); // no "nothing was deleted" while it works
+  slow.open();
+  await expect(card.locator(".field-note")).toHaveText("Deleted 1,241 rows, 1,234 events among them, and overwritten in the file.");
+
+  unanswered = true;
+  const before = asked.filter((item) => item === "storage").length;
+  await card.getByRole("button", { name: "Delete all data" }).click();
+  await dialog.getByLabel(`Type ${PHRASE} to confirm`).fill(PHRASE);
+  await dialog.getByRole("button", { name: "Delete everything" }).click();
+  await expect(card.locator(".field-note")).toHaveText(/^The hub didn't say how the delete went: it may have deleted everything/);
+  await expect.poll(() => asked.filter((item) => item === "storage").length).toBe(before + 1);
+});
+
+test("a delete the hub refuses says nothing was deleted", async ({ page }) => {
+  await mockHub(page, { deleted: () => ({ status: 403, json: { error: { code: "local_only", message: "this can only be done on the hub computer itself", details: [] } } }) });
+  await page.goto("/privacy");
+  await region(page, "Export or delete").getByRole("button", { name: "Delete all data" }).click();
+  const dialog = page.getByRole("dialog", { name: "Delete all your data?" });
+  await dialog.getByLabel(`Type ${PHRASE} to confirm`).fill(PHRASE);
+  await dialog.getByRole("button", { name: "Delete everything" }).click();
+  await expect(dialog.locator(".field-note")).toHaveText("Nothing was deleted: this can only be done on the hub computer itself");
+});
+
+test("after deleting, the rules and what is stored are read again, and keeping the rules is the default every time", async ({ page }) => {
+  const { asked, sent } = await mockHub(page, { stored: () => 3 });
+  await page.goto("/privacy");
+  const card = region(page, "Export or delete");
+  const dialog = page.getByRole("dialog", { name: "Delete all your data?" });
+  const keep = dialog.getByRole("checkbox", { name: /Keep my redaction rules/ });
+  await card.getByRole("button", { name: "Delete all data" }).click();
+  await keep.uncheck();
+  await dialog.getByRole("button", { name: "Keep my data" }).click();
+  await card.getByRole("button", { name: "Delete all data" }).click();
+  await expect(keep).toBeChecked(); // an opt-out from before doesn't carry over
+  await dialog.getByLabel(`Type ${PHRASE} to confirm`).fill(PHRASE);
+  const counts = () => ["rules", "stored"].map((name) => asked.filter((item) => item === name).length);
+  const before = counts();
+  await dialog.getByRole("button", { name: "Delete everything" }).click();
+  await expect(card.locator(".field-note")).toHaveText(/^Deleted /);
+  await expect.poll(counts).toEqual(before.map((count) => count + 1));
+  expect(sent.filter((item) => item.path === "delete").map((item) => item.body)).toEqual([{ confirm: PHRASE, keep_redaction_rules: true }]);
+});
+
+test("export and delete wait for the hub to say whether this is the hub computer", async ({ page }) => {
+  let health: "fail" | "slow" | null = "slow";
+  await mockHub(page, { clock: "install", health: () => health });
+  await page.goto("/privacy");
+  const card = region(page, "Export or delete");
+  await expect(card).toContainText("Checking whether this is the hub computer...");
+  await expect(card).not.toContainText("work only on the hub computer itself");
+  health = null;
+  await page.clock.runFor(21_000); // the slow check gives up, and is asked again
+  await expect(card.getByRole("link", { name: "Export all (JSON)" })).toBeVisible();
+});
+
+test("the big check mark stands out in either scheme", async ({ page }) => {
+  await mockHub(page);
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/privacy");
+    const ratio = await page.locator(".net-icon").evaluate((icon) => {
+      const channels = (color: string) => (color.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map(Number);
+      const light = (color: string) => {
+        const [r, g, b] = channels(color).map((value) => {
+          const c = value / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const style = getComputedStyle(icon);
+      const [a, b] = [light(style.color), light(style.backgroundColor)].sort((x, y) => y - x);
+      return (a + 0.05) / (b + 0.05);
+    });
+    expect(ratio, scheme).toBeGreaterThanOrEqual(3); // WCAG 1.4.11 for a meaningful mark
+  }
+});
+

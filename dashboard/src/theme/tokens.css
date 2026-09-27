@@ -19,6 +19,7 @@
   --accent-ink: #4338ca;
   --on-accent: #ffffff;
   --ok: #047857;
+  --on-ok: #ffffff; /* a mark on an --ok fill */
   --bad: #b91c1c;
   --on-bad: #ffffff; /* text on a --bad fill (a danger button) */
   --focus: #4f46e5;
@@ -92,6 +93,7 @@
     --accent-ink: #a5b4fc;
     --on-accent: #0b1020;
     --ok: #34d399;
+    --on-ok: #0b1020;
     --bad: #f87171;
     --on-bad: #0b1020;
     --focus: #a5b4fc;
@@ -122,6 +124,7 @@
   --accent-ink: #a5b4fc;
   --on-accent: #0b1020;
   --ok: #34d399;
+  --on-ok: #0b1020;
   --bad: #f87171;
   --on-bad: #0b1020;
   --focus: #a5b4fc;
