@@ -1,4 +1,4 @@
-"""Tests for DT-45: the network lockdown and the "no internet" proof. DT-46 (export, delete) adds its own.
+"""Tests for DT-45 (the network lockdown and the "no internet" proof) and DT-46 (export and delete everything).
 
 The claims: the hub listens only on this computer and the addresses phones use (the tailnet only for shared-dev,
 never a public address or carrier-grade NAT) and follows them as they change, even when a listener dies; the
@@ -9,15 +9,20 @@ other web sites' pages and malformed ones; and GET /privacy/network shows it all
 from __future__ import annotations
 
 import http.server
+import json
 import logging
+import os
 import socket
+import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +31,24 @@ import pytest
 import uvicorn
 from conftest import FakeModelServer
 from fastapi.testclient import TestClient
+from test_tracker_base import Script
 
 from daytrace_hub import app as app_module
+from daytrace_hub import redaction, streaks
+from daytrace_hub.api import ApiError
+from daytrace_hub.api import insights as insights_api
+from daytrace_hub.api import privacy as privacy_api
+from daytrace_hub.api.events import ingest
+from daytrace_hub.api.privacy import data_tables
+from daytrace_hub.api.timeline import resolve_tz
 from daytrace_hub.app import HubServer, create_app, network_audit, serve
+from daytrace_hub.auth import AuthenticatedDevice, hash_token, register_device
 from daytrace_hub.config import LEDGER, Settings, get_profile, network_of, origin_allowed
+from daytrace_hub.db import Database, load_migrations, transaction, utc_text
 from daytrace_hub.discovery import listen_addresses, phone_addresses, served
 from daytrace_hub.llm import LLM, LLMRefused, LLMSettings, LocalOnlyTransport, local_http_client
+from daytrace_hub.seed import seed
+from daytrace_hub.tracker.base import TrackerService
 
 LOCAL = ("127.0.0.1", 50000)
 LAN = ("192.168.1.40", 50000)
@@ -389,3 +406,265 @@ def test_ctrl_c_ends_the_hub_quietly(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(HubServer, "run", interrupted)
     monkeypatch.setattr(app_module, "install_network_audit", lambda: None)  # not in the test process
     assert serve(Settings(profile=get_profile("demo"), data_dir=tmp_path)) is None
+
+
+# --- export and delete everything (DT-46) -------------------------------------------------------------------------
+
+
+SEEDED_AT = datetime(2026, 9, 25, 21, 0, tzinfo=UTC)
+PHRASE = privacy_api.DELETE_PHRASE
+# Every table and column the schema has, each one a decision: exported as is, as JSON, or kept out (a secret, the
+# database's bookkeeping). A migration that adds one fails this until it is decided here and in api/privacy.py.
+SCHEMA = {
+    "achievements": {"achievement_id", "earned_on", "tz", "dates", "unlocked_at"},
+    "category_overrides": {"app_key", "category", "source", "updated_at"},
+    "devices": {"device_id", "name", "device_type", "token_hash", "paired_at", "last_seen", "revoked_at"},
+    "events": {"id", "device_id", "dedup_key", "seq", "external_id", "kind", "source", "start_utc", "end_utc", "utc_offset_min",
+               "app", "app_id", "title", "category", "data", "received_at", "updated_at"},
+    "goals": {"goal_id", "target", "updated_at"},
+    "nudge_log": {"id", "rule", "device_id", "title", "body", "created_at"},
+    "sessions": {"id", "device_id", "local_date", "start_utc", "end_utc", "seconds", "app", "app_id", "title", "category", "source_event_ids"},
+    "settings": {"key", "value"},
+    "story_cache": {"day", "tz", "facts_hash", "writer", "story", "facts", "model", "created_at"},
+    "wrapped_cache": {"week", "tz", "facts_hash", "writer", "lines", "facts", "model", "created_at"},
+}
+
+
+@pytest.fixture
+def seeded(tmp_path: Path, fake_llm: FakeModelServer) -> Iterator[tuple[TestClient, Settings]]:
+    settings = Settings(profile=get_profile("demo"), data_dir=tmp_path)
+    seed(settings, 3, UTC, SEEDED_AT)
+    with TestClient(create_app(settings, llm=fake_llm.llm()), client=LOCAL, base_url="http://localhost:8767") as client:
+        yield client, settings
+
+
+def counts(settings: Settings) -> dict[str, int]:
+    with Database(settings.database_path).connect() as conn:
+        return {table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table, _ in data_tables(conn)}
+
+
+def add_titled_event(settings: Settings, title: str, key: str | None = None) -> None:
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute(
+            "INSERT INTO events (device_id, dedup_key, kind, source, start_utc, end_utc, utc_offset_min, app, title, data, received_at)"
+            " VALUES ('seed-windows', ?, 'window', 'seed', '2026-09-25T15:00:00.000000Z', '2026-09-25T15:05:00.000000Z', 0, 'Notepad', ?, '{}',"
+            " '2026-09-25T15:05:00.000000Z')", (key or f"content:{title}", title))
+
+
+def on_disk(settings: Settings) -> bytes:
+    found = b""
+    for path in (settings.database_path, Path(f"{settings.database_path}-wal")):
+        if path.exists():
+            found += path.read_bytes()
+    return found
+
+
+def test_every_table_and_column_is_decided() -> None:
+    database = Database(Path(tempfile.mkdtemp()) / "schema.db")
+    database.initialize()
+    with database.connect() as conn:
+        found = {table: {row["name"] for row in conn.execute(f'PRAGMA table_info("{table}")')} for table, _ in data_tables(conn)}
+    assert found == SCHEMA
+    for table, column in privacy_api.JSON_COLUMNS | privacy_api.SECRET_COLUMNS:
+        assert column in SCHEMA[table], (table, column)
+
+
+def test_the_export_is_every_table_as_json(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        token = register_device(conn, device_id="android-5", name="Phone", device_type="android")
+        conn.execute("INSERT INTO settings (key, value) VALUES ('redaction', ?)", (json.dumps({"disabled": ["health"], "custom": []}),))
+        conn.execute("INSERT INTO story_cache (day, tz, facts_hash, writer, story, facts, model, created_at) VALUES"
+                     " ('2026-09-24', 'UTC', 'h', 'w', 'A day.', '[{\"label\": \"odd\", \"value\": NaN}]', 'm', '2026-09-25T00:00:00Z')")
+    response = client.get("/api/v1/privacy/export")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("application/json")
+    today = datetime.now(resolve_tz(None)[0]).date().isoformat()  # the hub's own day, not UTC's
+    assert response.headers["content-disposition"] == f'attachment; filename="daytrace-demo-{today}.json"'
+    assert response.headers["cache-control"] == "no-store"
+    body = json.loads(response.text, parse_constant=lambda name: pytest.fail(f"{name} is not JSON"))  # strict JSON
+    assert (body["daytrace_export"], body["profile"], body["schema_version"]) == (1, "demo", Database(settings.database_path).schema_version())
+    assert {table: len(rows) for table, rows in body["tables"].items()} == counts(settings)  # every table, every row
+    assert "schema_migrations" not in body["tables"] and "data_changes" not in body["tables"]
+    assert all("token_hash" not in device for device in body["tables"]["devices"])
+    assert token not in response.text and hash_token(token) not in response.text  # no secret, not even its hash
+    assert isinstance(body["tables"]["events"][0]["data"], dict)
+    assert body["tables"]["settings"] == [{"key": "redaction", "value": {"disabled": ["health"], "custom": []}}]
+    assert body["tables"]["story_cache"][0]["facts"] == [{"label": "odd", "value": None}]  # NaN is not JSON: null
+    assert list(settings.data_dir.glob(f"{privacy_api.SNAPSHOT_PREFIX}*")) == []  # its copy removed afterwards
+
+
+def test_the_export_is_one_moment_and_holds_nothing_while_it_streams(seeded: tuple[TestClient, Settings], monkeypatch: pytest.MonkeyPatch) -> None:
+    _, settings = seeded
+    monkeypatch.setattr(privacy_api, "EXPORT_CHUNK", 2000)
+    database = Database(settings.database_path)
+    before = counts(settings)["events"]
+    snapshot = privacy_api.take_snapshot(database)
+    pieces = privacy_api.export_chunks(snapshot, "demo")
+    first = next(pieces)  # a download paused half way
+    add_titled_event(settings, "arrived during the export")  # a device syncs meanwhile
+    started = time.monotonic()
+    result = privacy_api.delete_everything(database)  # and a delete-all isn't kept waiting
+    assert result.wiped is True and time.monotonic() - started < 3
+    document = json.loads(first + "".join(pieces))
+    assert len(document["tables"]["events"]) == before  # as of the moment it started, in many pieces
+    privacy_api.remove_file(snapshot)
+    assert not snapshot.exists()
+
+
+def test_a_copy_left_by_a_stopped_export_is_cleaned_up(seeded: tuple[TestClient, Settings]) -> None:
+    _, settings = seeded
+    stale = settings.data_dir / f"{privacy_api.SNAPSHOT_PREFIX}old.db"
+    stale.write_bytes(b"left over")
+    old = time.time() - privacy_api.STALE_SNAPSHOT_SECONDS - 60
+    os.utime(stale, (old, old))
+    privacy_api.remove_file(privacy_api.take_snapshot(Database(settings.database_path)))
+    assert not stale.exists()
+
+
+def test_tables_a_later_version_may_add(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn:
+        conn.execute("CREATE TABLE later_notes (k TEXT PRIMARY KEY, body TEXT) WITHOUT ROWID")
+        conn.execute("INSERT INTO later_notes VALUES ('a', 'kept in a WITHOUT ROWID table')")
+        try:
+            conn.execute("CREATE VIRTUAL TABLE later_search USING fts5(body)")
+            conn.execute("INSERT INTO later_search (body) VALUES ('found by full-text search')")
+            fts = True
+        except sqlite3.OperationalError:
+            fts = False  # this SQLite has no FTS5
+    tables = client.get("/api/v1/privacy/export").json()["tables"]
+    assert tables["later_notes"] == [{"k": "a", "body": "kept in a WITHOUT ROWID table"}]
+    if fts:
+        assert tables["later_search"] == [{"body": "found by full-text search"}]
+        assert not any(name.startswith("later_search_") for name in tables)  # its internals are not data tables
+    assert client.post("/api/v1/privacy/delete", json={"confirm": PHRASE}).status_code == 200
+    with Database(settings.database_path).connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM later_notes").fetchone()[0] == 0
+        if fts:
+            assert conn.execute("SELECT COUNT(*) FROM later_search WHERE later_search MATCH 'search'").fetchone()[0] == 0  # still works
+
+
+def test_only_the_hub_computer_can_export_or_delete(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        viewer = register_device(conn, device_id="viewer-5", name="Phone browser", device_type="viewer")
+    before = counts(settings)
+    with TestClient(client.app, client=LAN) as phone:
+        as_viewer = {"Authorization": f"Bearer {viewer}"}
+        refused = phone.get("/api/v1/privacy/export", headers=as_viewer)
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "local_only"
+        deleted = phone.post("/api/v1/privacy/delete", json={"confirm": PHRASE}, headers=as_viewer)
+        assert deleted.status_code == 403 and deleted.json()["error"]["code"] == "local_only"
+    assert counts(settings) == before
+
+
+@pytest.mark.parametrize("phrase", ["", "delete all my data", "DELETE ALL MY DAYTRACE DATA", " delete all my daytrace data", "yes"])
+def test_delete_needs_the_exact_phrase(seeded: tuple[TestClient, Settings], phrase: str) -> None:
+    client, settings = seeded
+    before = counts(settings)
+    response = client.post("/api/v1/privacy/delete", json={"confirm": phrase})
+    assert response.status_code == 400 and "nothing was deleted" in response.json()["error"]["message"]
+    assert counts(settings) == before
+    assert client.post("/api/v1/privacy/delete", json={}).status_code == 422
+
+
+def test_delete_empties_every_table_and_the_hub_keeps_working(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        phone_token = register_device(conn, device_id="android-5", name="Phone", device_type="android")
+    pending = client.post("/api/v1/pair/start").json()["code"]  # shown before the delete
+    before = counts(settings)
+    assert client.get("/api/v1/insights/overview", params={"range": "2026-09-23..2026-09-24", "tz": "UTC"}).json()["metrics"][0]["value"]
+    response = client.post("/api/v1/privacy/delete", json={"confirm": PHRASE})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted"] == before and body["wiped"] is True
+    assert all(count == 0 for count in counts(settings).values())  # every table empty
+    assert Database(settings.database_path).schema_version() == len(load_migrations())  # the schema kept
+    with TestClient(client.app, client=LAN) as phone:
+        assert phone.get("/api/v1/insights/day", headers={"Authorization": f"Bearer {phone_token}"}).status_code == 401
+        claimed = phone.post("/api/v1/pair/claim", json={"code": pending, "device_name": "Tablet", "device_type": "android"})
+        assert claimed.status_code in (400, 404, 410)  # a code shown before the delete pairs nothing after it
+    overview = client.get("/api/v1/insights/overview", params={"range": "2026-09-23..2026-09-24", "tz": "UTC"}).json()
+    assert overview["metrics"][0]["value"] is None and overview["cached"] is False  # no stale answer
+    assert client.post("/api/v1/pair/start").status_code == 200  # pairing works again
+    again = client.post("/api/v1/privacy/delete", json={"confirm": "delete"})  # asked again, every time
+    assert again.status_code == 400
+
+
+def test_delete_forgets_what_the_process_held(seeded: tuple[TestClient, Settings]) -> None:
+    client, _ = seeded
+    client.put("/api/v1/privacy/redaction", json={"custom": [{"name": "Client", "words": ["Acme"]}]})
+    client.get("/api/v1/streaks", params={"tz": "UTC"})
+    assert redaction._parse_choices.cache_info().currsize and streaks._cache
+    client.post("/api/v1/privacy/delete", json={"confirm": PHRASE, "keep_redaction_rules": False})
+    assert redaction._parse_choices.cache_info().currsize == 0 and not streaks._cache and not insights_api._cache
+
+
+def test_your_redaction_rules_are_kept_unless_you_say(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    client.put("/api/v1/privacy/redaction", json={"custom": [{"name": "Client", "words": ["Acme"]}]})
+    client.post("/api/v1/privacy/delete", json={"confirm": PHRASE})
+    rules = client.get("/api/v1/privacy/redaction").json()["rules"]
+    assert rules[-1]["words"] == ["Acme"]  # what is recorded next stays protected
+    client.post("/api/v1/privacy/delete", json={"confirm": PHRASE, "keep_redaction_rules": False})
+    assert client.get("/api/v1/privacy/redaction").json()["rules"][-1]["id"] == "private"  # asked to forget them too
+    assert counts(settings)["settings"] == 0
+
+
+def test_deleted_rows_are_gone_from_the_file_even_with_another_connection_open(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    for number in range(200):  # rows the tracker rewrote: their old titles freed long before the delete
+        add_titled_event(settings, f"OldTitle-{number}-Zebra", key=f"ext:span-{number}")
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute("UPDATE events SET title = 'NewTitle' WHERE title LIKE 'OldTitle-%'")
+    add_titled_event(settings, "ZebraSecretTitle-9431")
+    assert b"ZebraSecretTitle-9431" in on_disk(settings)
+    with Database(settings.database_path).connect() as idle:  # the tracker thread or a dashboard request, open meanwhile
+        idle.execute("SELECT 1").fetchone()
+        assert client.post("/api/v1/privacy/delete", json={"confirm": PHRASE}).json()["wiped"] is True
+    raw = on_disk(settings)
+    assert b"ZebraSecretTitle-9431" not in raw and b"OldTitle-" not in raw and b"Visual Studio Code" not in raw
+    assert settings.database_path.stat().st_size < 200_000  # compacted
+
+
+def test_every_connection_overwrites_what_it_deletes(seeded: tuple[TestClient, Settings]) -> None:
+    _, settings = seeded
+    with Database(settings.database_path).connect() as conn:
+        assert conn.execute("PRAGMA secure_delete").fetchone()[0] == 1
+
+
+def test_the_desktop_tracker_brings_nothing_back(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    probe = Script()
+    service = TrackerService(Database(settings.database_path), probe, "windows", "PC", settings.data_dir / "tracker.lock",
+                             redact=lambda reading: reading)
+    client.app.state.tracker = service
+    service.start()
+    try:
+        time.sleep(2.5)  # it holds an open span of VS Code, from before the delete
+        deleted_at = datetime.now(UTC)
+        assert client.post("/api/v1/privacy/delete", json={"confirm": PHRASE}).status_code == 200
+        time.sleep(4.5)  # it tracks again, afresh
+        with Database(settings.database_path).connect() as conn:
+            starts = [row[0] for row in conn.execute("SELECT start_utc FROM events WHERE source = 'tracker'")]
+        assert starts and all(start >= utc_text(deleted_at - timedelta(seconds=1)) for start in starts)  # nothing from before
+    finally:
+        service.stop()
+
+
+def test_a_device_deleted_mid_request_is_told_to_pair_again(seeded: tuple[TestClient, Settings]) -> None:
+    _, settings = seeded
+    ghost = AuthenticatedDevice(device_id="android-99", name="Gone", device_type="android")  # let in just before the delete
+    event = {"device_id": "android-99", "seq": 1, "kind": "app_session", "source": "usagestats", "app": "Maps",
+             "start": "2026-09-25T14:00:00+00:00", "end": "2026-09-25T14:05:00+00:00"}
+    with pytest.raises(ApiError) as refused:
+        ingest(Database(settings.database_path), ghost, {"events": [event]})
+    assert refused.value.status_code == 401 and refused.value.code == "unauthorized"
+
+
+def test_the_routes_describe_their_answers() -> None:
+    paths = create_app(Settings(profile=get_profile("demo"), data_dir=Path(tempfile.mkdtemp()))).openapi()["paths"]
+    export = paths["/api/v1/privacy/export"]["get"]["responses"]
+    assert "application/json" in export["200"]["content"] and "403" in export
+    assert {"400", "403"} <= set(paths["/api/v1/privacy/delete"]["post"]["responses"])

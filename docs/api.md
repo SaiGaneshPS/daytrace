@@ -639,5 +639,22 @@ name or id, or a site (docs/privacy.md has the rules).
     serve, with a Host name that could be DNS rebinding, or from another site's page.
   - `internet_connections` is outgoing plus incoming internet, and is always 0. `listening` is where the hub
     listens right now.
-- `GET /privacy/export` (local only) streams all of the profile's data as JSON.
-- `POST /privacy/delete` (local only) needs `{ "confirm": "delete all my daytrace data" }` on every call; any other phrase returns 400.
+- `GET /privacy/export` (the hub computer only, DT-46) is everything the profile holds, as one JSON file
+  (`Content-Disposition: attachment`, `daytrace-<profile>-<date>.json`), streamed in pieces:
+  `{ "daytrace_export": 1, "profile": "demo", "exported_at": "...", "schema_version": 6, "note": "...", "tables": { "events": [ ... ], "devices": [ ... ], ... } }`.
+  - It holds every table with your data, including a table a later version adds, as of one moment, so a device
+    syncing during the export doesn't split it. The hub reads a copy it takes first and removes afterwards, so a
+    slow download never holds the database.
+  - JSON columns (an event's `data`, settings, goals, badges) come as JSON. Device tokens are never exported, not
+    even their hashes. The database's own bookkeeping (migrations, the change counter) is left out.
+- `POST /privacy/delete` (the hub computer only, DT-46) needs `{ "confirm": "delete all my daytrace data" }`,
+  exactly, on every call. Any other phrase is `400`, and nothing is deleted.
+  - It empties every data table and keeps the schema, so the hub keeps working. Paired devices must pair again, a
+    pairing code shown before it no longer works, and the desktop tracker starts afresh with nothing it held from
+    before.
+  - Your own redaction rules are kept, so what is recorded next stays protected, unless you send
+    `"keep_redaction_rules": false`.
+  - It returns `{ "deleted": { "events": 1520, ... }, "wiped": true }`. `wiped` means the deleted rows are gone from
+    the file too: compacted, with the write-ahead log folded back. Every connection overwrites what it deletes
+    (`secure_delete`), so a row replaced earlier leaves nothing behind either. `wiped` is `false` only when another
+    connection kept the compacting from finishing just then.

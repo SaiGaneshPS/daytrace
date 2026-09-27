@@ -471,6 +471,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/privacy/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Everything the profile holds, as one JSON file (the hub computer only) */
+        get: operations["export_all_api_v1_privacy_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/privacy/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete everything the profile holds (the hub computer only) */
+        post: operations["delete_all_api_v1_privacy_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -837,6 +871,35 @@ export interface components {
              */
             estimated: boolean;
         };
+        /** DeleteAll */
+        DeleteAll: {
+            /**
+             * Confirm
+             * @description Exactly "delete all my daytrace data", on every call.
+             */
+            confirm: string;
+            /**
+             * Keep Redaction Rules
+             * @description Keep your own redaction words and the built-in rules you switched off, so what is recorded next stays protected (default).
+             * @default true
+             */
+            keep_redaction_rules: boolean;
+        };
+        /** Deleted */
+        Deleted: {
+            /**
+             * Deleted
+             * @description Rows deleted from each table.
+             */
+            deleted: {
+                [key: string]: number;
+            };
+            /**
+             * Wiped
+             * @description True when the deleted rows are gone from the file too (overwritten, the file compacted and its log folded back). False when another connection kept that from finishing just now; the rows are deleted and overwritten either way.
+             */
+            wiped: boolean;
+        };
         /** DeviceInfo */
         DeviceInfo: {
             /** Device Id */
@@ -870,6 +933,19 @@ export interface components {
         DeviceList: {
             /** Devices */
             devices: components["schemas"]["DeviceInfo"][];
+        };
+        /** ErrorInfo */
+        ErrorInfo: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details?: unknown[];
+        };
+        /** ErrorOut */
+        ErrorOut: {
+            error: components["schemas"]["ErrorInfo"];
         };
         /** FactOut */
         FactOut: {
@@ -2827,6 +2903,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NetworkStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_all_api_v1_privacy_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export, as a download. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Not from the hub computer (local_only). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+        };
+    };
+    delete_all_api_v1_privacy_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAll"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description The phrase was not exactly right: nothing was deleted. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not from the hub computer (local_only). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description Validation Error */

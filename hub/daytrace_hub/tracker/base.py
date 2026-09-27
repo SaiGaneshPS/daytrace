@@ -461,3 +461,11 @@ class TrackerService:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout)
+
+    def restart(self) -> None:
+        """Start again after stop(), as a new run with nothing held from before (DT-46: after delete-all, what it
+        was tracking must not come back). stop() already wrote what it held."""
+        if self._thread is not None and self._thread.is_alive():
+            self.stop()
+        self._stop = threading.Event()
+        self.start()
