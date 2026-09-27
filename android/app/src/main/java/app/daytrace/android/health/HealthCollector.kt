@@ -8,6 +8,7 @@
 package app.daytrace.android.health
 
 import android.content.Context
+import android.util.Log
 import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
@@ -190,8 +191,9 @@ class HealthCollector(
                 changed += collect(client, kind, now, zone)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                // its list of changes is kept as it was, so the same days are read next time
+            } catch (failure: Exception) {
+                // Its list of changes is kept as it was, so the same days are read next time.
+                Log.w(TAG, "Reading ${kind.name} from Health Connect failed", failure)
             }
         }
         return changed
@@ -204,8 +206,11 @@ class HealthCollector(
         // nothing written meanwhile is missed.
         val token = found?.second ?: client.getChangesToken(ChangesTokenRequest(setOf(kind.type), emptySet()))
         val runs = HealthEvents.daysToRead(now.atZone(zone).toLocalDate(), found?.first)
-        val added = store.add(kind.read(client, runs, now, zone), zone)
+        val events = kind.read(client, runs, now, zone)
+        val added = store.add(events, zone)
         prefs.edit(commit = true) { putString(TOKEN + kind.name, token) } // only once the events are stored
+        // How much, never what: the log is for finding out why nothing arrived.
+        Log.i(TAG, "Health Connect ${kind.name}: ${runs.sumOf { ChronoUnit.DAYS.between(it.start, it.endInclusive) + 1 }} days read, ${events.size} events, $added new or changed")
         return added
     }
 
@@ -280,6 +285,7 @@ class HealthCollector(
             .map { HealthPermission.getReadPermission(it) }.toSet()
 
         private const val PREFS = "health"
+        private const val TAG = "Daytrace"
         private const val TOKEN = "changes_token:"
         private const val MAX_RECORDS = 5000 // per kind and run of days: far more than 30 days hold, never unbounded
         private const val MAX_PAGES = 50 // of changes per sync; the rest waits for the next one

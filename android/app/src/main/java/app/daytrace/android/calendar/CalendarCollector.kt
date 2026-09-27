@@ -9,6 +9,7 @@ import android.content.Context
 import android.provider.CalendarContract.Attendees
 import android.provider.CalendarContract.Events
 import android.provider.CalendarContract.Instances
+import android.util.Log
 import androidx.core.content.edit
 import app.daytrace.android.data.EventStore
 import app.daytrace.android.data.PhoneEvent
@@ -87,8 +88,12 @@ class CalendarCollector(private val context: Context, private val store: EventSt
     fun collect(now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): Int {
         if (!Permissions.calendarGranted(context)) return 0
         val (from, to) = CalendarEvents.window(now, zone, prefs.getLong(LAST_READ, -1).takeIf { it >= 0 })
-        val added = store.add(CalendarEvents.events(read(from, to), zone), zone)
+        val rows = read(from, to)
+        val events = CalendarEvents.events(rows, zone)
+        val added = store.add(events, zone)
         prefs.edit(commit = true) { putLong(LAST_READ, now.toEpochMilli()) } // only once the events are stored
+        // How much, never what: the log is for finding out why nothing arrived.
+        Log.i(TAG, "Calendar: ${rows.size} occurrences, ${events.size} events, $added new or changed")
         return added
     }
 
@@ -126,6 +131,7 @@ class CalendarCollector(private val context: Context, private val store: EventSt
 
     private companion object {
         const val PREFS = "calendar"
+        const val TAG = "Daytrace"
         const val LAST_READ = "last_read_ms"
         const val MAX_ROWS = 5000 // a month of even a busy calendar, never unbounded
     }

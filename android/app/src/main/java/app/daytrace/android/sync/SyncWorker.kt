@@ -9,6 +9,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.util.Log
 import androidx.core.content.edit
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -273,10 +274,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 collect()
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                // the next sync tries again
+            } catch (failure: Throwable) {
+                // The next sync tries again. The log says what failed (never what was collected).
+                Log.w(TAG, "A collector failed; the next sync tries again", failure)
             }
         }
+
+        private const val TAG = "Daytrace"
 
         /** Every 15 minutes (Android's shortest period) while on an unmetered network. Kept across restarts. */
         fun schedule(context: Context) {
