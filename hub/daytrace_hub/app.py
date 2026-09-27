@@ -39,6 +39,7 @@ from .api import privacy as privacy_api
 from .api import streaks as streaks_api
 from .api import timeline as timeline_api
 from .auth import is_trusted_local
+from .categories import AiCategorizer
 from .config import (
     LEDGER,
     Settings,
@@ -297,9 +298,15 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, dashboa
         app.state.tracker = tracker  # DT-46: delete-all pauses it, so nothing it held comes back
         if tracker is not None:
             tracker.start()  # DT-16: this computer's own screen, in a background thread
+        sorter = AiCategorizer(database, model_server) if settings.ai_categories else None
+        app.state.ai_categorizer = sorter  # DT-42: an ingest wakes it
+        if sorter is not None:
+            sorter.start()
         try:
             yield
         finally:
+            if sorter is not None:
+                await asyncio.to_thread(sorter.stop)
             if tracker is not None:
                 await asyncio.to_thread(tracker.stop)
             if advertiser is not None:
@@ -315,6 +322,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, dashboa
     app.state.db = database
     app.state.pairing = devices_api.PairingCodes()
     app.state.llm = model_server
+    app.state.ai_categorizer = None  # started with the app when settings.ai_categories (DT-42)
     app.add_middleware(NetworkGuard, settings=settings)
     install_error_handlers(app)
 

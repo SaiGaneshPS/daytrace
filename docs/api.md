@@ -122,7 +122,7 @@ Response (`200` whenever the body has the right shape, even if some events were 
 ```json
 { "accepted": 1, "replaced": 0, "duplicates": 0,
   "rejected": [ { "index": 3, "code": "invalid", "seq": 812, "external_id": null, "reason": "data.stage: sleep data.stage must be one of [...]" } ],
-  "last_seq": 4812, "nudge": null }
+  "last_seq": 4812, "nudge": null, "meals": [] }
 ```
 
 - `rejected` lists events the hub did not store, each with a `code`:
@@ -135,7 +135,25 @@ Response (`200` whenever the body has the right shape, even if some events were 
 - When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "Time to focus", "body": "TikTok during
   \"Study: calculus\", which runs until 17:00.", "created_at": "2026-09-25T19:30:00Z" }`, and the device shows it.
   See [Nudges](#nudges).
-- DT-42 adds the parsed meal items to the response for `meal` events.
+- **Meals sent as text (DT-42).** A `meal` event with `data.text` and no `items` or no `meal_type` is read by the
+  hub, and `meals` lists what it read, one entry per such meal (by `index`), so a Shortcut can say "Logged: two
+  rotis, dal":
+
+  ```json
+  "meals": [ { "index": 0, "items": ["two rotis", "dal"], "meal_type": "lunch", "items_by": "ai", "type_by": "time" } ]
+  ```
+
+  - **Items:** the local model lists the foods as the text names them (`items_by: "ai"`), with no calories, weights
+    or portions. An answer that names a food the text doesn't (every item must share a word with the text) is
+    not used, and without a model the text is split on commas, "and", "+" and new lines (`"text"`). Items the event
+    sent itself are kept (`"event"`).
+  - **Meal type:** the event's own; else a meal the text names ("Lunch: ...", "for dinner": `type_by: "text"`);
+    else the hour on the device's clock (`"time"`): breakfast from 04:00, lunch from 11:00, a snack from 15:00,
+    dinner from 17:00, a snack again from 22:00. A time sent in UTC is read in the hub's own zone.
+  - **Stored** with the event as `data.parsed` (`items`, `meal_type`, `items_by`, `type_by`), which Insights and the
+    other readers use where the event lacks its own. It is never part of the event's key: a resend is a duplicate,
+    isn't read again, and gets the stored reading back. Collectors never send `data.parsed` (`invalid`).
+  - The model gets 20 s; after that, or when it isn't running, the text is split, so the answer never waits long.
 
 ### Nudges
 
@@ -348,6 +366,15 @@ study leaves `mail.google.com` as comms.
 Keys are compared Unicode-normalized and without case, `.exe`, `www.`, a port or a trailing dot. Every
 consumer of sessions (timeline, stats, goals, insights) gets them already categorized from
 `sessions.sessions_for()`, so they always agree.
+
+**The local AI's guesses (DT-42).** In the background, 30 s after new events arrive and every 10 minutes, the hub
+asks the local model about apps and sites nothing above knows, the most used first, 25 at a time. The question gives
+each one's name, id or site and the fixed categories with what each means, and asks for structured JSON
+(temperature 0). Each answer is saved as an override with `source: "ai"`, `other` included, so every app is asked
+about once. A reply that answers fewer than half of them saves nothing, and without a model nothing is saved and it
+is tried again at the next run. A guess never replaces the user's choice, and the user can always change one
+(`PUT /categories/{key}`). Names the privacy rules hide are never sent, and applying the rules drops guesses kept
+under such a name. `DAYTRACE_AI_CATEGORIES=off` turns it off.
 
 `GET /categories` (any paired device's token, or no token from the hub computer) lists the categories and every
 app or site seen in the last 30 days, most used first (at most 500):

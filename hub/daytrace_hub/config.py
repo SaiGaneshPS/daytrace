@@ -217,6 +217,8 @@ class Settings:
     mdns_name: str = "daytrace-hub"
     # Off unless load_settings() turns it on (DT-16), so tests never record this computer's screen.
     track_desktop: bool = False
+    # Off unless load_settings() turns it on (DT-42), so tests never have the model sort their apps behind their back.
+    ai_categories: bool = False
     # The built dashboard (DT-30) from DAYTRACE_DASHBOARD_DIR; None: dashboard/dist next to the hub in this repo.
     dashboard_dir: Path | None = None
 
@@ -259,6 +261,10 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
     tracker_text = env.get("DAYTRACE_TRACKER", "").strip().lower() or ("on" if profile.name == "personal" else "off")
     if tracker_text not in (*_TRUE, *_FALSE):
         raise ValueError(f"DAYTRACE_TRACKER must be on or off, got {tracker_text!r}")
+    # The local model sorts apps nothing knows into categories (DT-42): on for every profile, as it stays local.
+    ai_text = env.get("DAYTRACE_AI_CATEGORIES", "").strip().lower() or "on"
+    if ai_text not in (*_TRUE, *_FALSE):
+        raise ValueError(f"DAYTRACE_AI_CATEGORIES must be on or off, got {ai_text!r}")
     return Settings(
         profile=profile,
         data_dir=data_dir,
@@ -266,6 +272,7 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
         advertise_mdns=advertise,
         mdns_name=mdns_name,
         track_desktop=tracker_text in _TRUE,
+        ai_categories=ai_text in _TRUE,
         dashboard_dir=_folder(env, "DAYTRACE_DASHBOARD_DIR"),
     )
 

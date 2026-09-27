@@ -11,13 +11,16 @@ tailnet), never the internet:
 - No proxy from the environment, no redirects.
 
 `LLM.chat()` is what "Ask your day" (DT-40) uses, and `LLM.complete()` (the reply with its finish reason) what
-the day story (DT-39) uses. `LLM.status()` feeds
-GET /api/v1/ai/status: whether a model server answers, which model is used, and whether it can call tools.
+the day story (DT-39) uses. `LLM.json_reply()` asks for JSON that fits a schema (DT-42: app categories, meals).
+`LLM.status()` feeds GET /api/v1/ai/status: whether a model server answers, which model is used, and whether it
+can call tools.
 """
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
+import re
 import socket
 import threading
 import time
@@ -60,6 +63,18 @@ METADATA_NETWORKS = tuple(ipaddress.ip_network(n) for n in ("169.254.169.254/32"
 SENT_HEADERS = frozenset({"host", "accept", "accept-encoding", "content-type", "content-length", "connection", "user-agent"})
 
 Resolver = Callable[[str, int], list[str]]
+_THINKING = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL | re.IGNORECASE)
+_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
+
+def json_in(text: str | None) -> Any:
+    """The JSON object in a model's reply: without its thinking, a ```json fence or words around the braces.
+    Raises ValueError when there is none."""
+    text = _FENCE.sub("", _THINKING.sub("", text or "").strip()).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("the reply holds no JSON object")
+    return json.loads(text[start:end + 1])
 
 
 class LLMError(Exception):
@@ -383,6 +398,7 @@ class LLM:
         model: str | None = None,
         timeout: httpx.Timeout | None = None,
         retry: bool = True,
+        response_format: dict[str, Any] | None = None,
     ) -> Any:
         """Like chat(), but returns the whole choice: `.message`, and `.finish_reason`, which is "length" when
         `max_tokens` cut the reply off (a reasoning model can spend them all thinking). Raises LLMError."""
@@ -391,6 +407,8 @@ class LLM:
             extra["tools"] = tools
         if max_tokens is not None:
             extra["max_tokens"] = max_tokens
+        if response_format is not None:
+            extra["response_format"] = response_format
         options: dict[str, Any] = {}
         if timeout is not None:
             options["timeout"] = timeout
@@ -408,6 +426,34 @@ class LLM:
             raise
         except Exception as exc:  # a 200 that is not a chat completion
             raise LLMError(f"the model server at {self.shown_url} sent an answer Daytrace doesn't understand") from exc
+
+    def json_reply(
+        self,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any],
+        name: str,
+        max_tokens: int = 2048,
+        timeout: httpx.Timeout | None = None,
+        retry: bool = True,
+    ) -> Any:
+        """A JSON object that should fit `schema` (the caller still checks it). The server is asked for structured
+        output (LM Studio and Ollama both take a json_schema); one that refuses that (a 4xx) is asked again without
+        it, since the prompt asks for JSON too. Temperature 0, so the same question gets the same answer.
+        Raises LLMError, also for a reply with no JSON object in it."""
+        response_format = {"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True}}
+        try:
+            choice = self.complete(messages, temperature=0.0, max_tokens=max_tokens, timeout=timeout, retry=retry,
+                                   response_format=response_format)
+        except LLMStatusError as exc:
+            if not 400 <= exc.status_code < 500:
+                raise
+            choice = self.complete(messages, temperature=0.0, max_tokens=max_tokens, timeout=timeout, retry=retry)
+        if getattr(choice, "finish_reason", None) == "length":
+            raise LLMError("the model's answer was cut off before it finished")
+        try:
+            return json_in(getattr(choice.message, "content", None))
+        except ValueError as exc:
+            raise LLMError(f"the model's answer was not the JSON asked for ({exc})") from exc
 
     def supports_tools(self, model: str) -> bool | None:
         """Whether `model` calls a tool when asked to (None: couldn't tell). It costs a reply, so the answer is

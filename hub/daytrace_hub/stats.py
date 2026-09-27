@@ -525,7 +525,8 @@ class Stats:
 
     def meals(self, first: date, last: date | None = None) -> list[dict[str, Any]]:
         """The meals logged from `first` to `last`, in order: local time, day, type, items and text. The same meal
-        sent twice (two phones on one health account) is listed once."""
+        sent twice (two phones on one health account) is listed once. A meal sent as text has the items and type the
+        hub read from it (DT-42, data.parsed) where it didn't say them itself."""
         found: list[dict[str, Any]] = []
         seen: set[tuple[datetime, str]] = set()
         for day in self._days(first, last or first):
@@ -536,11 +537,14 @@ class Stats:
                 items = event.data.get("items")
                 items = [str(item) for item in items] if isinstance(items, list) else []
                 text = event.data.get("text") if isinstance(event.data.get("text"), str) else None
-                key = (event.start, json_key(items, text))
+                key = (event.start, json_key(items, text))  # what was sent, however the hub read it
                 if key in seen:
                     continue
                 seen.add(key)
-                meal_type = event.data.get("meal_type")
+                reading = event.data.get("parsed") if isinstance(event.data.get("parsed"), dict) else {}
+                if not items and isinstance(reading.get("items"), list):
+                    items = [str(item) for item in reading["items"]]
+                meal_type = event.data.get("meal_type") or reading.get("meal_type")
                 found.append({
                     "time": self._local(event.start), "day": day.isoformat(), "items": items, "text": text,
                     "meal_type": meal_type if isinstance(meal_type, str) else None, "device_id": event.device_id,

@@ -11,21 +11,35 @@ Every session gets exactly one category. For apps:
 For websites the most specific domain wins: after a user override on the exact domain and the collector's
 category, each suffix is tried from longest to shortest, and at each level a user override beats the built-in
 list, which beats an AI guess. So a user setting google.com to study leaves mail.google.com as comms.
+
+DT-42: apps and sites nothing above knows are sent in batches to the local model with the fixed category list,
+and its answer is saved as an override with source "ai", so each is asked about once (an answer of "other"
+counts). The user's own choice always wins, and an AI guess never replaces one. `AiCategorizer` does this in the
+background: a while after new events arrive, and every 10 minutes.
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
+import threading
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from importlib import resources
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from .db import utc_text
+import httpx
+
+from .db import Database, transaction, utc_text
 from .models import Category
+
+if TYPE_CHECKING:
+    from .llm import LLM
+
+log = logging.getLogger("daytrace.categories")
 
 CATEGORIES: tuple[str, ...] = tuple(category.value for category in Category)
 CategorySource = Literal["user", "ai", "builtin", "collector", "default"]
@@ -187,3 +201,193 @@ def save_override(conn: sqlite3.Connection, key: str, category: str, source: Lit
 
 def delete_override(conn: sqlite3.Connection, key: str) -> bool:
     return conn.execute("DELETE FROM category_overrides WHERE app_key = ?", (key,)).rowcount > 0
+
+
+# --- DT-42: the local model fills in unknown apps -----------------------------------------------------------------
+
+AI_BATCH = 25  # apps per question: quick to answer, and few enough that a small model keeps them apart
+AI_BATCHES_PER_RUN = 8
+AI_MAX_TOKENS = 2048
+AI_TIMEOUT = httpx.Timeout(connect=3.0, read=120.0, write=10.0, pool=5.0)
+# What each category means, as the built-in list uses it (data/categories.json).
+AI_MEANINGS = {
+    "social": "social media and feeds (Instagram, Reddit, X, LinkedIn)",
+    "video": "watching video or streams, and video players (YouTube, Netflix, Twitch, VLC)",
+    "work": "work tools: code editors, office documents, spreadsheets, design, project tools",
+    "study": "learning: courses, flashcards, school apps, language apps (Duolingo, Anki, Canvas)",
+    "comms": "chat, messages, calls and email (WhatsApp, Discord, Gmail, Outlook, Slack, Zoom)",
+    "games": "games, game launchers and game stores (Minecraft, Steam)",
+    "health": "fitness, sleep, meditation and health tracking (Strava, Calm)",
+    "other": ("anything else: web browsers, music, shopping, news, maps, files, settings and system tools, "
+              "and anything you don't recognise"),
+}
+AI_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "apps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"n": {"type": "integer"}, "category": {"type": "string", "enum": list(CATEGORIES)}},
+                "required": ["n", "category"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["apps"],
+    "additionalProperties": False,
+}
+_AI_SYSTEM = (
+    "You sort apps and websites into categories for a screen-time tracker. The categories:\n"
+    + "\n".join(f"- {name}: {meaning}" for name, meaning in AI_MEANINGS.items())
+    + '\nAnswer with JSON only: {"apps": [{"n": <its number>, "category": <one category>}]}, one entry for every item,'
+    " using only the category names above. Browsers are other, whatever they show (the website is sorted on its own)."
+    " If you don't know an item, answer other rather than guessing."
+)
+# App and site events that have neither a category from their collector nor one of their own yet.
+_UNKNOWN_SQL = (
+    "SELECT kind = 'web' AS web, CASE WHEN kind = 'web' THEN json_extract(data, '$.domain') ELSE app END AS name,"
+    " app_id, SUM(COALESCE(julianday(end_utc) - julianday(start_utc), 0)) AS used, COUNT(*) AS seen"
+    " FROM events WHERE category IS NULL AND kind IN ('app_session', 'app_open', 'app_close', 'window', 'web')"
+    " GROUP BY web, name, app_id ORDER BY used DESC, seen DESC"
+)
+
+
+@dataclass(frozen=True)
+class UnknownApp:
+    key: str  # the override its category is saved under
+    web: bool
+    name: str | None
+    app_id: str | None
+
+
+def unknown_apps(conn: sqlite3.Connection, limit: int | None = None) -> list[UnknownApp]:
+    """Apps and sites nothing knows yet (neither the user, the collector, the built-in list nor the model), the most
+    used first. Never one the privacy rules hide (DT-44): its name stays out of the question and out of the table."""
+    from .redaction import REDACTED, redactor_for  # redaction imports sessions, which imports this module
+
+    categorizer = Categorizer.from_db(conn)
+    rules = redactor_for(conn)
+    found: dict[str, UnknownApp] = {}
+    for row in conn.execute(_UNKNOWN_SQL):
+        web, name, app_id = bool(row["web"]), row["name"], row["app_id"]
+        name = name if isinstance(name, str) and name.strip() else None
+        if REDACTED in (name, app_id) or (web and name is None) or rules.hides_name(name, app_id, web=web):
+            continue
+        kind = "web" if web else "app"
+        if categorizer.lookup(name, None if web else app_id, kind).source != "default":
+            continue
+        key = override_key(name, None if web else app_id, kind)
+        if key is None or key in found:
+            continue
+        found[key] = UnknownApp(key=key, web=web, name=name, app_id=None if web else app_id)
+        if limit is not None and len(found) >= limit:
+            break
+    return list(found.values())
+
+
+def _ai_items(apps: list[UnknownApp]) -> str:
+    items: list[dict[str, Any]] = []
+    for n, app in enumerate(apps, start=1):
+        item: dict[str, Any] = {"n": n}
+        if app.web:
+            item["website"] = app.name
+        else:
+            if app.name:
+                item["app"] = app.name
+            if app.app_id and canonical_key(app.app_id) != canonical_key(app.name or ""):
+                item["id"] = app.app_id
+        items.append(item)
+    return json.dumps(items, ensure_ascii=False)
+
+
+def ask_categories(llm: LLM, apps: list[UnknownApp]) -> dict[str, str]:
+    """The local model's category for each app, by override key. An app it skipped is "other" (asked about once);
+    a reply that answers fewer than half of them is no answer at all (LLMError), so nothing is saved from it."""
+    from .llm import LLMError
+
+    messages = [{"role": "system", "content": _AI_SYSTEM}, {"role": "user", "content": _ai_items(apps)}]
+    reply = llm.json_reply(messages, AI_SCHEMA, "app_categories", max_tokens=AI_MAX_TOKENS, timeout=AI_TIMEOUT)
+    entries = reply.get("apps") if isinstance(reply, dict) else None
+    answers: dict[str, str] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        n = entry.get("n") if isinstance(entry, dict) else None
+        category = entry.get("category") if isinstance(entry, dict) else None
+        if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(apps) and category in CATEGORIES:
+            answers.setdefault(apps[n - 1].key, category)
+    if 2 * len(answers) < len(apps):
+        raise LLMError(f"the model answered for {len(answers)} of {len(apps)} apps")
+    return {app.key: answers.get(app.key, "other") for app in apps}
+
+
+def categorize_unknown(database: Database, llm: LLM, batches: int = AI_BATCHES_PER_RUN, batch: int = AI_BATCH) -> int:
+    """Ask the local model about apps nothing knows, a batch at a time, and save its answers (source "ai"). Returns
+    how many were saved. Raises LLMError when the model can't be used; what was saved before stays."""
+    saved = 0
+    asked: set[str] = set()
+    for _ in range(batches):
+        with database.connect() as conn:
+            apps = [app for app in unknown_apps(conn, limit=batch + len(asked)) if app.key not in asked][:batch]
+        if not apps:
+            break
+        answers = ask_categories(llm, apps)
+        asked.update(answers)
+        with database.connect() as conn, transaction(conn):
+            for key, category in answers.items():
+                save_override(conn, key, category, "ai")  # never over a choice the user made meanwhile
+        saved += len(answers)
+    return saved
+
+
+class AiCategorizer:
+    """Runs categorize_unknown() in a background thread: `delay` seconds after wake() (new events arrived, so a burst
+    of them is one run), and every `interval` seconds (the desktop tracker writes without waking it). A model that
+    isn't there is tried again at the next run; the hub never waits for this."""
+
+    def __init__(self, database: Database, llm: LLM, interval: float = 600.0, delay: float = 30.0) -> None:
+        self.database = database
+        self.llm = llm
+        self.interval = interval
+        self.delay = delay
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.runs = 0  # finished runs, for tests
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, name="daytrace-ai-categories", daemon=True)
+        self._thread.start()
+
+    def wake(self) -> None:
+        self._wake.set()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self._stop.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout)
+
+    def run_once(self) -> int:
+        from .llm import LLMError
+
+        try:
+            return categorize_unknown(self.database, self.llm)
+        except LLMError as exc:
+            log.info("Apps not sorted into categories yet: %s", exc)
+        except Exception:  # never let the thread die: the next run tries again
+            log.exception("Sorting apps into categories failed")
+        return 0
+
+    def _run(self) -> None:
+        wait = self.delay  # a first look soon after the start: what arrived while the hub was off
+        while not self._stop.is_set():
+            woken = self._wake.wait(timeout=wait)
+            if self._stop.is_set():
+                break
+            if woken:
+                self._wake.clear()
+                if self._stop.wait(self.delay):
+                    break
+            self.run_once()
+            self.runs += 1
+            wait = self.interval

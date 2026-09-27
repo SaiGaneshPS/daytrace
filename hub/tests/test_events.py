@@ -1,18 +1,24 @@
-"""Tests for DT-11: ingest API, auth and idempotency."""
+"""Tests for DT-11: ingest API, auth and idempotency (DT-42: meals read from plain text)."""
 from __future__ import annotations
 
 import copy
 import json
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
+from conftest import FakeModelServer
 from fastapi.testclient import TestClient
 
 from daytrace_hub import __version__
-from daytrace_hub.api.events import MAX_BODY_BYTES
-from daytrace_hub.auth import hash_token, register_device
-from daytrace_hub.db import Database
+from daytrace_hub.api import timeline as timeline_api
+from daytrace_hub.api.events import MAX_BODY_BYTES, ingest, meal_items_from_text, meal_type_at, store_events
+from daytrace_hub.auth import AuthenticatedDevice, hash_token, register_device
+from daytrace_hub.db import Database, transaction
+from daytrace_hub.models import Event
+from daytrace_hub.stats import Stats
 
 PAYLOADS = Path(__file__).resolve().parents[2] / "ios" / "shortcuts" / "payloads"
 
@@ -74,7 +80,7 @@ def test_a_valid_batch_is_stored(client: TestClient, db: Database, tokens: dict[
     response = post(client, tokens["android-1"], {"events": [session(1), session(2), session(3)]})
     assert response.status_code == 200
     assert response.json() == {
-        "accepted": 3, "replaced": 0, "duplicates": 0, "rejected": [], "last_seq": 3, "nudge": None,
+        "accepted": 3, "replaced": 0, "duplicates": 0, "rejected": [], "last_seq": 3, "nudge": None, "meals": [],
     }
     rows = stored(db)
     assert [r["dedup_key"] for r in rows] == ["seq:1", "seq:2", "seq:3"]
@@ -511,3 +517,141 @@ def test_wrong_methods_use_the_error_shape(client: TestClient) -> None:
     response = client.get("/api/v1/events")
     assert response.status_code == 405
     assert response.json()["error"]["code"] == "method_not_allowed"
+
+
+# --- DT-42: meals from plain text -------------------------------------------------------------------------------
+
+LUNCHTIME = "2026-09-25T13:10:00-04:00"
+
+
+def meal(text: str = "two rotis and dal", start: str = LUNCHTIME, seq: int | None = None, **extra: Any) -> dict[str, Any]:
+    data = {"text": text, **extra.pop("data", {})}
+    event = {"device_id": "iphone-1", "kind": "meal", "source": "shortcuts", "start": start, "data": data, **extra}
+    if seq is not None:
+        event["seq"] = seq
+    return event
+
+
+def parsed_of(db: Database) -> list[Any]:
+    return [json.loads(row["data"]).get("parsed") for row in stored(db, "iphone-1")]
+
+
+def test_a_meal_sent_as_text_is_read_stored_and_returned(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    body = post(client, tokens["iphone-1"], meal()).json()  # the fake model answers without JSON: the text is split
+    reading = {"items": ["two rotis", "dal"], "meal_type": "lunch", "items_by": "text", "type_by": "time"}
+    assert body["meals"] == [{"index": 0, **reading}]
+    assert parsed_of(db) == [reading]
+    with db.connect() as conn:
+        meals = Stats(conn, ZoneInfo("America/Toronto"), "America/Toronto").meals(date(2026, 9, 25))
+    assert [(m["items"], m["meal_type"], m["text"]) for m in meals] == [(["two rotis", "dal"], "lunch", "two rotis and dal")]
+
+
+def test_the_local_model_lists_the_items_when_it_can(client: TestClient, db: Database, tokens: dict[str, str], fake_llm: FakeModelServer) -> None:
+    fake_llm.reply_text('{"items": ["2 rotis", "dal"]}')
+    body = post(client, tokens["iphone-1"], meal()).json()
+    assert body["meals"][0]["items"] == ["2 rotis", "dal"] and body["meals"][0]["items_by"] == "ai"
+    chat = fake_llm.chats()[-1]["body"]
+    assert chat["messages"][-1]["content"] == "two rotis and dal"
+    assert chat["response_format"]["json_schema"]["name"] == "meal_items"
+    assert "never estimate calories" in chat["messages"][0]["content"]
+
+
+@pytest.mark.parametrize("reply", [
+    '{"items": ["two rotis", "dal", "chicken curry"]}',  # a food the note doesn't name
+    '{"items": []}', '{"items": ["two rotis", 3]}', '{"foods": ["dal"]}',
+])
+def test_a_model_answer_that_doesnt_hold_up_is_not_used(client: TestClient, tokens: dict[str, str], fake_llm: FakeModelServer, reply: str) -> None:
+    fake_llm.reply_text(reply)
+    reading = post(client, tokens["iphone-1"], meal()).json()["meals"][0]
+    assert (reading["items"], reading["items_by"]) == (["two rotis", "dal"], "text")
+
+
+def test_a_meal_the_text_names_keeps_that_type(client: TestClient, tokens: dict[str, str]) -> None:
+    reading = post(client, tokens["iphone-1"], meal("Dinner: pasta and a salad")).json()["meals"][0]
+    assert (reading["items"], reading["meal_type"], reading["type_by"]) == (["pasta", "a salad"], "dinner", "text")
+
+
+@pytest.mark.parametrize(("text", "items"), [
+    ("two rotis and dal", ["two rotis", "dal"]),
+    ("Lunch: rice, dal & a salad", ["rice", "dal", "a salad"]),
+    ("I had eggs and toast for breakfast.", ["eggs", "toast"]),
+    ("coffee with milk", ["coffee with milk"]),
+    ("oats + berries; tea", ["oats", "berries", "tea"]),
+    ("pizza\nsoda", ["pizza", "soda"]),
+    ("and, , and", []),
+])
+def test_meal_text_is_split_into_foods(text: str, items: list[str]) -> None:
+    assert meal_items_from_text(text) == items
+
+
+@pytest.mark.parametrize(("start", "meal_type"), [
+    ("2026-09-25T03:59:00-04:00", "snack"), ("2026-09-25T04:00:00-04:00", "breakfast"),
+    ("2026-09-25T10:59:00-04:00", "breakfast"), ("2026-09-25T11:00:00-04:00", "lunch"),
+    ("2026-09-25T15:30:00-04:00", "snack"), ("2026-09-25T17:00:00-04:00", "dinner"),
+    ("2026-09-25T22:00:00-04:00", "snack"),
+])
+def test_the_meal_type_follows_the_hour_on_the_devices_clock(start: str, meal_type: str) -> None:
+    assert meal_type_at(datetime.fromisoformat(start)) == meal_type
+
+
+def test_a_meal_sent_in_utc_takes_the_hubs_own_zone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(timeline_api, "resolve_tz", lambda name: (ZoneInfo("America/Toronto"), "America/Toronto"))
+    assert meal_type_at(datetime.fromisoformat("2026-09-25T17:30:00+00:00")) == "lunch"  # 13:30 in Toronto
+
+
+@pytest.mark.parametrize("keying", [{}, {"seq": 7}, {"external_id": "meal-1"}])
+def test_a_resent_meal_is_the_same_meal_and_is_not_read_again(client: TestClient, db: Database, tokens: dict[str, str],
+                                                            fake_llm: FakeModelServer, keying: dict[str, Any]) -> None:
+    fake_llm.reply_text('{"items": ["2 rotis", "dal"]}')
+    first = post(client, tokens["iphone-1"], meal(**keying)).json()
+    again = post(client, tokens["iphone-1"], meal(**keying)).json()
+    assert (again["accepted"], again["duplicates"], again["rejected"]) == (0, 1, [])
+    assert again["meals"] == first["meals"]  # told the same thing, from what was stored
+    assert len(fake_llm.chats()) == 1 and len(stored(db, "iphone-1")) == 1
+
+
+def test_a_changed_meal_under_its_external_id_is_read_afresh(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    post(client, tokens["iphone-1"], meal(external_id="meal-1"))
+    body = post(client, tokens["iphone-1"], meal("porridge", external_id="meal-1")).json()
+    assert body["replaced"] == 1 and body["meals"][0]["items"] == ["porridge"]
+    assert parsed_of(db) == [{"items": ["porridge"], "items_by": "text", "meal_type": "lunch", "type_by": "time"}]
+
+
+def test_a_meal_stored_before_it_could_be_read_is_still_the_same_meal(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    with db.connect() as conn, transaction(conn):
+        store_events(conn, "iphone-1", [(0, Event.model_validate(meal(seq=3)))])  # no reading, as before DT-42
+    body = post(client, tokens["iphone-1"], meal(seq=3)).json()
+    assert (body["duplicates"], body["rejected"]) == (1, [])  # not a seq conflict
+    assert parsed_of(db) == [None]
+
+
+def test_a_meal_refused_as_a_seq_conflict_is_not_reported(client: TestClient, tokens: dict[str, str]) -> None:
+    post(client, tokens["iphone-1"], meal(seq=4))
+    body = post(client, tokens["iphone-1"], {"events": [meal("porridge", seq=4), meal("tea", seq=5)]}).json()
+    assert [r["code"] for r in body["rejected"]] == ["seq_conflict"]
+    assert [m["index"] for m in body["meals"]] == [1]
+
+
+def test_a_meal_with_its_own_items_and_type_is_left_as_it_is(client: TestClient, db: Database, tokens: dict[str, str], fake_llm: FakeModelServer) -> None:
+    body = post(client, tokens["iphone-1"], meal(data={"items": ["dal"], "meal_type": "dinner"})).json()
+    assert body["meals"] == [] and parsed_of(db) == [None] and fake_llm.chats() == []
+    body = post(client, tokens["iphone-1"], meal("soup", data={"items": ["soup"]})).json()
+    assert body["meals"] == [{"index": 0, "items": ["soup"], "meal_type": "lunch", "items_by": "event", "type_by": "time"}]
+    assert fake_llm.chats() == []  # only the type was missing
+
+
+def test_a_collector_cannot_send_the_hubs_reading(client: TestClient, tokens: dict[str, str]) -> None:
+    body = post(client, tokens["iphone-1"], meal(data={"parsed": {"items": ["cake"]}})).json()
+    assert body["accepted"] == 0 and "written by the hub" in body["rejected"][0]["reason"]
+
+
+def test_without_a_model_the_text_is_split(db: Database, tokens: dict[str, str]) -> None:
+    device = AuthenticatedDevice(device_id="iphone-1", name="iPhone", device_type="ios")
+    result = ingest(db, device, meal("toast and jam"), llm=None)
+    assert [(m.items, m.items_by) for m in result.meals] == [(["toast", "jam"], "text")]
+
+
+def test_a_model_that_is_down_is_not_waited_for(client: TestClient, tokens: dict[str, str], fake_llm: FakeModelServer) -> None:
+    fake_llm.down = True
+    reading = post(client, tokens["iphone-1"], meal()).json()["meals"][0]
+    assert reading["items_by"] == "text"

@@ -232,6 +232,13 @@ class Redactor:
                         return rule
         return None
 
+    def hides_name(self, app: str | None, app_id: str | None = None, web: bool = False) -> bool:
+        """Whether an app's name or id holds the user's own words (the only rules that hide names), or, for a site,
+        whether any rule hides it. DT-42 never sends such a name to the model, nor keeps a category under it."""
+        if web:
+            return bool(app) and self.match(None, domain=app) is not None
+        return self._custom(app, app_id) is not None
+
     def match(self, title: str | None, app: str | None = None, app_id: str | None = None, domain: str | None = None) -> Rule | None:
         """The rule that hides this title (or site). None when nothing matches, or there is nothing left to hide."""
         if title and title != REDACTED:
@@ -319,7 +326,7 @@ def stored_matches(database: Database, redactor: Redactor | None = None, apply: 
     A content key is worked out again from the redacted event; an event that then matches another stored one in
     everything is the same event, and only one copy is kept. Done a batch at a time, each in its own transaction.
     Applying also hides the words of logged nudges (DT-43) that the rules would hide, as they quote app names and
-    calendar titles."""
+    calendar titles, and drops the local model's category guesses (DT-42) kept under a name the rules would hide."""
     count, last = 0, 0
     now_text = utc_text(now or datetime.now(UTC))
     while True:
@@ -330,6 +337,7 @@ def stored_matches(database: Database, redactor: Redactor | None = None, apply: 
             if not rows:
                 if apply:
                     _redact_nudges(conn, rules)
+                    _forget_ai_categories(conn, rules)
                 return count
             last = rows[-1]["id"]
             changes = []
@@ -362,6 +370,17 @@ def _redact_nudges(conn: sqlite3.Connection, rules: Redactor) -> None:
     if hidden:
         with transaction(conn):
             conn.executemany("UPDATE nudge_log SET title = ?, body = ? WHERE id = ?", [(REDACTED, REDACTED, id_) for id_ in hidden])
+
+
+def _forget_ai_categories(conn: sqlite3.Connection, rules: Redactor) -> None:
+    """A category the local model guessed (DT-42) is kept under the app's name, id or site: one the rules would hide
+    goes, name and all. The key doesn't say whether it is a site, so it is checked both ways: a guess dropped too many
+    is only asked for again, while a site's name kept would not be hidden. The user's own choices stay, as typed."""
+    hidden = [row["app_key"] for row in conn.execute("SELECT app_key FROM category_overrides WHERE source = 'ai'")
+              if rules.hides_name(row["app_key"]) or rules.hides_name(row["app_key"], web=True)]
+    if hidden:
+        with transaction(conn):
+            conn.executemany("DELETE FROM category_overrides WHERE app_key = ? AND source = 'ai'", [(key,) for key in hidden])
 
 
 # --- the desktop tracker ------------------------------------------------------------------------------------------
