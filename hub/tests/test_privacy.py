@@ -344,23 +344,30 @@ def test_the_hub_listens_only_where_it_is_told_and_follows_changes(tmp_path: Pat
     console.listen()
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    # The server's own thread changes `listening` (and, on a loaded Windows machine, asyncio may close a listener
+    # after a failed accept, which the hub rebinds at its next check), so every check waits and reads a copy.
+    def listening() -> set[str]:
+        return set(server.listening.copy())
+
     try:
         assert _until(lambda: server.started)
-        assert list(server.listening) == ["127.0.0.1"] and _reachable("127.0.0.1", port)
+        assert _until(lambda: _reachable("127.0.0.1", port)) and listening() == {"127.0.0.1"}
         assert not _reachable(second, port)  # not on every address: only where it was told
         assert any(line == f"Daytrace listening on http://127.0.0.1:{port}" for line in console.lines)  # on the console
         wanted.append(second)  # a new address (a new Wi-Fi, a DHCP renewal)
-        assert _until(lambda: _reachable(second, port)) and set(server.listening) == {"127.0.0.1", second}
-        assert LEDGER.snapshot()["listening"] == [f"127.0.0.1:{port}", f"{second}:{port}"]
+        assert _until(lambda: _reachable(second, port)) and _until(lambda: listening() == {"127.0.0.1", second})
+        assert _until(lambda: set(LEDGER.snapshot()["listening"]) == {f"127.0.0.1:{port}", f"{second}:{port}"})
         broken[0] = True  # a check that fails keeps the server serving
         time.sleep(0.8)
-        assert _reachable("127.0.0.1", port) and _reachable(second, port)
-        for sock in server.listening[second].sockets:  # the listening socket dies under it (Windows, a failed accept)
-            sock._sock.close()
-        assert _until(lambda: _reachable(second, port))  # bound again at the next check
+        assert _until(lambda: _reachable("127.0.0.1", port) and _reachable(second, port))
+        assert _until(lambda: server.listening.copy().get(second) is not None)
+        dead = server.listening.copy()[second]
+        dead.get_loop().call_soon_threadsafe(dead.close)  # it stops serving under the hub (as asyncio does on Windows after a failed accept)
+        assert _until(lambda: server.listening.copy().get(second) not in (None, dead))  # a new listener at the next check
+        assert _until(lambda: _reachable(second, port))
         wanted.remove(second)  # it went away
-        assert _until(lambda: second not in server.listening)
-        assert _until(lambda: not _reachable(second, port)) and _reachable("127.0.0.1", port)
+        assert _until(lambda: second not in listening())
+        assert _until(lambda: not _reachable(second, port)) and _until(lambda: _reachable("127.0.0.1", port))
     finally:
         server.should_exit = True
         thread.join(timeout=20)
