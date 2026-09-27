@@ -15,6 +15,8 @@ type Props = {
   info?: ReactNode;
   /** Some of the data was inferred (an iPhone app whose close was never seen, an estimated night). */
   estimated?: boolean;
+  /** Where the numbers come from, as the hub says: your devices, the demo seed, or both. */
+  source?: "real" | "seed" | "mixed";
   loading?: boolean;
   /** Extra controls in the header (a menu, a toggle). */
   actions?: ReactNode;
@@ -23,6 +25,7 @@ type Props = {
 };
 
 const ESTIMATED = "Some of this is estimated, for example an app whose closing time was never recorded.";
+const SOURCES = { real: "From your devices", seed: "From demo data", mixed: "From your devices and demo data" } as const;
 
 function InfoButton({ title, info }: { title: string; info: ReactNode }) {
   const id = useId();
@@ -65,7 +68,7 @@ function InfoButton({ title, info }: { title: string; info: ReactNode }) {
   );
 }
 
-export default function ChartCard({ title, range, unit, info, estimated, loading, actions, className, children }: Props) {
+export default function ChartCard({ title, range, unit, info, estimated, source, loading, actions, className, children }: Props) {
   const id = useId();
   return (
     <motion.section
@@ -85,6 +88,7 @@ export default function ChartCard({ title, range, unit, info, estimated, loading
               {unit && <span>{unit}</span>}
             </p>
           )}
+          {source && <p className={`chart-card-source${source === "real" ? "" : " source-demo"}`}>{SOURCES[source]}</p>}
         </div>
         <div className="chart-card-tools">
           {estimated && (

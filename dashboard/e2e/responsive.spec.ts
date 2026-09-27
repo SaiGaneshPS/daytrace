@@ -2,7 +2,9 @@
 // phone's font size setting, or browser text zoom), in the system's font and in a wide one. On each, nothing may stick out past the screen, and nothing may
 // be cut off by a box that hides what overflows it (the page never scrolls sideways; a row that scrolls on purpose
 // is fine), and no word in a button, tab, label or heading may be split across two lines. This checks that layouts adapt to any device instead of fitting the sizes other tests
-// happen to use. The hub is mocked with a full day, a story, an answer and a pairing code.
+// happen to use. The hub is mocked with a full day, a story, an answer, a pairing code and 14 days of insights.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 
 const WIDTHS = [280, 320, 360, 412, 600, 768, 1024, 1440];
@@ -60,6 +62,8 @@ const DEVICE = (device_id: string, name: string, device_type: string, has_token 
   device_id, name, device_type, has_token, paired_at: at("08:00:00"), last_seen: at("13:59:40"), revoked_at: null, last_seq: 123456, event_count: 1_234_567, events_24h: 64,
 });
 const LAN = "http://192.168.100.200:8765";
+// The hub's own Overview answers for 14 seeded days (made by the hub's code: e2e/fixtures).
+const INSIGHTS = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-overview.json"), "utf-8")) as Record<string, object>;
 
 async function mockHub(page: Page, local: boolean) {
   await page.clock.setFixedTime(new Date("2026-09-25T14:00:00-04:00"));
@@ -67,6 +71,10 @@ async function mockHub(page: Page, local: boolean) {
   await page.route("**/api/v1/health", (route) => route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local } }));
   await page.route("**/api/v1/timeline?**", (route) => route.fulfill({ json: TIMELINE }));
   await page.route("**/api/v1/insights/day?**", (route) => route.fulfill({ json: SUMMARY }));
+  await page.route("**/api/v1/insights/overview?**", (route) => {
+    const range = new URL(route.request().url()).searchParams.get("range") ?? "";
+    return route.fulfill({ json: INSIGHTS[range] ?? INSIGHTS["7d"] });
+  });
   await page.route("**/api/v1/ai/status", (route) => route.fulfill({ json: { base_url: "http://127.0.0.1:1234/v1", model: ANSWER.model, reachable: true, tool_calling: true, models: [ANSWER.model], error: null } }));
   await page.route("**/api/v1/story?**", (route) => route.fulfill({ json: STORY }));
   await page.route("**/api/v1/ask", (route) => route.fulfill({ json: ANSWER }));
@@ -198,6 +206,14 @@ test("Devices on a phone fits every screen and text size", async ({ page }) => {
   await mockHub(page, false);
   await page.goto("/devices");
   await sweep(page, () => expect(page.getByRole("region", { name: "Pair this device" })).toBeVisible());
+});
+
+test("Insights, with a custom range open, fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/insights?range=7d");
+  await page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "Custom" }).click();
+  await sweep(page, () => expect(page.getByRole("region", { name: "When screens were on" }).locator(".chart canvas").first()).toBeVisible());
 });
 
 test("the style guide fits every screen and text size", async ({ page }) => {

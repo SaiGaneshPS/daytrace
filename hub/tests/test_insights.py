@@ -7,6 +7,8 @@ local model's, every number checked against the week's facts, or plain ones when
 """
 from __future__ import annotations
 
+import json
+import os
 import time as clock
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
@@ -95,7 +97,8 @@ def close(total: float, parts: list[float], items: int) -> bool:
 
 def test_every_tab_answers_with_its_metrics_and_series(hub: TestClient) -> None:
     kinds = {
-        "overview": {"screen_by_device": "stacked", "categories": "donut", "focus_by_day": "trend", "hours": "heatmap"},
+        "overview": {"screen_by_device": "stacked", "categories": "donut", "focus_by_day": "trend", "hours": "heatmap",
+                     "phone_vs_computer": "stacked"},
         "apps": {"top_apps": "bars", "treemap": "treemap", "by_category": "stacked", "switches": "trend"},
         "devices": {"share": "donut", "by_day": "stacked", "hours": "heatmap", "flow": "sankey"},
         "focus": {"score": "gauge", "focus_by_day": "stacked", "switches_by_hour": "bars", "late_vs_focus": "scatter"},
@@ -518,3 +521,67 @@ def test_clean_lines_takes_off_numbering_but_not_a_number() -> None:
 def test_the_openapi_schema_has_one_meta_model(hub: TestClient) -> None:
     schemas = hub.app.openapi()["components"]["schemas"]
     assert "Meta" in schemas and not any(name.endswith("__Meta") for name in schemas)  # the dashboard's types keep "Meta"
+
+
+# --- the overview's extras (DT-34) --------------------------------------------------------------------------------
+
+
+def test_phone_and_computer_add_up_to_each_day(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    body = tab(hub, "overview")
+    split = body["series"]["phone_vs_computer"]
+    assert split["kind"] == "stacked" and [line["key"] for line in split["lines"]] == ["phone", "computer"]
+    stats = stats_of()
+    by_day = {item["key"]: item["minutes"] for item in stats.totals(FIRST, TODAY, group_by="day")["items"]}
+    for index, label in enumerate(split["x"]):
+        parts = [line["values"][index] or 0 for line in split["lines"]]
+        assert close(by_day[label], parts, 2), label  # the seed has phones and computers only
+    phones = stats.totals(FIRST, TODAY, device_types=frozenset({"android", "ios"}))["total_minutes"]
+    assert close(phones, [value or 0 for value in split["lines"][0]["values"]], 14)
+
+
+def test_the_best_and_toughest_days_say_why(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    body = tab(hub, "overview")
+    stats = stats_of()
+    days = [FIRST + timedelta(days=i) for i in range(14)]
+    focused = [(stats.focused_minutes(day)["value"] or 0, day) for day in days]
+    late = [(stats.late_night_minutes(day)["value"] or 0, day) for day in days]
+    assert metric(body, "best_day") == max(focused)[1].isoformat() and metric(body, "best_day_focused") == max(focused)[0]
+    assert metric(body, "toughest_day") == max(late)[1].isoformat() and metric(body, "toughest_day_late") == max(late)[0]
+    reason = next(item["explain"] for item in body["metrics"] if item["id"] == "toughest_day")
+    assert "after 11 pm" in reason and f"{max(late)[0]:g}" in reason
+
+
+def test_changes_compare_whole_days_with_the_days_before(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    body = tab(hub, "overview", "7d")  # 19 to 25 September; the 25th is still going
+    changes = {change["id"]: change for change in body["changes"]}
+    assert set(changes) == {"daily_average", "focused_time", "focus_score", "pickups", "sleep", "late_night"}
+    stats = stats_of()
+    now_days = [TODAY - timedelta(days=i) for i in range(1, 7)]  # 19 to 24: whole days only
+    before_days = [TODAY - timedelta(days=i) for i in range(7, 14)]  # the 7 days before the range: 12 to 18
+    now = sum(stats.focused_minutes(day)["value"] for day in now_days) / 6
+    then = sum(stats.focused_minutes(day)["value"] for day in before_days) / 7
+    focus = changes["focused_time"]
+    assert focus["now"] == pytest.approx(now, abs=0.01) and focus["before"] == pytest.approx(then, abs=0.01)
+    assert focus["change_pct"] == round(100 * (now - then) / then) and focus["better"] == "up"
+    assert focus["direction"] == ("up" if now > then else "down") and focus["days"] == 6
+    assert changes["late_night"]["better"] == "down" and changes["daily_average"]["better"] == "down"
+    assert tab(hub, "overview", "today")["changes"] == []  # a day still going is never compared
+    single = tab(hub, "overview", f"{(TODAY - timedelta(days=1)).isoformat()}..{(TODAY - timedelta(days=1)).isoformat()}")
+    assert {change["days"] for change in single["changes"]} == {1}  # a past day against the one before
+    assert tab(hub, "apps")["changes"] == []  # only the overview compares
+
+
+DASHBOARD_FIXTURE = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" / "fixtures" / "insights-overview.json"
+
+
+def test_the_dashboards_overview_fixture_is_the_hubs_answer(hub: TestClient) -> None:
+    """The dashboard's e2e tests (DT-34) mock the hub with this file, so it must be what the hub answers now. After
+    changing the overview, write it again with DAYTRACE_WRITE_FIXTURES=1."""
+    answers = {}
+    for span in ("14d", "7d", "today"):
+        body = tab(hub, "overview", span)
+        body["cached"] = False
+        answers[span] = body
+    if os.environ.get("DAYTRACE_WRITE_FIXTURES") == "1":
+        DASHBOARD_FIXTURE.write_text(json.dumps(answers, indent=1) + "\n", encoding="utf-8", newline="\n")
+    assert json.loads(DASHBOARD_FIXTURE.read_text(encoding="utf-8")) == answers, "stale: run with DAYTRACE_WRITE_FIXTURES=1"

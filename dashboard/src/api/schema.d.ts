@@ -749,6 +749,48 @@ export interface components {
             /** Value */
             value: number;
         };
+        /**
+         * Change
+         * @description One number against the same number of days just before the range (DT-34's week-over-week chips).
+         */
+        Change: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Unit */
+            unit: string;
+            /** Now */
+            now: number;
+            /** Before */
+            before: number;
+            /**
+             * Delta
+             * @description now minus before, in the unit.
+             */
+            delta: number;
+            /**
+             * Change Pct
+             * @description The change as a percent of before; null when before is 0.
+             */
+            change_pct: number | null;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "up" | "down" | "same";
+            /**
+             * Better
+             * @description Which way is good: more focus, less late-night screen time.
+             * @enum {string}
+             */
+            better: "up" | "down";
+            /**
+             * Days
+             * @description Whole days with data on each side that were compared, at least.
+             */
+            days: number;
+        };
         /** Chart */
         Chart: {
             /**
@@ -1094,6 +1136,11 @@ export interface components {
             series: {
                 [key: string]: components["schemas"]["Series"];
             };
+            /**
+             * Changes
+             * @description overview: each day-average against the days just before the range, over whole days only; left out when either side has too few.
+             */
+            changes?: components["schemas"]["Change"][];
             meta: components["schemas"]["Meta"];
             /**
              * Cached

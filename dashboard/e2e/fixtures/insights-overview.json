@@ -1,0 +1,2409 @@
+{
+ "14d": {
+  "tab": "overview",
+  "tz": "America/Toronto",
+  "range": {
+   "first": "2026-09-12",
+   "last": "2026-09-25",
+   "days": 14,
+   "label": "Last 14 days"
+  },
+  "in_progress": true,
+  "metrics": [
+   {
+    "id": "screen_time",
+    "label": "Screen time",
+    "value": 7770.83,
+    "unit": "minutes",
+    "explain": "All app and site time across devices, each device counted, away time removed.",
+    "estimated": false
+   },
+   {
+    "id": "daily_average",
+    "label": "A day, on average",
+    "value": 555.06,
+    "unit": "minutes",
+    "explain": "Screen time divided by the days that had any data.",
+    "estimated": false
+   },
+   {
+    "id": "focused_time",
+    "label": "Focused time",
+    "value": 4380.38,
+    "unit": "minutes",
+    "explain": "Work or study in blocks of 10 minutes or more with no phone distraction.",
+    "estimated": false
+   },
+   {
+    "id": "focus_score",
+    "label": "Focus score, on average",
+    "value": 61,
+    "unit": "score",
+    "explain": "0 to 100: focused time against work, study and distraction together, averaged over the days.",
+    "estimated": false
+   },
+   {
+    "id": "pickups",
+    "label": "Phone pickups a day",
+    "value": 9.6,
+    "unit": "pickups",
+    "explain": "A phone app coming into use after the phone rested for a minute or more.",
+    "estimated": false
+   },
+   {
+    "id": "sleep",
+    "label": "Sleep a night",
+    "value": 458.64,
+    "unit": "minutes",
+    "explain": "From your health app when it sends sleep; otherwise the longest stretch the phone was not used overnight.",
+    "estimated": false
+   },
+   {
+    "id": "late_night",
+    "label": "After 11 pm, a night",
+    "value": 35.46,
+    "unit": "minutes",
+    "explain": "Screen time from 23:00 to 03:00, on any device (overlaps counted once).",
+    "estimated": false
+   },
+   {
+    "id": "best_day",
+    "label": "Best day",
+    "value": "2026-09-21",
+    "unit": "date",
+    "explain": "The day with the most focused minutes: 390.83.",
+    "estimated": false
+   },
+   {
+    "id": "best_day_focused",
+    "label": "Its focused time",
+    "value": 390.83,
+    "unit": "minutes",
+    "explain": "Work or study in blocks of 10 minutes or more that day.",
+    "estimated": false
+   },
+   {
+    "id": "toughest_day",
+    "label": "Toughest day",
+    "value": "2026-09-14",
+    "unit": "date",
+    "explain": "The day with the most screen time after 11 pm: 124 minutes that night.",
+    "estimated": false
+   },
+   {
+    "id": "toughest_day_late",
+    "label": "Its late-night time",
+    "value": 124.0,
+    "unit": "minutes",
+    "explain": "Screen time from 23:00 to 03:00 that night, on any device.",
+    "estimated": false
+   }
+  ],
+  "series": {
+   "screen_by_device": {
+    "kind": "stacked",
+    "title": "Screen time by device",
+    "unit": "minutes",
+    "explain": "Minutes each day on each device.",
+    "estimated": false,
+    "x": [
+     "2026-09-12",
+     "2026-09-13",
+     "2026-09-14",
+     "2026-09-15",
+     "2026-09-16",
+     "2026-09-17",
+     "2026-09-18",
+     "2026-09-19",
+     "2026-09-20",
+     "2026-09-21",
+     "2026-09-22",
+     "2026-09-23",
+     "2026-09-24",
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Desk PC (demo)",
+      "key": "seed-windows",
+      "category": null,
+      "values": [
+       368.03,
+       294.63,
+       379.62,
+       255.0,
+       266.7,
+       377.98,
+       364.25,
+       406.0,
+       356.15,
+       354.35,
+       219.68,
+       366.28,
+       382.82,
+       368.33
+      ]
+     },
+     {
+      "name": "Galaxy phone (demo)",
+      "key": "seed-android",
+      "category": null,
+      "values": [
+       97.52,
+       154.57,
+       93.38,
+       199.47,
+       151.53,
+       60.13,
+       58.45,
+       58.33,
+       60.97,
+       92.88,
+       173.72,
+       62.25,
+       59.82,
+       30.12
+      ]
+     },
+     {
+      "name": "MacBook (demo)",
+      "key": "seed-mac",
+      "category": null,
+      "values": [
+       61.23,
+       65.38,
+       91.13,
+       94.1,
+       90.42,
+       96.23,
+       97.18,
+       63.43,
+       49.23,
+       107.03,
+       89.78,
+       91.25,
+       102.15,
+       98.93
+      ]
+     },
+     {
+      "name": "iPhone (demo)",
+      "key": "seed-iphone",
+      "category": null,
+      "values": [
+       30.05,
+       19.02,
+       25.3,
+       50.27,
+       40.52,
+       38.22,
+       32.2,
+       36.02,
+       38.1,
+       24.55,
+       51.48,
+       40.82,
+       26.77,
+       7.07
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "categories": {
+    "kind": "donut",
+    "title": "By category",
+    "unit": "minutes",
+    "explain": "Where the screen time went, by kind of app or site.",
+    "estimated": false,
+    "x": null,
+    "y": null,
+    "lines": null,
+    "items": [
+     {
+      "name": "Work",
+      "value": 3564.22,
+      "key": "work",
+      "category": "work",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Social",
+      "value": 1232.9,
+      "key": "social",
+      "category": "social",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Video",
+      "value": 1052.6,
+      "key": "video",
+      "category": "video",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Study",
+      "value": 840.63,
+      "key": "study",
+      "category": "study",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Games",
+      "value": 561.75,
+      "key": "games",
+      "category": "games",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Comms",
+      "value": 352.02,
+      "key": "comms",
+      "category": "comms",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Other",
+      "value": 117.58,
+      "key": "other",
+      "category": "other",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Health",
+      "value": 49.13,
+      "key": "health",
+      "category": "health",
+      "share": null,
+      "children": null
+     }
+    ],
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "focus_by_day": {
+    "kind": "trend",
+    "title": "Focus score",
+    "unit": "score",
+    "explain": "Each day's focus score (0 to 100); a gap is a day with no work or distraction.",
+    "estimated": false,
+    "x": [
+     "2026-09-12",
+     "2026-09-13",
+     "2026-09-14",
+     "2026-09-15",
+     "2026-09-16",
+     "2026-09-17",
+     "2026-09-18",
+     "2026-09-19",
+     "2026-09-20",
+     "2026-09-21",
+     "2026-09-22",
+     "2026-09-23",
+     "2026-09-24",
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Focus score",
+      "key": null,
+      "category": null,
+      "values": [
+       67.0,
+       43.0,
+       65.0,
+       30.0,
+       40.0,
+       71.0,
+       75.0,
+       68.0,
+       71.0,
+       72.0,
+       30.0,
+       72.0,
+       73.0,
+       82.0
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "hours": {
+    "kind": "heatmap",
+    "title": "When screens were on",
+    "unit": "minutes",
+    "explain": "Screen time in the range by weekday and hour of the day, added up (each device counted).",
+    "estimated": false,
+    "x": [
+     "00",
+     "01",
+     "02",
+     "03",
+     "04",
+     "05",
+     "06",
+     "07",
+     "08",
+     "09",
+     "10",
+     "11",
+     "12",
+     "13",
+     "14",
+     "15",
+     "16",
+     "17",
+     "18",
+     "19",
+     "20",
+     "21",
+     "22",
+     "23"
+    ],
+    "y": [
+     "Mon",
+     "Tue",
+     "Wed",
+     "Thu",
+     "Fri",
+     "Sat",
+     "Sun"
+    ],
+    "lines": null,
+    "items": null,
+    "cells": [
+     {
+      "x": 0,
+      "y": 1,
+      "value": 113.0
+     },
+     {
+      "x": 0,
+      "y": 2,
+      "value": 58.78
+     },
+     {
+      "x": 0,
+      "y": 6,
+      "value": 49.33
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "value": 58.0
+     },
+     {
+      "x": 1,
+      "y": 2,
+      "value": 8.0
+     },
+     {
+      "x": 6,
+      "y": 4,
+      "value": 5.0
+     },
+     {
+      "x": 7,
+      "y": 0,
+      "value": 34.28
+     },
+     {
+      "x": 7,
+      "y": 2,
+      "value": 30.57
+     },
+     {
+      "x": 7,
+      "y": 3,
+      "value": 53.93
+     },
+     {
+      "x": 7,
+      "y": 4,
+      "value": 43.0
+     },
+     {
+      "x": 7,
+      "y": 5,
+      "value": 46.93
+     },
+     {
+      "x": 7,
+      "y": 6,
+      "value": 24.58
+     },
+     {
+      "x": 8,
+      "y": 2,
+      "value": 15.0
+     },
+     {
+      "x": 8,
+      "y": 6,
+      "value": 19.98
+     },
+     {
+      "x": 9,
+      "y": 0,
+      "value": 119.33
+     },
+     {
+      "x": 9,
+      "y": 1,
+      "value": 34.42
+     },
+     {
+      "x": 9,
+      "y": 2,
+      "value": 71.97
+     },
+     {
+      "x": 9,
+      "y": 3,
+      "value": 119.0
+     },
+     {
+      "x": 9,
+      "y": 4,
+      "value": 120.0
+     },
+     {
+      "x": 9,
+      "y": 5,
+      "value": 119.33
+     },
+     {
+      "x": 9,
+      "y": 6,
+      "value": 68.0
+     },
+     {
+      "x": 10,
+      "y": 0,
+      "value": 118.0
+     },
+     {
+      "x": 10,
+      "y": 1,
+      "value": 49.33
+     },
+     {
+      "x": 10,
+      "y": 2,
+      "value": 115.33
+     },
+     {
+      "x": 10,
+      "y": 3,
+      "value": 119.33
+     },
+     {
+      "x": 10,
+      "y": 4,
+      "value": 118.0
+     },
+     {
+      "x": 10,
+      "y": 5,
+      "value": 119.0
+     },
+     {
+      "x": 10,
+      "y": 6,
+      "value": 117.33
+     },
+     {
+      "x": 11,
+      "y": 0,
+      "value": 119.0
+     },
+     {
+      "x": 11,
+      "y": 1,
+      "value": 115.33
+     },
+     {
+      "x": 11,
+      "y": 2,
+      "value": 117.33
+     },
+     {
+      "x": 11,
+      "y": 3,
+      "value": 118.0
+     },
+     {
+      "x": 11,
+      "y": 4,
+      "value": 118.67
+     },
+     {
+      "x": 11,
+      "y": 5,
+      "value": 118.0
+     },
+     {
+      "x": 11,
+      "y": 6,
+      "value": 117.67
+     },
+     {
+      "x": 12,
+      "y": 0,
+      "value": 85.33
+     },
+     {
+      "x": 12,
+      "y": 1,
+      "value": 74.22
+     },
+     {
+      "x": 12,
+      "y": 2,
+      "value": 81.35
+     },
+     {
+      "x": 12,
+      "y": 3,
+      "value": 82.67
+     },
+     {
+      "x": 12,
+      "y": 4,
+      "value": 78.0
+     },
+     {
+      "x": 12,
+      "y": 5,
+      "value": 81.68
+     },
+     {
+      "x": 12,
+      "y": 6,
+      "value": 81.88
+     },
+     {
+      "x": 13,
+      "y": 0,
+      "value": 74.67
+     },
+     {
+      "x": 13,
+      "y": 1,
+      "value": 72.42
+     },
+     {
+      "x": 13,
+      "y": 2,
+      "value": 67.67
+     },
+     {
+      "x": 13,
+      "y": 3,
+      "value": 69.92
+     },
+     {
+      "x": 13,
+      "y": 4,
+      "value": 78.63
+     },
+     {
+      "x": 13,
+      "y": 5,
+      "value": 77.72
+     },
+     {
+      "x": 13,
+      "y": 6,
+      "value": 79.6
+     },
+     {
+      "x": 14,
+      "y": 0,
+      "value": 108.33
+     },
+     {
+      "x": 14,
+      "y": 1,
+      "value": 104.87
+     },
+     {
+      "x": 14,
+      "y": 2,
+      "value": 106.98
+     },
+     {
+      "x": 14,
+      "y": 3,
+      "value": 108.33
+     },
+     {
+      "x": 14,
+      "y": 4,
+      "value": 108.33
+     },
+     {
+      "x": 14,
+      "y": 5,
+      "value": 108.33
+     },
+     {
+      "x": 14,
+      "y": 6,
+      "value": 107.33
+     },
+     {
+      "x": 15,
+      "y": 0,
+      "value": 112.33
+     },
+     {
+      "x": 15,
+      "y": 1,
+      "value": 111.33
+     },
+     {
+      "x": 15,
+      "y": 2,
+      "value": 110.33
+     },
+     {
+      "x": 15,
+      "y": 3,
+      "value": 110.33
+     },
+     {
+      "x": 15,
+      "y": 4,
+      "value": 110.33
+     },
+     {
+      "x": 15,
+      "y": 5,
+      "value": 81.0
+     },
+     {
+      "x": 15,
+      "y": 6,
+      "value": 40.0
+     },
+     {
+      "x": 16,
+      "y": 0,
+      "value": 85.83
+     },
+     {
+      "x": 16,
+      "y": 1,
+      "value": 108.67
+     },
+     {
+      "x": 16,
+      "y": 2,
+      "value": 88.92
+     },
+     {
+      "x": 16,
+      "y": 3,
+      "value": 88.05
+     },
+     {
+      "x": 16,
+      "y": 4,
+      "value": 85.78
+     },
+     {
+      "x": 16,
+      "y": 5,
+      "value": 43.67
+     },
+     {
+      "x": 16,
+      "y": 6,
+      "value": 74.62
+     },
+     {
+      "x": 19,
+      "y": 0,
+      "value": 24.0
+     },
+     {
+      "x": 19,
+      "y": 1,
+      "value": 32.0
+     },
+     {
+      "x": 19,
+      "y": 2,
+      "value": 18.0
+     },
+     {
+      "x": 19,
+      "y": 3,
+      "value": 42.0
+     },
+     {
+      "x": 19,
+      "y": 4,
+      "value": 14.0
+     },
+     {
+      "x": 19,
+      "y": 5,
+      "value": 41.0
+     },
+     {
+      "x": 19,
+      "y": 6,
+      "value": 35.0
+     },
+     {
+      "x": 20,
+      "y": 0,
+      "value": 118.33
+     },
+     {
+      "x": 20,
+      "y": 1,
+      "value": 134.6
+     },
+     {
+      "x": 20,
+      "y": 2,
+      "value": 128.42
+     },
+     {
+      "x": 20,
+      "y": 3,
+      "value": 137.62
+     },
+     {
+      "x": 20,
+      "y": 4,
+      "value": 132.78
+     },
+     {
+      "x": 20,
+      "y": 5,
+      "value": 132.6
+     },
+     {
+      "x": 20,
+      "y": 6,
+      "value": 120.47
+     },
+     {
+      "x": 21,
+      "y": 0,
+      "value": 51.4
+     },
+     {
+      "x": 21,
+      "y": 1,
+      "value": 48.98
+     },
+     {
+      "x": 21,
+      "y": 2,
+      "value": 46.82
+     },
+     {
+      "x": 21,
+      "y": 3,
+      "value": 52.97
+     },
+     {
+      "x": 21,
+      "y": 4,
+      "value": 17.23
+     },
+     {
+      "x": 21,
+      "y": 5,
+      "value": 69.57
+     },
+     {
+      "x": 21,
+      "y": 6,
+      "value": 55.15
+     },
+     {
+      "x": 22,
+      "y": 0,
+      "value": 41.4
+     },
+     {
+      "x": 22,
+      "y": 1,
+      "value": 37.45
+     },
+     {
+      "x": 22,
+      "y": 2,
+      "value": 44.3
+     },
+     {
+      "x": 22,
+      "y": 3,
+      "value": 41.97
+     },
+     {
+      "x": 22,
+      "y": 4,
+      "value": 26.77
+     },
+     {
+      "x": 22,
+      "y": 5,
+      "value": 42.78
+     },
+     {
+      "x": 22,
+      "y": 6,
+      "value": 27.1
+     },
+     {
+      "x": 23,
+      "y": 0,
+      "value": 76.0
+     },
+     {
+      "x": 23,
+      "y": 1,
+      "value": 38.88
+     },
+     {
+      "x": 23,
+      "y": 5,
+      "value": 39.0
+     },
+     {
+      "x": 23,
+      "y": 6,
+      "value": 20.0
+     }
+    ],
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "phone_vs_computer": {
+    "kind": "stacked",
+    "title": "Phone and computer",
+    "unit": "minutes",
+    "explain": "Minutes each day on phones and on computers; a gap is a day that kind of device sent nothing.",
+    "estimated": false,
+    "x": [
+     "2026-09-12",
+     "2026-09-13",
+     "2026-09-14",
+     "2026-09-15",
+     "2026-09-16",
+     "2026-09-17",
+     "2026-09-18",
+     "2026-09-19",
+     "2026-09-20",
+     "2026-09-21",
+     "2026-09-22",
+     "2026-09-23",
+     "2026-09-24",
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Phone",
+      "key": "phone",
+      "category": "comms",
+      "values": [
+       127.57,
+       173.58,
+       118.68,
+       249.73,
+       192.05,
+       98.35,
+       90.65,
+       94.35,
+       99.07,
+       117.43,
+       225.2,
+       103.07,
+       86.58,
+       37.18
+      ]
+     },
+     {
+      "name": "Computer",
+      "key": "computer",
+      "category": "work",
+      "values": [
+       429.27,
+       360.02,
+       470.75,
+       349.1,
+       357.12,
+       474.22,
+       461.43,
+       469.43,
+       405.38,
+       461.38,
+       309.47,
+       457.53,
+       484.97,
+       467.27
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   }
+  },
+  "changes": [],
+  "meta": {
+   "unit": "minutes",
+   "range": {
+    "start": "2026-09-12T00:00:00-04:00",
+    "end": "2026-09-26T00:00:00-04:00",
+    "tz": "America/Toronto"
+   },
+   "source": "seed",
+   "estimated": false
+  },
+  "cached": false
+ },
+ "7d": {
+  "tab": "overview",
+  "tz": "America/Toronto",
+  "range": {
+   "first": "2026-09-19",
+   "last": "2026-09-25",
+   "days": 7,
+   "label": "Last 7 days"
+  },
+  "in_progress": true,
+  "metrics": [
+   {
+    "id": "screen_time",
+    "label": "Screen time",
+    "value": 3818.32,
+    "unit": "minutes",
+    "explain": "All app and site time across devices, each device counted, away time removed.",
+    "estimated": false
+   },
+   {
+    "id": "daily_average",
+    "label": "A day, on average",
+    "value": 545.47,
+    "unit": "minutes",
+    "explain": "Screen time divided by the days that had any data.",
+    "estimated": false
+   },
+   {
+    "id": "focused_time",
+    "label": "Focused time",
+    "value": 2365.78,
+    "unit": "minutes",
+    "explain": "Work or study in blocks of 10 minutes or more with no phone distraction.",
+    "estimated": false
+   },
+   {
+    "id": "focus_score",
+    "label": "Focus score, on average",
+    "value": 67,
+    "unit": "score",
+    "explain": "0 to 100: focused time against work, study and distraction together, averaged over the days.",
+    "estimated": false
+   },
+   {
+    "id": "pickups",
+    "label": "Phone pickups a day",
+    "value": 8.4,
+    "unit": "pickups",
+    "explain": "A phone app coming into use after the phone rested for a minute or more.",
+    "estimated": false
+   },
+   {
+    "id": "sleep",
+    "label": "Sleep a night",
+    "value": 460.86,
+    "unit": "minutes",
+    "explain": "From your health app when it sends sleep; otherwise the longest stretch the phone was not used overnight.",
+    "estimated": false
+   },
+   {
+    "id": "late_night",
+    "label": "After 11 pm, a night",
+    "value": 20.5,
+    "unit": "minutes",
+    "explain": "Screen time from 23:00 to 03:00, on any device (overlaps counted once).",
+    "estimated": false
+   },
+   {
+    "id": "best_day",
+    "label": "Best day",
+    "value": "2026-09-21",
+    "unit": "date",
+    "explain": "The day with the most focused minutes: 390.83.",
+    "estimated": false
+   },
+   {
+    "id": "best_day_focused",
+    "label": "Its focused time",
+    "value": 390.83,
+    "unit": "minutes",
+    "explain": "Work or study in blocks of 10 minutes or more that day.",
+    "estimated": false
+   },
+   {
+    "id": "toughest_day",
+    "label": "Toughest day",
+    "value": "2026-09-21",
+    "unit": "date",
+    "explain": "The day with the most screen time after 11 pm: 123 minutes that night.",
+    "estimated": false
+   },
+   {
+    "id": "toughest_day_late",
+    "label": "Its late-night time",
+    "value": 123.0,
+    "unit": "minutes",
+    "explain": "Screen time from 23:00 to 03:00 that night, on any device.",
+    "estimated": false
+   }
+  ],
+  "series": {
+   "screen_by_device": {
+    "kind": "stacked",
+    "title": "Screen time by device",
+    "unit": "minutes",
+    "explain": "Minutes each day on each device.",
+    "estimated": false,
+    "x": [
+     "2026-09-19",
+     "2026-09-20",
+     "2026-09-21",
+     "2026-09-22",
+     "2026-09-23",
+     "2026-09-24",
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Desk PC (demo)",
+      "key": "seed-windows",
+      "category": null,
+      "values": [
+       406.0,
+       356.15,
+       354.35,
+       219.68,
+       366.28,
+       382.82,
+       368.33
+      ]
+     },
+     {
+      "name": "MacBook (demo)",
+      "key": "seed-mac",
+      "category": null,
+      "values": [
+       63.43,
+       49.23,
+       107.03,
+       89.78,
+       91.25,
+       102.15,
+       98.93
+      ]
+     },
+     {
+      "name": "Galaxy phone (demo)",
+      "key": "seed-android",
+      "category": null,
+      "values": [
+       58.33,
+       60.97,
+       92.88,
+       173.72,
+       62.25,
+       59.82,
+       30.12
+      ]
+     },
+     {
+      "name": "iPhone (demo)",
+      "key": "seed-iphone",
+      "category": null,
+      "values": [
+       36.02,
+       38.1,
+       24.55,
+       51.48,
+       40.82,
+       26.77,
+       7.07
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "categories": {
+    "kind": "donut",
+    "title": "By category",
+    "unit": "minutes",
+    "explain": "Where the screen time went, by kind of app or site.",
+    "estimated": false,
+    "x": null,
+    "y": null,
+    "lines": null,
+    "items": [
+     {
+      "name": "Work",
+      "value": 1945.98,
+      "key": "work",
+      "category": "work",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Social",
+      "value": 493.12,
+      "key": "social",
+      "category": "social",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Video",
+      "value": 474.93,
+      "key": "video",
+      "category": "video",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Study",
+      "value": 433.57,
+      "key": "study",
+      "category": "study",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Games",
+      "value": 236.58,
+      "key": "games",
+      "category": "games",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Comms",
+      "value": 152.57,
+      "key": "comms",
+      "category": "comms",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Other",
+      "value": 55.58,
+      "key": "other",
+      "category": "other",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Health",
+      "value": 25.98,
+      "key": "health",
+      "category": "health",
+      "share": null,
+      "children": null
+     }
+    ],
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "focus_by_day": {
+    "kind": "trend",
+    "title": "Focus score",
+    "unit": "score",
+    "explain": "Each day's focus score (0 to 100); a gap is a day with no work or distraction.",
+    "estimated": false,
+    "x": [
+     "2026-09-19",
+     "2026-09-20",
+     "2026-09-21",
+     "2026-09-22",
+     "2026-09-23",
+     "2026-09-24",
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Focus score",
+      "key": null,
+      "category": null,
+      "values": [
+       68.0,
+       71.0,
+       72.0,
+       30.0,
+       72.0,
+       73.0,
+       82.0
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "hours": {
+    "kind": "heatmap",
+    "title": "When screens were on",
+    "unit": "minutes",
+    "explain": "Screen time in the range by weekday and hour of the day, added up (each device counted).",
+    "estimated": false,
+    "x": [
+     "00",
+     "01",
+     "02",
+     "03",
+     "04",
+     "05",
+     "06",
+     "07",
+     "08",
+     "09",
+     "10",
+     "11",
+     "12",
+     "13",
+     "14",
+     "15",
+     "16",
+     "17",
+     "18",
+     "19",
+     "20",
+     "21",
+     "22",
+     "23"
+    ],
+    "y": [
+     "Mon",
+     "Tue",
+     "Wed",
+     "Thu",
+     "Fri",
+     "Sat",
+     "Sun"
+    ],
+    "lines": null,
+    "items": null,
+    "cells": [
+     {
+      "x": 0,
+      "y": 1,
+      "value": 56.0
+     },
+     {
+      "x": 1,
+      "y": 1,
+      "value": 29.0
+     },
+     {
+      "x": 6,
+      "y": 4,
+      "value": 5.0
+     },
+     {
+      "x": 7,
+      "y": 0,
+      "value": 16.98
+     },
+     {
+      "x": 7,
+      "y": 2,
+      "value": 30.57
+     },
+     {
+      "x": 7,
+      "y": 3,
+      "value": 30.65
+     },
+     {
+      "x": 7,
+      "y": 4,
+      "value": 15.05
+     },
+     {
+      "x": 7,
+      "y": 5,
+      "value": 25.22
+     },
+     {
+      "x": 7,
+      "y": 6,
+      "value": 24.58
+     },
+     {
+      "x": 9,
+      "y": 0,
+      "value": 59.33
+     },
+     {
+      "x": 9,
+      "y": 1,
+      "value": 19.68
+     },
+     {
+      "x": 9,
+      "y": 2,
+      "value": 60.0
+     },
+     {
+      "x": 9,
+      "y": 3,
+      "value": 60.0
+     },
+     {
+      "x": 9,
+      "y": 4,
+      "value": 60.0
+     },
+     {
+      "x": 9,
+      "y": 5,
+      "value": 59.33
+     },
+     {
+      "x": 9,
+      "y": 6,
+      "value": 60.0
+     },
+     {
+      "x": 10,
+      "y": 0,
+      "value": 59.33
+     },
+     {
+      "x": 10,
+      "y": 1,
+      "value": 13.0
+     },
+     {
+      "x": 10,
+      "y": 2,
+      "value": 59.0
+     },
+     {
+      "x": 10,
+      "y": 3,
+      "value": 59.33
+     },
+     {
+      "x": 10,
+      "y": 4,
+      "value": 58.67
+     },
+     {
+      "x": 10,
+      "y": 5,
+      "value": 60.0
+     },
+     {
+      "x": 10,
+      "y": 6,
+      "value": 59.0
+     },
+     {
+      "x": 11,
+      "y": 0,
+      "value": 60.0
+     },
+     {
+      "x": 11,
+      "y": 1,
+      "value": 58.0
+     },
+     {
+      "x": 11,
+      "y": 2,
+      "value": 59.0
+     },
+     {
+      "x": 11,
+      "y": 3,
+      "value": 59.0
+     },
+     {
+      "x": 11,
+      "y": 4,
+      "value": 59.67
+     },
+     {
+      "x": 11,
+      "y": 5,
+      "value": 59.0
+     },
+     {
+      "x": 11,
+      "y": 6,
+      "value": 59.33
+     },
+     {
+      "x": 12,
+      "y": 0,
+      "value": 44.0
+     },
+     {
+      "x": 12,
+      "y": 1,
+      "value": 35.67
+     },
+     {
+      "x": 12,
+      "y": 2,
+      "value": 44.57
+     },
+     {
+      "x": 12,
+      "y": 3,
+      "value": 45.0
+     },
+     {
+      "x": 12,
+      "y": 4,
+      "value": 40.0
+     },
+     {
+      "x": 12,
+      "y": 5,
+      "value": 41.68
+     },
+     {
+      "x": 12,
+      "y": 6,
+      "value": 42.22
+     },
+     {
+      "x": 13,
+      "y": 0,
+      "value": 38.27
+     },
+     {
+      "x": 13,
+      "y": 1,
+      "value": 38.98
+     },
+     {
+      "x": 13,
+      "y": 2,
+      "value": 34.0
+     },
+     {
+      "x": 13,
+      "y": 3,
+      "value": 34.23
+     },
+     {
+      "x": 13,
+      "y": 4,
+      "value": 40.07
+     },
+     {
+      "x": 13,
+      "y": 5,
+      "value": 39.0
+     },
+     {
+      "x": 13,
+      "y": 6,
+      "value": 38.2
+     },
+     {
+      "x": 14,
+      "y": 0,
+      "value": 54.33
+     },
+     {
+      "x": 14,
+      "y": 1,
+      "value": 52.2
+     },
+     {
+      "x": 14,
+      "y": 2,
+      "value": 54.0
+     },
+     {
+      "x": 14,
+      "y": 3,
+      "value": 54.33
+     },
+     {
+      "x": 14,
+      "y": 4,
+      "value": 54.0
+     },
+     {
+      "x": 14,
+      "y": 5,
+      "value": 54.33
+     },
+     {
+      "x": 14,
+      "y": 6,
+      "value": 54.0
+     },
+     {
+      "x": 15,
+      "y": 0,
+      "value": 57.67
+     },
+     {
+      "x": 15,
+      "y": 1,
+      "value": 54.67
+     },
+     {
+      "x": 15,
+      "y": 2,
+      "value": 56.67
+     },
+     {
+      "x": 15,
+      "y": 3,
+      "value": 55.67
+     },
+     {
+      "x": 15,
+      "y": 4,
+      "value": 57.67
+     },
+     {
+      "x": 15,
+      "y": 5,
+      "value": 38.0
+     },
+     {
+      "x": 15,
+      "y": 6,
+      "value": 19.0
+     },
+     {
+      "x": 16,
+      "y": 0,
+      "value": 49.37
+     },
+     {
+      "x": 16,
+      "y": 1,
+      "value": 54.33
+     },
+     {
+      "x": 16,
+      "y": 2,
+      "value": 34.58
+     },
+     {
+      "x": 16,
+      "y": 3,
+      "value": 46.48
+     },
+     {
+      "x": 16,
+      "y": 4,
+      "value": 41.27
+     },
+     {
+      "x": 16,
+      "y": 5,
+      "value": 25.43
+     },
+     {
+      "x": 16,
+      "y": 6,
+      "value": 30.23
+     },
+     {
+      "x": 19,
+      "y": 0,
+      "value": 11.0
+     },
+     {
+      "x": 19,
+      "y": 1,
+      "value": 14.0
+     },
+     {
+      "x": 19,
+      "y": 2,
+      "value": 8.0
+     },
+     {
+      "x": 19,
+      "y": 3,
+      "value": 19.0
+     },
+     {
+      "x": 19,
+      "y": 4,
+      "value": 6.0
+     },
+     {
+      "x": 19,
+      "y": 5,
+      "value": 22.0
+     },
+     {
+      "x": 19,
+      "y": 6,
+      "value": 18.0
+     },
+     {
+      "x": 20,
+      "y": 0,
+      "value": 52.83
+     },
+     {
+      "x": 20,
+      "y": 1,
+      "value": 65.5
+     },
+     {
+      "x": 20,
+      "y": 2,
+      "value": 68.43
+     },
+     {
+      "x": 20,
+      "y": 3,
+      "value": 69.47
+     },
+     {
+      "x": 20,
+      "y": 4,
+      "value": 67.07
+     },
+     {
+      "x": 20,
+      "y": 5,
+      "value": 68.78
+     },
+     {
+      "x": 20,
+      "y": 6,
+      "value": 55.53
+     },
+     {
+      "x": 21,
+      "y": 0,
+      "value": 28.77
+     },
+     {
+      "x": 21,
+      "y": 1,
+      "value": 23.65
+     },
+     {
+      "x": 21,
+      "y": 2,
+      "value": 20.42
+     },
+     {
+      "x": 21,
+      "y": 3,
+      "value": 30.22
+     },
+     {
+      "x": 21,
+      "y": 5,
+      "value": 39.38
+     },
+     {
+      "x": 21,
+      "y": 6,
+      "value": 26.37
+     },
+     {
+      "x": 22,
+      "y": 0,
+      "value": 8.93
+     },
+     {
+      "x": 22,
+      "y": 1,
+      "value": 19.98
+     },
+     {
+      "x": 22,
+      "y": 2,
+      "value": 31.37
+     },
+     {
+      "x": 22,
+      "y": 3,
+      "value": 8.17
+     },
+     {
+      "x": 22,
+      "y": 5,
+      "value": 31.62
+     },
+     {
+      "x": 22,
+      "y": 6,
+      "value": 17.98
+     },
+     {
+      "x": 23,
+      "y": 0,
+      "value": 38.0
+     }
+    ],
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "phone_vs_computer": {
+    "kind": "stacked",
+    "title": "Phone and computer",
+    "unit": "minutes",
+    "explain": "Minutes each day on phones and on computers; a gap is a day that kind of device sent nothing.",
+    "estimated": false,
+    "x": [
+     "2026-09-19",
+     "2026-09-20",
+     "2026-09-21",
+     "2026-09-22",
+     "2026-09-23",
+     "2026-09-24",
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Phone",
+      "key": "phone",
+      "category": "comms",
+      "values": [
+       94.35,
+       99.07,
+       117.43,
+       225.2,
+       103.07,
+       86.58,
+       37.18
+      ]
+     },
+     {
+      "name": "Computer",
+      "key": "computer",
+      "category": "work",
+      "values": [
+       469.43,
+       405.38,
+       461.38,
+       309.47,
+       457.53,
+       484.97,
+       467.27
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   }
+  },
+  "changes": [
+   {
+    "id": "daily_average",
+    "label": "Screen time a day",
+    "unit": "minutes",
+    "now": 552.31,
+    "before": 564.64,
+    "delta": -12.33,
+    "change_pct": -2,
+    "direction": "down",
+    "better": "down",
+    "days": 6
+   },
+   {
+    "id": "focused_time",
+    "label": "Focused time a day",
+    "unit": "minutes",
+    "now": 330.19,
+    "before": 287.8,
+    "delta": 42.39,
+    "change_pct": 15,
+    "direction": "up",
+    "better": "up",
+    "days": 6
+   },
+   {
+    "id": "focus_score",
+    "label": "Focus score",
+    "unit": "score",
+    "now": 64.33,
+    "before": 55.86,
+    "delta": 8.48,
+    "change_pct": 15,
+    "direction": "up",
+    "better": "up",
+    "days": 6
+   },
+   {
+    "id": "pickups",
+    "label": "Phone pickups a day",
+    "unit": "pickups",
+    "now": 9.33,
+    "before": 10.71,
+    "delta": -1.38,
+    "change_pct": -13,
+    "direction": "down",
+    "better": "down",
+    "days": 6
+   },
+   {
+    "id": "sleep",
+    "label": "Sleep a night",
+    "unit": "minutes",
+    "now": 463.17,
+    "before": 456.43,
+    "delta": 6.74,
+    "change_pct": 1,
+    "direction": "up",
+    "better": "up",
+    "days": 6
+   },
+   {
+    "id": "late_night",
+    "label": "After 11 pm, a night",
+    "unit": "minutes",
+    "now": 20.5,
+    "before": 48.29,
+    "delta": -27.79,
+    "change_pct": -58,
+    "direction": "down",
+    "better": "down",
+    "days": 6
+   }
+  ],
+  "meta": {
+   "unit": "minutes",
+   "range": {
+    "start": "2026-09-19T00:00:00-04:00",
+    "end": "2026-09-26T00:00:00-04:00",
+    "tz": "America/Toronto"
+   },
+   "source": "seed",
+   "estimated": false
+  },
+  "cached": false
+ },
+ "today": {
+  "tab": "overview",
+  "tz": "America/Toronto",
+  "range": {
+   "first": "2026-09-25",
+   "last": "2026-09-25",
+   "days": 1,
+   "label": "Today"
+  },
+  "in_progress": true,
+  "metrics": [
+   {
+    "id": "screen_time",
+    "label": "Screen time",
+    "value": 504.45,
+    "unit": "minutes",
+    "explain": "All app and site time across devices, each device counted, away time removed.",
+    "estimated": false
+   },
+   {
+    "id": "daily_average",
+    "label": "A day, on average",
+    "value": 504.45,
+    "unit": "minutes",
+    "explain": "Screen time divided by the days that had any data.",
+    "estimated": false
+   },
+   {
+    "id": "focused_time",
+    "label": "Focused time",
+    "value": 384.62,
+    "unit": "minutes",
+    "explain": "Work or study in blocks of 10 minutes or more with no phone distraction.",
+    "estimated": false
+   },
+   {
+    "id": "focus_score",
+    "label": "Focus score, on average",
+    "value": 82,
+    "unit": "score",
+    "explain": "0 to 100: focused time against work, study and distraction together, averaged over the days.",
+    "estimated": false
+   },
+   {
+    "id": "pickups",
+    "label": "Phone pickups a day",
+    "value": 3.0,
+    "unit": "pickups",
+    "explain": "A phone app coming into use after the phone rested for a minute or more.",
+    "estimated": false
+   },
+   {
+    "id": "sleep",
+    "label": "Sleep a night",
+    "value": 447.0,
+    "unit": "minutes",
+    "explain": "From your health app when it sends sleep; otherwise the longest stretch the phone was not used overnight.",
+    "estimated": false
+   },
+   {
+    "id": "late_night",
+    "label": "After 11 pm, a night",
+    "value": null,
+    "unit": "minutes",
+    "explain": "Screen time from 23:00 to 03:00, on any device (overlaps counted once).",
+    "estimated": false
+   },
+   {
+    "id": "best_day",
+    "label": "Best day",
+    "value": "2026-09-25",
+    "unit": "date",
+    "explain": "The day with the most focused minutes: 384.62.",
+    "estimated": false
+   },
+   {
+    "id": "best_day_focused",
+    "label": "Its focused time",
+    "value": 384.62,
+    "unit": "minutes",
+    "explain": "Work or study in blocks of 10 minutes or more that day.",
+    "estimated": false
+   },
+   {
+    "id": "toughest_day",
+    "label": "Toughest day",
+    "value": null,
+    "unit": "date",
+    "explain": "No screen time after 11 pm in the range.",
+    "estimated": false
+   },
+   {
+    "id": "toughest_day_late",
+    "label": "Its late-night time",
+    "value": null,
+    "unit": "minutes",
+    "explain": "Screen time from 23:00 to 03:00 that night, on any device.",
+    "estimated": false
+   }
+  ],
+  "series": {
+   "screen_by_device": {
+    "kind": "stacked",
+    "title": "Screen time by device",
+    "unit": "minutes",
+    "explain": "Minutes each day on each device.",
+    "estimated": false,
+    "x": [
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Desk PC (demo)",
+      "key": "seed-windows",
+      "category": null,
+      "values": [
+       368.33
+      ]
+     },
+     {
+      "name": "MacBook (demo)",
+      "key": "seed-mac",
+      "category": null,
+      "values": [
+       98.93
+      ]
+     },
+     {
+      "name": "Galaxy phone (demo)",
+      "key": "seed-android",
+      "category": null,
+      "values": [
+       30.12
+      ]
+     },
+     {
+      "name": "iPhone (demo)",
+      "key": "seed-iphone",
+      "category": null,
+      "values": [
+       7.07
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "categories": {
+    "kind": "donut",
+    "title": "By category",
+    "unit": "minutes",
+    "explain": "Where the screen time went, by kind of app or site.",
+    "estimated": false,
+    "x": null,
+    "y": null,
+    "lines": null,
+    "items": [
+     {
+      "name": "Work",
+      "value": 294.02,
+      "key": "work",
+      "category": "work",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Study",
+      "value": 90.6,
+      "key": "study",
+      "category": "study",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Video",
+      "value": 76.07,
+      "key": "video",
+      "category": "video",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Social",
+      "value": 17.98,
+      "key": "social",
+      "category": "social",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Comms",
+      "value": 12.83,
+      "key": "comms",
+      "category": "comms",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Other",
+      "value": 8.33,
+      "key": "other",
+      "category": "other",
+      "share": null,
+      "children": null
+     },
+     {
+      "name": "Health",
+      "value": 4.62,
+      "key": "health",
+      "category": "health",
+      "share": null,
+      "children": null
+     }
+    ],
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "focus_by_day": {
+    "kind": "trend",
+    "title": "Focus score",
+    "unit": "score",
+    "explain": "Each day's focus score (0 to 100); a gap is a day with no work or distraction.",
+    "estimated": false,
+    "x": [
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Focus score",
+      "key": null,
+      "category": null,
+      "values": [
+       82.0
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "hours": {
+    "kind": "heatmap",
+    "title": "When screens were on",
+    "unit": "minutes",
+    "explain": "Screen time in the range by weekday and hour of the day, added up (each device counted).",
+    "estimated": false,
+    "x": [
+     "00",
+     "01",
+     "02",
+     "03",
+     "04",
+     "05",
+     "06",
+     "07",
+     "08",
+     "09",
+     "10",
+     "11",
+     "12",
+     "13",
+     "14",
+     "15",
+     "16",
+     "17",
+     "18",
+     "19",
+     "20",
+     "21",
+     "22",
+     "23"
+    ],
+    "y": [
+     "Mon",
+     "Tue",
+     "Wed",
+     "Thu",
+     "Fri",
+     "Sat",
+     "Sun"
+    ],
+    "lines": null,
+    "items": null,
+    "cells": [
+     {
+      "x": 6,
+      "y": 4,
+      "value": 5.0
+     },
+     {
+      "x": 7,
+      "y": 4,
+      "value": 15.05
+     },
+     {
+      "x": 9,
+      "y": 4,
+      "value": 60.0
+     },
+     {
+      "x": 10,
+      "y": 4,
+      "value": 58.67
+     },
+     {
+      "x": 11,
+      "y": 4,
+      "value": 59.67
+     },
+     {
+      "x": 12,
+      "y": 4,
+      "value": 40.0
+     },
+     {
+      "x": 13,
+      "y": 4,
+      "value": 40.07
+     },
+     {
+      "x": 14,
+      "y": 4,
+      "value": 54.0
+     },
+     {
+      "x": 15,
+      "y": 4,
+      "value": 57.67
+     },
+     {
+      "x": 16,
+      "y": 4,
+      "value": 41.27
+     },
+     {
+      "x": 19,
+      "y": 4,
+      "value": 6.0
+     },
+     {
+      "x": 20,
+      "y": 4,
+      "value": 67.07
+     }
+    ],
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   },
+   "phone_vs_computer": {
+    "kind": "stacked",
+    "title": "Phone and computer",
+    "unit": "minutes",
+    "explain": "Minutes each day on phones and on computers; a gap is a day that kind of device sent nothing.",
+    "estimated": false,
+    "x": [
+     "2026-09-25"
+    ],
+    "y": null,
+    "lines": [
+     {
+      "name": "Phone",
+      "key": "phone",
+      "category": "comms",
+      "values": [
+       37.18
+      ]
+     },
+     {
+      "name": "Computer",
+      "key": "computer",
+      "category": "work",
+      "values": [
+       467.27
+      ]
+     }
+    ],
+    "items": null,
+    "cells": null,
+    "nodes": null,
+    "links": null,
+    "points": null,
+    "value": null,
+    "max": null,
+    "stats": null,
+    "note": null
+   }
+  },
+  "changes": [],
+  "meta": {
+   "unit": "minutes",
+   "range": {
+    "start": "2026-09-25T00:00:00-04:00",
+    "end": "2026-09-26T00:00:00-04:00",
+    "tz": "America/Toronto"
+   },
+   "source": "seed",
+   "estimated": false
+  },
+  "cached": false
+ }
+}
