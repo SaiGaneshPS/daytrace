@@ -1,4 +1,5 @@
-// DT-19: entry activity. Onboarding until usage access is granted, then the status screen.
+// DT-19 / DT-22: entry activity. Onboarding until usage access is granted, then the status screen, which opens
+// pairing with the hub.
 package app.daytrace.android
 
 import android.content.Intent
@@ -15,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import app.daytrace.android.ui.HealthRationaleScreen
 import app.daytrace.android.ui.OnboardingScreen
+import app.daytrace.android.ui.PairingScreen
 import app.daytrace.android.ui.StatusScreen
 import app.daytrace.android.ui.onboarded
 import app.daytrace.android.ui.rememberPermissionRequester
@@ -46,16 +48,18 @@ class MainActivity : ComponentActivity() {
 private fun DaytraceRoot() {
     val context = LocalContext.current
     var showOnboarding by rememberSaveable { mutableStateOf(!onboarded(context)) }
+    var showPairing by rememberSaveable { mutableStateOf(false) }
     val (states, refresh) = rememberPermissionStates()
     val grant = rememberPermissionRequester(onChanged = refresh)
     // Reopened from the status screen: Back returns there instead of closing the app.
     BackHandler(enabled = showOnboarding && onboarded(context)) { showOnboarding = false }
-    if (showOnboarding) {
-        OnboardingScreen(states, grant, onContinue = {
+    BackHandler(enabled = showPairing && !showOnboarding) { showPairing = false }
+    when {
+        showOnboarding -> OnboardingScreen(states, grant, onContinue = {
             setOnboarded(context, true)
             showOnboarding = false
         })
-    } else {
-        StatusScreen(states, grant, onShowOnboarding = { showOnboarding = true })
+        showPairing -> PairingScreen(onClose = { showPairing = false })
+        else -> StatusScreen(states, grant, onShowOnboarding = { showOnboarding = true }, onPair = { showPairing = true })
     }
 }

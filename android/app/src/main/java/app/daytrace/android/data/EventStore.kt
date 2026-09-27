@@ -96,6 +96,15 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
     fun hubCursorRead(deviceId: String): Boolean = dao.meta(CURSOR_READ + deviceId) != null
 
     /**
+     * DT-22: a pairing (a new one, or the same id again) reads the hub's cursor afresh before sending, since the hub
+     * may hold higher seqs for that id than this phone knows of. Raising the floor never lowers anything, so reading
+     * it again is always safe.
+     */
+    fun forgetHubCursor(deviceId: String) {
+        dao.deleteMeta(CURSOR_READ + deviceId)
+    }
+
+    /**
      * The hub already holds seqs up to [hubLastSeq] (null: none) for [deviceId]; a reinstall starts counting from
      * 0 again. From now on every seq is higher, and queued events at or below it get new numbers above it, so the
      * hub treats them as the newest copies. Recorded in the same transaction, so a database that is recreated

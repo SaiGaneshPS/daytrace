@@ -241,10 +241,14 @@ class Device:
     device_type: str
     paired_at: datetime
     revoked_at: datetime | None
+    gaps: tuple[tuple[datetime, datetime], ...] = ()  # DT-22: revoked, then paired again with the same id
 
     def expected(self, start: datetime, end: datetime) -> bool:
-        """Paired during [start, end): only then can it be missing."""
-        return self.paired_at < end and (self.revoked_at is None or self.revoked_at > start)
+        """Paired during [start, end): only then can it be missing. Not while it was revoked before it paired
+        again (DT-22), when the whole of [start, end) lies in that stretch."""
+        if not (self.paired_at < end and (self.revoked_at is None or self.revoked_at > start)):
+            return False
+        return not any(gap_from <= start and end <= gap_until for gap_from, gap_until in self.gaps)
 
 
 class Stats:
@@ -262,9 +266,13 @@ class Stats:
         self._windows: dict[Interval, Window] = {}
         self._categorizer = Categorizer.from_db(conn)
         rows = conn.execute("SELECT device_id, device_type, paired_at, revoked_at FROM devices").fetchall()
+        gaps: dict[str, list[tuple[datetime, datetime]]] = {}
+        for gap in conn.execute("SELECT device_id, from_utc, until_utc FROM device_gaps"):
+            gaps.setdefault(gap["device_id"], []).append((parse_utc(gap["from_utc"]), parse_utc(gap["until_utc"])))
         self._devices = {
             row["device_id"]: Device(row["device_id"], row["device_type"], parse_utc(row["paired_at"]),
-                                     parse_utc(row["revoked_at"]) if row["revoked_at"] else None)
+                                     parse_utc(row["revoked_at"]) if row["revoked_at"] else None,
+                                     tuple(gaps.get(row["device_id"], ())))
             for row in rows
         }
         self._device_types = {device_id: device.device_type for device_id, device in self._devices.items()}

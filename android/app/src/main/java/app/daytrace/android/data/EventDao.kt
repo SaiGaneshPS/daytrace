@@ -51,4 +51,7 @@ interface EventDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun setMeta(entry: MetaEntry)
+
+    @Query("DELETE FROM meta WHERE name = :name")
+    fun deleteMeta(name: String): Int
 }

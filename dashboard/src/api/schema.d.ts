@@ -175,6 +175,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/devices/{device_id}/proof": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prove this is the hub the device paired with, before it sends its token (no auth)
+         * @description Until HTTPS (DT-47), a phone on another Wi-Fi with the same addresses could reach a stranger's device at
+         *     the hub's address and hand it the token. So the phone first sends a fresh nonce here and checks the answer:
+         *     only the hub that paired it holds the token hash that keys it. The token itself never travels for this.
+         *
+         *     A revoked device gets a signed "revoked" answer (the token hash is kept on revoke), so the phone asks to pair
+         *     again only when its own hub says so; an unsigned 401 could come from anyone.
+         */
+        post: operations["prove_hub_api_v1_devices__device_id__proof_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/timeline": {
         parameters: {
             query?: never;
@@ -907,6 +932,12 @@ export interface components {
             name: string;
             /** Device Type */
             device_type: string;
+            /**
+             * Returning
+             * @description DT-22: a device paired before came back with its first id.
+             * @default false
+             */
+            returning: boolean;
         };
         /** Cursor */
         Cursor: {
@@ -1564,6 +1595,16 @@ export interface components {
              * @enum {string}
              */
             device_type: "windows" | "macos" | "android" | "ios" | "browser" | "viewer";
+            /**
+             * Previous Device Id
+             * @description DT-22: the id this device had on this hub, with previous_token.
+             */
+            previous_device_id?: string | null;
+            /**
+             * Previous Token
+             * @description DT-22: the token it had here, even a revoked one. Send it only to a hub that proved it holds its hash (POST /devices/{id}/proof). It stops working now either way.
+             */
+            previous_token?: string | null;
         };
         /** PairClaimed */
         PairClaimed: {
@@ -1583,6 +1624,12 @@ export interface components {
             token: string;
             /** Profile */
             profile: string;
+            /**
+             * Returning
+             * @description DT-22: the same device paired before, so it keeps its id (and history); the old token no longer works.
+             * @default false
+             */
+            returning: boolean;
         };
         /** PairStarted */
         PairStarted: {
@@ -1690,6 +1737,23 @@ export interface components {
             target: number;
             /** Unit */
             unit: string;
+        };
+        /** Proof */
+        Proof: {
+            /** Device Id */
+            device_id: string;
+            /** Revoked */
+            revoked: boolean;
+            /** Proof */
+            proof: string;
+        };
+        /** ProofRequest */
+        ProofRequest: {
+            /**
+             * Nonce
+             * @description 32 to 128 lowercase hex characters, new for every check
+             */
+            nonce: string;
         };
         /** RangeInfo */
         RangeInfo: {
@@ -2634,6 +2698,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prove_hub_api_v1_devices__device_id__proof_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProofRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proof"];
+                };
             };
             /** @description Validation Error */
             422: {

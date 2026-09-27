@@ -59,6 +59,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `POST /pair/start`, `GET /pair/qr.png` | local only | DT-12 |
 | `POST /pair/claim` | none (needs a valid code) | DT-12 |
 | `GET /devices`, `DELETE /devices/{device_id}` | viewer / local only | DT-12 |
+| `POST /devices/{device_id}/proof` | none (answers only for a paired device) | DT-22 |
 | `GET /timeline` | viewer | DT-13 |
 | `GET /categories` | viewer | DT-14 |
 | `PUT /categories/{key}`, `DELETE /categories/{key}` | dashboard (viewer token or the hub computer) | DT-14 |
@@ -246,15 +247,31 @@ collector checks what the hub already has.
 - `device_name` is 1 to 64 characters after trimming, without control or formatting characters (emoji are fine).
 - `device_type` is one of `windows`, `macos`, `android`, `ios`, `browser`, `viewer`. Phone browsers opening
   the dashboard pair as `viewer`; the iPhone's Shortcuts use `ios`.
+- **Pairing again keeps the first id (DT-22).** A device that paired here before sends `previous_device_id` and
+  `previous_token`, the token it had (even a revoked one), so one phone stays one device however often it pairs
+  (after a revoke, or "Forget this hub" on the phone, which keeps its old pairing aside for this).
+  - **Only to its own hub:** the device first asks `POST /devices/{id}/proof` with a fresh nonce, and sends the old
+    token only when the answer proves this hub holds that token's hash. A stranger's hub never sees it.
+  - **The token itself:** the hub checks it against the stored hash, so a copy of the database (hashes only) can't
+    bring a device back.
+  - **What comes back:** a match of the same `device_type` gets that id back, with a new token (the old one stops
+    working), the new name, and no longer revoked. Its history stays with it, and the stretch it was revoked is kept
+    (`device_gaps`), so the stats never count those days as days it should have sent data. Anything else is a new
+    device.
+  - **Still needs a code:** a fresh code from the hub computer, which sees the device come back (`GET /pair/status`:
+    `claimed_by.returning`; the Devices page says "paired again").
+  - **A reinstall starts a new device:** nothing the phone kept survives it.
 
 Response `201` with `Cache-Control: no-store`. The token is shown only once:
 
 ```json
-{ "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal" }
+{ "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal",
+  "returning": false }
 ```
 
-- Device IDs count up per type and are never reused: `windows-1`, `mac-1`, `android-1`, `iphone-1`,
-  `browser-1`, `viewer-1`. Collectors send the `device_id` they got here (the Shortcuts ask for it on import).
+- Device IDs count up per type and are never reused by another device: `windows-1`, `mac-1`, `android-1`,
+  `iphone-1`, `browser-1`, `viewer-1`. A device pairing again keeps its own (`returning: true`). Collectors send the
+  `device_id` they got here (the Shortcuts ask for it on import).
 - Codes are single use and expire after 5 minutes: `400 invalid_code` for a wrong, used or expired code (the
   message says how many tries are left).
 - 5 wrong tries from one address lock that address out of the code, and 20 wrong tries in total lock the code
@@ -276,6 +293,24 @@ Revoked devices are listed too (`revoked_at` set). `events_24h` counts events th
 
 `DELETE /devices/{device_id}` (local only) revokes the token and returns `204` (again `204` if it was already
 revoked, `404` for an unknown device). The device's data stays.
+
+`POST /devices/{device_id}/proof` (no token; the network rules still apply) lets a device check it is talking to
+the hub that paired it **before** it sends its token (DT-22). Until HTTPS (DT-47), a phone on another Wi-Fi that
+uses the same addresses could otherwise hand its token to a stranger's device at the hub's address.
+
+```json
+{ "nonce": "5f0c3a9e1b7d4c2a8e6f0b1d3c5a7e9f" }
+```
+
+- `nonce` is 32 to 128 lowercase hex characters, new for every check.
+- Response `200` (`Cache-Control: no-store`): `{ "device_id": "android-1", "revoked": false, "proof": "<64 hex>" }`,
+  where `proof` is HMAC-SHA256 with the device's stored token hash as the key (the lowercase hex SHA-256 of the
+  token, as UTF-8 text) and the nonce as the message (UTF-8). The device computes the same from its token and
+  compares. The token never travels for this.
+- For a revoked device, `revoked` is `true` and the message is `"revoked:" + nonce`. The revocation is signed, so
+  the device asks to pair again only when its own hub says so.
+- `401 unauthorized` for a device this hub never paired. It is unsigned (anyone could send it), so the device
+  treats it as "not my hub", never as a revocation.
 
 ### Local network discovery
 

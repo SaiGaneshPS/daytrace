@@ -1,7 +1,9 @@
-"""Tests for DT-12: discovery, pairing and revoking devices."""
+"""Tests for DT-12: discovery, pairing and revoking devices. DT-22: the hub proving it paired a device."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import threading
 import time
@@ -194,7 +196,8 @@ def test_the_status_says_when_the_code_was_used_and_by_what(client: TestClient, 
     claimed = phone.post("/api/v1/pair/claim", json=claim_body(started["code"])).json()
     assert client.get("/api/v1/pair/status").json() == {
         "id": started["id"], "active": False, "used": True,
-        "claimed_by": {"device_id": claimed["device_id"], "name": claimed["name"], "device_type": claimed["device_type"]},
+        "claimed_by": {"device_id": claimed["device_id"], "name": claimed["name"], "device_type": claimed["device_type"],
+                       "returning": False},
     }
     newer = start(client)
     assert newer["id"] != started["id"]
@@ -498,6 +501,56 @@ def test_revoking_is_for_the_hub_computer_only(phone: TestClient, db: Database) 
     assert response.json()["error"]["code"] == "local_only"
 
 
+# --- proving the hub (DT-22) ----------------------------------------------------------------------------------
+
+NONCE = "0123456789abcdef" * 2
+
+
+def expected_proof(token: str, message: str) -> str:
+    """What the phone computes on its side: HMAC-SHA256(key = sha256(token) as hex, message)."""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return hmac.new(token_hash.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def test_the_hub_proves_it_paired_the_phone_without_the_token(client: TestClient, phone: TestClient) -> None:
+    token = phone.post("/api/v1/pair/claim", json=claim_body(start(client)["code"])).json()["token"]
+    response = phone.post("/api/v1/devices/android-1/proof", json={"nonce": NONCE})  # no Authorization header
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"device_id": "android-1", "revoked": False, "proof": expected_proof(token, NONCE)}
+    other = phone.post("/api/v1/devices/android-1/proof", json={"nonce": "f" * 64}).json()["proof"]
+    assert other == expected_proof(token, "f" * 64) != response.json()["proof"]  # a new nonce, a new answer
+    assert token not in response.text
+
+
+def test_a_revocation_is_signed_so_the_phone_can_believe_it(client: TestClient, phone: TestClient, db: Database) -> None:
+    tokens = paired(db)
+    assert client.delete("/api/v1/devices/android-1").status_code == 204
+    response = phone.post("/api/v1/devices/android-1/proof", json={"nonce": NONCE})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["revoked"] is True
+    assert body["proof"] == expected_proof(tokens["android-1"], f"revoked:{NONCE}")
+    assert body["proof"] != expected_proof(tokens["android-1"], NONCE)  # can't be mistaken for "still paired"
+
+
+def test_devices_the_hub_never_paired_get_no_proof(phone: TestClient, db: Database) -> None:
+    paired(db)
+    response = phone.post("/api/v1/devices/android-99/proof", json={"nonce": NONCE})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.parametrize(
+    "body", [{"nonce": "abc"}, {"nonce": NONCE.upper()}, {"nonce": "g" * 32}, {}, {"nonce": NONCE, "x": 1}]
+)
+def test_the_nonce_must_be_fresh_looking_hex(phone: TestClient, db: Database, body: dict[str, Any]) -> None:
+    paired(db)
+    response = phone.post("/api/v1/devices/android-1/proof", json=body)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
 def test_revoking_an_unknown_device_is_404(client: TestClient) -> None:
     assert client.delete("/api/v1/devices/nobody").status_code == 404
 
@@ -688,3 +741,115 @@ def test_mdns_settings_from_the_environment(tmp_path: Path, monkeypatch: pytest.
         load_settings("personal", env={**base, "DAYTRACE_MDNS_NAME": "bad name.local"})
     with pytest.raises(ValueError, match="DAYTRACE_MDNS must be on or off"):
         load_settings("personal", env={**base, "DAYTRACE_MDNS": "disabled"})
+
+
+# --- DT-22: a device that pairs again keeps its first id ------------------------------------------------------
+
+
+def pair_again(client: TestClient, phone: TestClient, **extra: Any) -> Any:
+    code = start(client)["code"]
+    return phone.post("/api/v1/pair/claim", json={**claim_body(code), **extra})
+
+
+def as_device(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_a_revoked_phone_that_pairs_again_keeps_its_id_and_history(client: TestClient, phone: TestClient) -> None:
+    first = pair_again(client, phone).json()
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(first["token"])).json()["accepted"] == 1
+    assert client.delete(f"/api/v1/devices/{first['device_id']}").status_code == 204
+    again = pair_again(client, phone, previous_device_id="android-1", previous_token=first["token"], device_name="S25")
+    assert again.status_code == 201
+    body = again.json()
+    assert (body["device_id"], body["returning"], body["name"]) == ("android-1", True, "S25")
+    assert phone.post("/api/v1/events", json={**SESSION, "seq": 2}, headers=as_device(body["token"])).status_code == 200
+    assert phone.post("/api/v1/events", json={**SESSION, "seq": 3}, headers=as_device(first["token"])).status_code == 401
+    devices = client.get("/api/v1/devices").json()["devices"]
+    assert [(d["device_id"], d["name"], d["revoked_at"], d["event_count"]) for d in devices] == [("android-1", "S25", None, 2)]
+
+
+def test_a_phone_that_forgot_its_hub_but_kept_its_token_comes_back(client: TestClient, phone: TestClient) -> None:
+    first = pair_again(client, phone).json()  # never revoked: "Forget this hub" on the phone only
+    again = pair_again(client, phone, previous_device_id="android-1", previous_token=first["token"]).json()
+    assert (again["device_id"], again["returning"]) == ("android-1", True)
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(first["token"])).status_code == 401  # rotated
+
+
+@pytest.mark.parametrize("extra", [
+    {"previous_device_id": "android-1", "previous_token": "dt_not-its-token"},
+    {"previous_device_id": "android-1"},  # an id alone proves nothing
+    {"previous_token": "dt_whatever"},
+    {"previous_device_id": "android-9", "previous_token": "dt_whatever"},  # no such device
+])
+def test_a_claim_that_proves_nothing_is_a_new_device(client: TestClient, phone: TestClient, extra: dict[str, Any]) -> None:
+    pair_again(client, phone)
+    body = pair_again(client, phone, **extra).json()
+    assert (body["device_id"], body["returning"]) == ("android-2", False)
+
+
+def test_a_token_of_another_device_or_kind_is_a_new_device(client: TestClient, phone: TestClient) -> None:
+    first = pair_again(client, phone).json()
+    code = start(client)["code"]
+    as_iphone = {**claim_body(code, device_type="ios"), "previous_device_id": "android-1", "previous_token": first["token"]}
+    assert phone.post("/api/v1/pair/claim", json=as_iphone).json()["device_id"] == "iphone-1"
+    second = pair_again(client, phone).json()
+    body = pair_again(client, phone, previous_device_id="android-1", previous_token=second["token"]).json()
+    assert body["device_id"] == "android-3"  # android-2's token doesn't make it android-1
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(first["token"])).status_code == 200  # untouched
+
+
+def test_the_stored_hash_alone_is_not_enough(client: TestClient, phone: TestClient, db: Database) -> None:
+    pair_again(client, phone)
+    with db.connect() as conn:
+        stored = conn.execute("SELECT token_hash FROM devices WHERE device_id = 'android-1'").fetchone()[0]
+    body = pair_again(client, phone, previous_device_id="android-1", previous_token=stored).json()  # a database copy's
+    assert (body["device_id"], body["returning"]) == ("android-2", False)
+
+
+def test_the_hub_computer_sees_a_device_come_back(client: TestClient, phone: TestClient) -> None:
+    first = pair_again(client, phone).json()
+    started = start(client)
+    phone.post("/api/v1/pair/claim", json={**claim_body(started["code"]), "previous_device_id": "android-1",
+                                           "previous_token": first["token"]})
+    status = client.get("/api/v1/pair/status").json()
+    assert status["claimed_by"] == {"device_id": "android-1", "name": "Galaxy phone", "device_type": "android", "returning": True}
+
+
+def test_the_days_a_device_was_revoked_are_not_days_it_should_have_sent_data(client: TestClient, phone: TestClient,
+                                                                            db: Database) -> None:
+    from zoneinfo import ZoneInfo
+
+    from daytrace_hub.stats import Stats
+
+    first = pair_again(client, phone).json()
+    with db.connect() as conn:
+        conn.execute("UPDATE devices SET paired_at = '2026-09-01T12:00:00.000000Z' WHERE device_id = 'android-1'")
+    client.delete("/api/v1/devices/android-1")
+    with db.connect() as conn:  # revoked on Sep 5
+        conn.execute("UPDATE devices SET revoked_at = '2026-09-05T12:00:00.000000Z' WHERE device_id = 'android-1'")
+    pair_again(client, phone, previous_device_id="android-1", previous_token=first["token"])
+    with db.connect() as conn:
+        gap = conn.execute("SELECT from_utc, until_utc FROM device_gaps WHERE device_id = 'android-1'").fetchone()
+        assert gap[0] == "2026-09-05T12:00:00.000000Z"
+        device = Stats(conn, ZoneInfo("UTC"), "UTC")._devices["android-1"]
+    day = timedelta(days=1)
+    sep = datetime(2026, 9, 3, tzinfo=UTC)
+    assert device.expected(sep, sep + day)  # paired then
+    assert not device.expected(sep + 5 * day, sep + 6 * day)  # Sep 8: revoked
+    assert device.expected(datetime.now(UTC) - timedelta(hours=1), datetime.now(UTC))  # paired again
+
+
+def test_the_proof_endpoint_never_signs_anything_but_hex(client: TestClient, phone: TestClient) -> None:
+    pair_again(client, phone)
+    assert phone.post("/api/v1/devices/android-1/proof", json={"nonce": "pair:123456"}).status_code == 422
+
+
+@pytest.mark.parametrize("extra", [{"previous_token": ""}, {"previous_token": "has space"},
+                                   {"previous_token": "x" * 201}, {"previous_device_id": "bad id"}])
+def test_bad_returning_fields_get_422(client: TestClient, phone: TestClient, extra: dict[str, Any]) -> None:
+    assert pair_again(client, phone, **extra).status_code == 422
+
+
+def test_an_unknown_field_is_still_refused(client: TestClient, phone: TestClient) -> None:
+    assert pair_again(client, phone, device_key="k" * 43).status_code == 422

@@ -28,7 +28,7 @@ const DEVICES = (): Device[] => [
   device("browser-1", "Old laptop extension", "browser", { revoked_at: ago(86_400 * 3), last_seq: 57, event_count: 58 }),
 ];
 
-type Status = { id: string; active: boolean; used: boolean; claimed_by: { device_id: string; name: string; device_type: string } | null };
+type Status = { id: string; active: boolean; used: boolean; claimed_by: { device_id: string; name: string; device_type: string; returning?: boolean } | null };
 type Mocks = {
   local?: boolean | (() => boolean);
   url?: string | null;
@@ -180,6 +180,24 @@ test("when the hub says the code was used, the page says by what and closes the 
   await expect(page.locator(".code-digits")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Pair another device" })).toBeVisible();
   await expect.poll(() => seen.devices).toBeGreaterThan(lists); // and the list is loaded again
+});
+
+test("a device that pairs again is shown coming back with its first id (DT-22)", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const state = { used: false };
+  await mockHub(page, {
+    status: (id) =>
+      state.used
+        ? { id, active: false, used: true, claimed_by: { device_id: "android-1", name: "Sai's S25 Ultra", device_type: "android", returning: true } }
+        : { id, active: true, used: false, claimed_by: null },
+  });
+  await page.goto("/devices");
+  await page.getByRole("button", { name: "Show a pairing code" }).click();
+  await expect(page.locator(".code-digits")).toBeVisible();
+  state.used = true;
+  const success = page.locator(".pair-success");
+  await expect(success).toContainText("Sai's S25 Ultra is paired again as android-1.", { timeout: 4_000 });
+  await expect(success).toContainText("If that wasn't you, revoke it below.");
 });
 
 test("a newer code started elsewhere (another tab) retires this one", async ({ page }) => {
