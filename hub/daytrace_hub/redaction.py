@@ -317,7 +317,9 @@ def redacted_forms(event: Event) -> list[str]:
 def stored_matches(database: Database, redactor: Redactor | None = None, apply: bool = False, now: datetime | None = None) -> int:
     """How many stored events the rules in force would change; with `apply`, change them (that can't be undone).
     A content key is worked out again from the redacted event; an event that then matches another stored one in
-    everything is the same event, and only one copy is kept. Done a batch at a time, each in its own transaction."""
+    everything is the same event, and only one copy is kept. Done a batch at a time, each in its own transaction.
+    Applying also hides the words of logged nudges (DT-43) that the rules would hide, as they quote app names and
+    calendar titles."""
     count, last = 0, 0
     now_text = utc_text(now or datetime.now(UTC))
     while True:
@@ -326,6 +328,8 @@ def stored_matches(database: Database, redactor: Redactor | None = None, apply: 
             rows = conn.execute("SELECT id, device_id, dedup_key, kind, start_utc, end_utc, app, app_id, title, data FROM events"
                                 " WHERE id > ? ORDER BY id LIMIT ?", (last, APPLY_BATCH)).fetchall()
             if not rows:
+                if apply:
+                    _redact_nudges(conn, rules)
                 return count
             last = rows[-1]["id"]
             changes = []
@@ -349,6 +353,15 @@ def stored_matches(database: Database, redactor: Redactor | None = None, apply: 
                                      (title, app, app_id, text, key, now_text, row["id"]))
                     except sqlite3.IntegrityError:  # redacted, it is an event already stored: one copy is kept
                         conn.execute("DELETE FROM events WHERE id = ?", (row["id"],))
+
+
+def _redact_nudges(conn: sqlite3.Connection, rules: Redactor) -> None:
+    """A logged nudge whose words a rule would hide (its title or body read as a title) keeps only its rule."""
+    hidden = [row["id"] for row in conn.execute("SELECT id, title, body FROM nudge_log")
+              if any(rules.redact("window", text, None, None, {}) is not None for text in (row["title"], row["body"]))]
+    if hidden:
+        with transaction(conn):
+            conn.executemany("UPDATE nudge_log SET title = ?, body = ? WHERE id = ?", [(REDACTED, REDACTED, id_) for id_ in hidden])
 
 
 # --- the desktop tracker ------------------------------------------------------------------------------------------

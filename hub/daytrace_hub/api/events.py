@@ -1,4 +1,5 @@
-"""DT-11: POST /api/v1/events and the device cursor.
+"""DT-11: POST /api/v1/events and the device cursor; DT-43: the nudge an ingest may answer with, and the nudge
+choices (GET/PUT /api/v1/nudges).
 
 Resending is always safe: each event is stored under Event.dedup_key() with UNIQUE(device_id, dedup_key)
 (docs/api.md, "Resending is always safe"). store_events() is also what the hub's own desktop tracker
@@ -12,18 +13,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, Depends, Request
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..auth import AuthenticatedDevice, CurrentDevice, get_database
+from .. import nudges
+from ..auth import AuthenticatedDevice, CurrentDevice, Editor, Reader, get_database
 from ..db import Database, transaction, utc_offset_minutes, utc_text
 from ..models import (
     BatchTooLargeError,
     Event,
     IngestResult,
     MalformedBatchError,
-    Nudge,
     RejectedEvent,
     parse_batch,
 )
@@ -228,12 +229,8 @@ def last_seq(conn: sqlite3.Connection, device_id: str) -> int | None:
     return None if value is None else int(value)
 
 
-def pick_nudge(conn: sqlite3.Connection, device: AuthenticatedDevice, changed: list[Event]) -> Nudge | None:
-    """DT-43 fills this in (focus blocks, late-night scrolling, daily social limit).
-
-    Called after the events are committed, so rule checks never hold the database write lock.
-    """
-    return None
+# DT-43: called once the events are committed and the connection is closed, so the rules never hold the write lock.
+pick_nudge = nudges.pick_nudge
 
 
 def ingest(database: Database, device: AuthenticatedDevice, payload: Any) -> IngestResult:
@@ -252,7 +249,7 @@ def ingest(database: Database, device: AuthenticatedDevice, payload: Any) -> Ing
                                headers={"WWW-Authenticate": "Bearer"}) from None
             raise
         highest = last_seq(conn, device.device_id)
-        nudge = pick_nudge(conn, device, stored.changed_events)
+    nudge = pick_nudge(database, device.device_id, stored.changed_events)
     return IngestResult(
         accepted=stored.accepted,
         replaced=stored.replaced,
@@ -336,3 +333,70 @@ def get_cursor(
         raise ApiError(403, "forbidden", "a device can only read its own cursor")
     with database.connect() as conn:
         return Cursor(device_id=device_id, last_seq=last_seq(conn, device_id))
+
+
+# --- DT-43: the nudge choices ---------------------------------------------------------------------------------
+
+
+class NudgeRuleState(BaseModel):
+    id: str
+    name: str
+    description: str
+    enabled: bool
+
+
+class NudgeLogEntry(BaseModel):
+    rule: str
+    device_id: str | None
+    title: str
+    body: str
+    created_at: AwareDatetime
+
+
+class NudgeSettings(BaseModel):
+    """Each rule, on or off; whether this computer shows desktop notifications for its own activity; and the latest
+    nudges, newest first."""
+
+    rules: list[NudgeRuleState]
+    desktop: bool
+    cooldown_minutes: int
+    recent: list[NudgeLogEntry]
+
+
+class NudgeChoices(BaseModel):
+    """The whole choice, both fields: a typo or a missing field is refused rather than turning every rule back on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: Annotated[list[str], Field(max_length=len(nudges.RULE_IDS), description="The rules switched off, by id; the others are on.")]
+    desktop: Annotated[bool, Field(description="Desktop notifications for the hub computer's own activity.")]
+
+
+def _nudge_settings(conn: sqlite3.Connection) -> NudgeSettings:
+    choices = nudges.load_choices(conn)
+    return NudgeSettings(
+        rules=[NudgeRuleState(id=rule.id, name=rule.name, description=rule.description, enabled=rule.id not in choices.disabled)
+               for rule in nudges.RULES],
+        desktop=choices.desktop,
+        cooldown_minutes=int(nudges.COOLDOWN.total_seconds() // 60),
+        recent=[NudgeLogEntry(rule=row["rule"], device_id=row["device_id"], title=row["title"], body=row["body"],
+                              created_at=datetime.fromisoformat(row["created_at"])) for row in nudges.recent(conn)],
+    )
+
+
+@router.get("/nudges", response_model=NudgeSettings, summary="The nudge rules, on or off, and the latest nudges")
+def get_nudges(_: Reader, database: Annotated[Database, Depends(get_database)]) -> NudgeSettings:
+    with database.connect() as conn:
+        return _nudge_settings(conn)
+
+
+@router.put("/nudges", response_model=NudgeSettings, summary="Switch nudge rules and desktop notifications on or off")
+def put_nudges(body: Annotated[NudgeChoices, Body()], _: Editor, database: Annotated[Database, Depends(get_database)]) -> NudgeSettings:
+    try:
+        choices = nudges.check_choices(body.disabled, body.desktop)
+    except ValueError as error:
+        raise ApiError(400, "bad_request", str(error)) from None
+    with database.connect() as conn:
+        with transaction(conn):
+            nudges.save_choices(conn, choices)
+        return _nudge_settings(conn)
