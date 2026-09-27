@@ -526,3 +526,33 @@ def test_requests_together_share_one_evaluation(hub: TestClient, monkeypatch: py
     for thread in threads:
         thread.join()
     assert codes == [200, 200, 200] and len(calls) == 1
+
+
+# --- what today still needs (shared by nudges and ask) -----------------------------------------------------------
+
+
+def _track(kind: str = "at_least", unit: str = "minutes", measure: str = "focused_minutes", status: str = "at_risk",
+           remaining: float | None = 19.2) -> streaks.Track:
+    today = streaks.DayResult(date(2026, 9, 25), status, 100.0, 120.0, remaining)
+    return streaks.Track("x", "X", "rule", measure, kind, unit, 120.0, "", [today])
+
+
+def test_still_to_go_rounds_up_and_says_whether_the_day_has_room() -> None:
+    tz = ZoneInfo("America/Toronto")
+    afternoon = datetime(2026, 9, 25, 15, 0, tzinfo=tz).astimezone(UTC)
+    assert streaks.still_to_go(_track(), afternoon, tz) == (20, True)  # 19.2 is 20 more: enough
+    assert streaks.still_to_go(_track(remaining=20.0), afternoon, tz) == (20, True)  # a whole number stays
+    assert streaks.still_to_go(_track(remaining=120.0), datetime(2026, 9, 25, 23, 0, tzinfo=tz), tz) == (120, False)  # 60 minutes left
+    assert streaks.still_to_go(_track(remaining=5.0), datetime(2026, 9, 25, 23, 55, tzinfo=tz), tz) == (5, False)  # no 10-minute block
+    assert streaks.still_to_go(_track(unit="meals", measure="meals", remaining=1.0), datetime(2026, 9, 25, 23, 59, tzinfo=tz), tz) == (1, True)
+    assert streaks.still_to_go(_track(status="met"), afternoon, tz) is None
+    assert streaks.still_to_go(_track(kind="at_most"), afternoon, tz) is None
+    assert streaks.still_to_go(_track(unit="time"), afternoon, tz) is None
+
+
+def test_room_left_rounds_down_and_never_for_a_time_of_day() -> None:
+    assert streaks.room_left(_track(kind="at_most", remaining=45.5)) == 45
+    assert streaks.room_left(_track(kind="at_most", remaining=45.0)) == 45
+    assert streaks.room_left(_track(kind="at_most", unit="time", remaining=5.0)) is None
+    assert streaks.room_left(_track(kind="at_most", status="met")) is None
+    assert streaks.room_left(_track()) is None  # a target, not a limit

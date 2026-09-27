@@ -37,7 +37,7 @@ from scipy import stats as scipy_stats
 
 from .api.timeline import DETAIL_ONLY_TYPES, day_window, minutes, source_of, union_seconds
 from .categories import Categorizer
-from .db import utc_text
+from .db import Database, utc_text
 from .sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
 
 GroupBy = Literal["app", "category", "device", "hour", "day"]
@@ -250,10 +250,12 @@ class Device:
 class Stats:
     """The stats of one hub database in one time zone. `now` (timezone-aware) bounds everything."""
 
-    def __init__(self, conn: sqlite3.Connection, tz: tzinfo, tz_name: str, now: datetime | None = None) -> None:
+    def __init__(self, conn: sqlite3.Connection, tz: tzinfo, tz_name: str, now: datetime | None = None,
+                 database: Database | None = None) -> None:
         if now is not None and now.tzinfo is None:
             raise ValueError("now must be timezone-aware")
         self._conn = conn
+        self.database = database  # when known: other engines' caches (the streaks) key on it
         self.tz = tz
         self.tz_name = tz_name
         self.now = (now or datetime.now(UTC)).astimezone(UTC)

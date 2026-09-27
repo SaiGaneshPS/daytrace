@@ -14,8 +14,8 @@ comes from plain code:
 - get_streaks: each streak's days in a row up to today, its longest run and what today still needs, and each goal's
   target and today's reading (the Streaks page's numbers, DT-53).
 
-The model may call at most 4 tools per question, each over at most 31 days and returning at most 40 facts (the
-summary first), then answers in a few sentences. The answer goes through the day story's number check (story.py):
+The model may call at most 4 tools per question, each over at most 31 days (get_streaks takes no range: it judges
+the runs up to today) and returning at most 40 facts (the summary first), then answers in a few sentences. The answer goes through the day story's number check (story.py):
 every amount in it must match one of the facts the tools returned (`facts_used`), and a date must be one the tools
 looked at. An answer that fails gets one retry, told what was wrong; after that the facts themselves are shown
 (`fallback`). Questions that are not about the person's own day are declined politely: the model answers
@@ -55,9 +55,9 @@ MAX_SESSIONS = 25
 SESSION_JOIN = timedelta(seconds=60)  # pieces of the same app this close are one session in a list
 OFF_TOPIC = "OFF_TOPIC"
 DECLINED = ("I can only answer questions about your own day: screen time, apps and sites, focus, phone pickups, "
-            "sleep and your calendar. Try \"How much YouTube did I watch last week?\"")
-NO_ANSWER = ("Sorry, I couldn't answer that from your data. Try asking about your screen time, apps, focus, sleep "
-             "or calendar.")
+            "sleep, your calendar, and your streaks and goals. Try \"How much YouTube did I watch last week?\"")
+NO_ANSWER = ("Sorry, I couldn't answer that from your data. Try asking about your screen time, apps, focus, sleep, "
+             "calendar, or your streaks and goals.")
 DEVICES = {"phone": frozenset({"android", "ios"}), "computer": frozenset({"windows", "macos"})}
 NOUNS = {"app": "apps", "category": "categories", "device": "devices"}  # a count's unit, per grouping
 
@@ -510,44 +510,59 @@ def _schema(name: str, description: str, extra: dict[str, Any] | None = None) ->
     }}
 
 
-# What a streak to reach needs more of (a fact's unit), by what it measures.
-STILL_NEEDED = {"focused_minutes": "minutes", "meals": "meals", "devices_synced": "devices"}
-
-
 def get_streaks(stats: Stats, args: dict[str, Any]) -> ToolOutput:
-    """The streaks and goals as the Streaks page shows them, judged now: each streak's days in a row up to today, its
-    longest run and what today still needs (or what is left under a limit), and each goal's target and today's
-    reading. Any range asked for is ignored: a streak is the run up to today."""
+    """The streaks and goals as the Streaks page shows them, judged now (its own evaluation when the question's
+    database is known): each streak's days in a row up to today and its longest run, what today still needs to keep
+    it (rounded up, and only when it can still be done today) or the room left under a limit (rounded down), and each
+    goal's target, today's reading and verdict. A reading and what is left always add up to the target: a reading
+    toward a target is rounded down, one against a limit up. Any range asked for is ignored: a streak is the run up to
+    today, and only today, the evening before (a night's reading) and a run's start within 31 days may be named."""
     from . import streaks
 
-    found = streaks.evaluate(stats.conn, stats.tz, stats.tz_name, stats.now)
-    out = ToolOutput(days={found.today})
-    words = {"met": "done for today", "missed": "missed today", "no_data": "nothing yet today (no data)", "at_risk": "not kept yet today"}
+    rules = streaks.load_rules()
+    if stats.database is not None:
+        found = streaks.evaluation(stats.database, stats.tz, stats.tz_name, stats.now)
+    else:
+        found = streaks.evaluate(stats.conn, stats.tz, stats.tz_name, stats.now, rules)
+    today = found.today
+    out = ToolOutput(days={today, today - timedelta(days=1)})
+    status_words = {"met": "done for today", "missed": "missed today", "no_data": "nothing yet today (no data)",
+                    "at_risk": "not kept yet today"}
     for track in found.streaks:
         run, best = track.current, track.best
-        out.facts.append(Fact(f"{track.name} streak ({track.rule}): days in a row up to today", len(run), "days"))
-        out.facts.append(Fact(f"{track.name} streak: its longest run", len(best), "days"))
-        out.days |= set(run) | set(best)  # so "since Wednesday" can be said
-        today = track.today
-        if today.status == "at_risk" and today.remaining is not None and today.remaining > 0:
-            if track.kind == "at_least":  # enough to keep it: 19.2 minutes left is 20 more
-                left = math.ceil(today.remaining - 1e-9)
-                out.facts.append(Fact(f"{track.name} streak: still needed today to keep it", left, STILL_NEEDED.get(track.measure, track.unit)))
+        inferred = " (partly estimated)" if any(day.estimated for day in track.days) else ""
+        out.facts.append(Fact(f"{track.name} streak ({track.rule}): days in a row up to today{inferred}", len(run), "days"))
+        out.facts.append(Fact(f"{track.name} streak: its longest run{inferred}", len(best), "days"))
+        said = f"{track.name} streak: {status_words[track.today.status]}"
+        need = streaks.still_to_go(track, stats.now, stats.tz)
+        room = streaks.room_left(track)
+        if need is not None:
+            amount, doable = need
+            if doable:
+                aim = "to keep it" if run else "to start a new run"
+                out.facts.append(Fact(f"{track.name} streak: still needed today {aim}", amount, track.unit))
             else:
-                out.facts.append(Fact(f"{track.name} streak: left under its limit today", math.floor(today.remaining + 1e-9), track.unit))
-        out.notes.append(f"{track.name} streak: {words[today.status]}"
-                         + (f"; this run is {run[0].isoformat()} to {run[-1].isoformat()}" if run else "; no run right now"))
+                said += "; it can't be kept today any more: there isn't enough of the day left"
+        elif room is not None:
+            out.facts.append(Fact(f"{track.name} streak: room left under its limit today", room, track.unit))
+        if run and (today - run[0]).days < MAX_RANGE_DAYS:
+            out.days.add(run[0])
+            said += f"; this run started on {_on(run[0])}"
+        out.notes.append(said)
     for goal in found.goals.values():
-        if goal.target is None:
-            continue
+        rule = rules.goals[goal.id]
+        estimated = " (estimated)" if goal.today.estimated else ""
         if goal.unit == "time":  # a bedtime, as minutes after 18:00
-            out.facts.append(Fact(f"{goal.name} goal: {goal.rule}", streaks.clock_text(goal.target), "time"))
+            out.facts.append(Fact(f"{goal.name} goal: {goal.rule}", str(rule.show(goal.target or 0)), "time"))
             if goal.today.value is not None:
-                out.facts.append(Fact(f"{goal.name}: fell asleep last night", streaks.clock_text(goal.today.value), "time"))
+                out.facts.append(Fact(f"{goal.name}: fell asleep last night{estimated}", str(rule.show(goal.today.value)), "time"))
         else:
-            out.facts.append(Fact(f"{goal.name} goal: {goal.rule}", round(goal.target), "minutes"))
+            out.facts.append(Fact(f"{goal.name} goal: {goal.rule}", round(goal.target or 0), goal.unit))
             if goal.today.value is not None:
-                out.facts.append(Fact(f"{goal.name}: today so far", round(goal.today.value), "minutes"))
+                toward = math.floor(goal.today.value + 1e-9) if goal.kind == "at_least" else math.ceil(goal.today.value - 1e-9)
+                out.facts.append(Fact(f"{goal.name}: today so far{estimated}", toward, goal.unit))
+        out.notes.append(f"{goal.name} goal: {status_words[goal.today.status].replace('today', 'for today')}"
+                         .replace("for for today", "for today"))
     return out
 
 
@@ -642,13 +657,14 @@ def date_guide(today: date) -> DateGuide:
 def system_prompt(today: date, tz_name: str) -> str:
     return (
         "You answer questions about the person's own day from their Daytrace data (screen time per app, site, "
-        "category and device; sessions; focus; phone pickups; sleep; calendar), speaking to them as \"you\". "
-        f"Today is {_on(today)} ({tz_name}). {date_guide(today).text} Call the tools to get facts; "
-        f"each covers at most {MAX_RANGE_DAYS} days, and you may call at most {MAX_TOOL_CALLS}. Use only numbers from "
+        "category and device; sessions; focus; phone pickups; sleep; calendar; streaks and daily goals), speaking to "
+        f"them as \"you\". Today is {_on(today)} ({tz_name}). {date_guide(today).text} Call the tools to get facts; "
+        f"each covers at most {MAX_RANGE_DAYS} days (get_streaks needs no range: it gives the runs up to today), and you "
+        f"may call at most {MAX_TOOL_CALLS}. Use only numbers from "
         "the tool results: never estimate, add up or work out a number yourself (minutes may be written as hours and "
         "minutes, 125 minutes = 2 hours 5 minutes). If the tools found no data, say so. Answer in 1 to 4 short "
         "sentences, with no lists or headings. If the question is not about the person's own day, screen time, apps, "
-        f"focus, sleep, calendar or habits, reply with just {OFF_TOPIC}."
+        f"focus, sleep, calendar, streaks, goals or habits, reply with just {OFF_TOPIC}."
     )
 
 
@@ -683,7 +699,8 @@ def _value_text(fact: Fact) -> str:
         return f"{fact.value} per hour"
     if fact.unit in ("times", "time"):
         return str(fact.value)
-    return f"{fact.value} {fact.unit}"  # a count of something: "4 sessions"
+    unit = fact.unit[:-1] if str(fact.value) == "1" and fact.unit.endswith("s") else fact.unit
+    return f"{fact.value} {unit}"  # a count of something: "4 sessions", "1 day"
 
 
 def facts_answer(facts: Sequence[Fact]) -> str:
@@ -739,7 +756,7 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
 
     started = monotonic()
     with database.connect() as conn:
-        stats = Stats(conn, tz, tz_name, now)
+        stats = Stats(conn, tz, tz_name, now, database=database)
         while True:
             offer_tools = len(called) < MAX_TOOL_CALLS
             if called and monotonic() - started > BUDGET_SECONDS:

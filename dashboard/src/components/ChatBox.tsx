@@ -37,6 +37,7 @@ const TOOL_NAMES: Record<string, string> = {
   get_sleep: "Sleep",
   get_calendar: "Calendar",
   compare_plan: "Plan vs actual",
+  get_streaks: "Streaks",
 };
 
 // --- shared pieces ---------------------------------------------------------------------------------------------
