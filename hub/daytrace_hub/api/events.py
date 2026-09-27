@@ -27,7 +27,7 @@ from ..models import (
     RejectedEvent,
     parse_batch,
 )
-from ..redaction import REDACTED, redactor_for
+from ..redaction import REDACTED, redacted_forms, redactor_for
 from . import API_PREFIX, ApiError
 
 # 500 events always fit: the models cap data at 16 KB and text fields at a few hundred characters.
@@ -89,11 +89,75 @@ def event_row(event: Event) -> tuple[Any, ...]:
     )
 
 
+REDACTABLE_FIELDS = ("title", "app", "app_id")
+HIDE_SQL = "UPDATE events SET title = ?, app = ?, app_id = ?, data = ?, updated_at = ? WHERE device_id = ? AND dedup_key = ?"
+
+
+def _site(data: str) -> Any:
+    return json.loads(data).get("domain")
+
+
+def _data_redacted(stored: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    """Whether the two copies' data differ only by what redaction takes out: a redacted calendar event's extras, or
+    a web event's site."""
+    if stored["kind"] == "calendar_event":
+        return REDACTED in (stored["title"], incoming["title"])
+    if stored["kind"] == "web":
+        left, right = json.loads(stored["data"]), json.loads(incoming["data"])
+        rest_left = {key: value for key, value in left.items() if key != "domain"}
+        rest_right = {key: value for key, value in right.items() if key != "domain"}
+        return REDACTED in (left.get("domain"), right.get("domain")) and rest_left == rest_right
+    return False
+
+
 def same_event(stored: dict[str, Any], incoming: dict[str, Any]) -> bool:
-    """Whether two copies of an event say the same thing: every identity field equal, except that a title
-    redacted on either side (DT-44) matches any title, with the data that goes with it."""
-    redacted = REDACTED in (stored["title"], incoming["title"])
-    return all(stored[name] == incoming[name] for name in IDENTITY_FIELDS if not (redacted and name in ("title", "data")))
+    """Whether two copies of an event say the same thing: every identity field equal, except what redaction
+    (DT-44) hid on either side: a title, an app's name or id, a web event's site, a calendar event's extras."""
+    for name in IDENTITY_FIELDS:
+        if stored[name] == incoming[name]:
+            continue
+        if name in REDACTABLE_FIELDS and REDACTED in (stored[name], incoming[name]):
+            continue
+        if name == "data" and _data_redacted(stored, incoming):
+            continue
+        return False
+    return True
+
+
+def hides_more(stored: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    """Whether the incoming copy of the same event hides something the stored one still shows."""
+    if any(incoming[name] == REDACTED != stored[name] for name in REDACTABLE_FIELDS):
+        return True
+    if incoming["kind"] == "web":
+        return _site(incoming["data"]) == REDACTED != _site(stored["data"])
+    return incoming["kind"] == "calendar_event" and incoming["title"] == REDACTED and incoming["data"] != stored["data"]
+
+
+def _hide(conn: sqlite3.Connection, incoming: dict[str, Any], now: str, device_id: str, key: str) -> None:
+    """The stored copy of an event, redacted as the incoming copy is: the same event, now under a rule."""
+    conn.execute(HIDE_SQL, (incoming["title"], incoming["app"], incoming["app_id"], incoming["data"], now, device_id, key))
+
+
+def _content_copy(conn: sqlite3.Connection, device_id: str, original: Event, event: Event, key: str, now: str) -> bool:
+    """For an event with neither seq nor external_id (its key is a hash of what it says): whether it was stored
+    already under the rules as they were, so it is one event, not two. Stored before a rule that hides it now: that
+    copy is redacted and keyed again here. Stored while a rule (since switched off) hid it: the hidden copy stays."""
+    if conn.execute("SELECT 1 FROM events WHERE device_id = ? AND dedup_key = ?", (device_id, key)).fetchone():
+        return False  # the usual path finds it
+    if event is not original:
+        earlier = original.dedup_key()
+        if not conn.execute("SELECT 1 FROM events WHERE device_id = ? AND dedup_key = ?", (device_id, earlier)).fetchone():
+            return False
+        incoming = dict(zip(ROW_FIELDS, event_row(event), strict=True))
+        try:
+            conn.execute("UPDATE events SET title = ?, app = ?, app_id = ?, data = ?, updated_at = ?, dedup_key = ?"
+                         " WHERE device_id = ? AND dedup_key = ?",
+                         (incoming["title"], incoming["app"], incoming["app_id"], incoming["data"], now, key, device_id, earlier))
+        except sqlite3.IntegrityError:  # redacted, it matches an event already stored: one copy is kept
+            conn.execute("DELETE FROM events WHERE device_id = ? AND dedup_key = ?", (device_id, earlier))
+        return True
+    return any(conn.execute("SELECT 1 FROM events WHERE device_id = ? AND dedup_key = ?", (device_id, form)).fetchone()
+               for form in redacted_forms(original))
 
 
 def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[int, Event]]) -> StoreResult:
@@ -115,10 +179,13 @@ def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[in
     now = utc_text(datetime.now(UTC))
     result = StoreResult()
     redactor = redactor_for(conn)
-    for index, event in events:
-        event = redactor.event(event)
+    for index, original in events:
+        event = redactor.event(original)
         key = event.dedup_key()
         row = event_row(event)
+        if event.seq is None and event.external_id is None and _content_copy(conn, device_id, original, event, key, now):
+            result.duplicates += 1
+            continue
         if conn.execute(INSERT_SQL, (device_id, key, *row, now)).rowcount:
             result.accepted += 1
             result.new_events.append(event)
@@ -131,6 +198,8 @@ def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[in
             older = stored["seq"] is not None and event.seq is not None and event.seq < stored["seq"]
             if older:
                 result.duplicates += 1
+                if same_event(stored, incoming) and hides_more(stored, incoming):
+                    _hide(conn, incoming, now, device_id, key)  # a slow retry, but it hides what the stored copy shows
             else:
                 conn.execute(UPDATE_SQL, (*row, now, device_id, key))
                 result.replaced += 1
@@ -149,10 +218,8 @@ def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[in
             )
         else:
             result.duplicates += 1
-            if incoming["title"] == REDACTED and stored["title"] != REDACTED:
-                # The same event, now under a rule: its stored words go too.
-                conn.execute("UPDATE events SET title = ?, data = ?, updated_at = ? WHERE device_id = ? AND dedup_key = ?",
-                             (REDACTED, incoming["data"], now, device_id, key))
+            if hides_more(stored, incoming):
+                _hide(conn, incoming, now, device_id, key)  # the same event, now under a rule: its stored words go too
     return result
 
 

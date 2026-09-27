@@ -420,6 +420,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/privacy/redaction/stored": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How many stored events the rules would hide */
+        get: operations["stored_redaction_api_v1_privacy_redaction_stored_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/privacy/redaction/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Hide the stored events the rules match (can't be undone) */
+        post: operations["apply_redaction_api_v1_privacy_redaction_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -562,6 +596,19 @@ export interface components {
             /** Minutes */
             minutes: number;
         };
+        /** Applied */
+        Applied: {
+            /** Redacted */
+            redacted: number;
+        };
+        /** ApplyRules */
+        ApplyRules: {
+            /**
+             * Confirm
+             * @description Must be true: hiding stored words can't be undone.
+             */
+            confirm: boolean;
+        };
         /** AskIn */
         AskIn: {
             /**
@@ -670,7 +717,7 @@ export interface components {
             name: string;
             /**
              * Words
-             * @description Words or phrases, matched whole and ignoring case, in titles and app names.
+             * @description Words or phrases, matched whole and ignoring case, in titles, app names and sites.
              */
             words: string[];
         };
@@ -1367,6 +1414,14 @@ export interface components {
             /** Device Id */
             device_id: string;
         };
+        /** StoredMatches */
+        StoredMatches: {
+            /**
+             * Matches
+             * @description Stored events whose title, app or site the rules in force would hide.
+             */
+            matches: number;
+        };
         /** Story */
         Story: {
             /**
@@ -1581,11 +1636,16 @@ export interface components {
         /** TitleCheck */
         TitleCheck: {
             /** Title */
-            title: string;
+            title?: string | null;
             /** App */
             app?: string | null;
             /** App Id */
             app_id?: string | null;
+            /**
+             * Domain
+             * @description A site, as the browser extension sends it.
+             */
+            domain?: string | null;
         };
         /** TitleCheckResult */
         TitleCheckResult: {
@@ -1593,9 +1653,9 @@ export interface components {
             redacted: boolean;
             /**
              * Stored As
-             * @description The title as the hub would store it.
+             * @description The title (or, for a site alone, the site) as the hub would store it.
              */
-            stored_as: string;
+            stored_as: string | null;
             /**
              * Rule
              * @description The id of the rule that matched.
@@ -2574,6 +2634,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TitleCheckResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stored_redaction_api_v1_privacy_redaction_stored_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoredMatches"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_redaction_api_v1_privacy_redaction_apply_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyRules"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Applied"];
                 };
             };
             /** @description Validation Error */

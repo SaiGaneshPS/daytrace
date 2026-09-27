@@ -137,19 +137,20 @@ def test_your_words_match_whole_words_in_titles_and_app_names(client: TestClient
     assert [row["title"] for row in rows(db)] == [REDACTED, "Google Maps - Google Chrome", REDACTED]
 
 
-@pytest.mark.parametrize("body", [
-    {"disabled": ["everything"]},
-    {"custom": [{"name": "Empty", "words": []}]},
-    {"custom": [{"name": "Short", "words": ["a"]}]},
-    {"custom": [{"name": "Long", "words": ["x" * 101]}]},
-    {"custom": [{"name": "Hidden", "words": ["ab\u200bcd"]}]},
-    {"custom": [{"name": "", "words": ["fine"]}]},
-    {"custom": [{"name": f"Rule {n}", "words": ["fine"]} for n in range(21)]},
-    {"custom": [{"name": "Many", "words": [f"word{n}" for n in range(51)]}]},
+@pytest.mark.parametrize(("body", "status"), [
+    ({"disabled": ["everything"]}, 400),
+    ({"custom": [{"name": "Empty", "words": []}]}, 400),
+    ({"custom": [{"name": "Short", "words": ["a"]}]}, 400),
+    ({"custom": [{"name": "Long", "words": ["x" * 101]}]}, 400),
+    ({"custom": [{"name": "Hidden", "words": ["ab\u200bcd"]}]}, 400),
+    ({"custom": [{"name": "Symbols", "words": ["--"]}]}, 400),
+    ({"custom": [{"name": "", "words": ["fine"]}]}, 400),
+    ({"custom": [{"name": f"Rule {n}", "words": ["fine"]} for n in range(21)]}, 422),  # too many: refused as it is read
+    ({"custom": [{"name": "Many", "words": [f"word{n}" for n in range(51)]}]}, 422),
 ])
-def test_rules_that_cannot_be_saved_are_refused(client: TestClient, body: dict[str, Any]) -> None:
+def test_rules_that_cannot_be_saved_are_refused(client: TestClient, body: dict[str, Any], status: int) -> None:
     response = put_rules(client, body)
-    assert response.status_code == 400, response.text
+    assert response.status_code == status, response.text
     assert response.json()["error"]["message"]
     assert client.get("/api/v1/privacy/redaction").json()["rules"][-1]["id"] == "private"  # nothing was saved
 
@@ -233,3 +234,148 @@ def test_the_tracker_never_holds_a_sensitive_title(db: Database, monkeypatch: py
 def test_the_tracker_service_redacts_by_default(db: Database, tmp_path: Path) -> None:
     service = TrackerService(db, Script(), "windows", "PC", tmp_path / "tracker.lock")
     assert isinstance(service.redact, LiveRedactor)
+
+
+# --- the bug review's cases ----------------------------------------------------------------------------------------
+
+
+def shortcut(title: str, app: str = "Safari") -> dict[str, Any]:
+    """An event from a stateless collector (iPhone Shortcuts): no seq, no external_id, so its key is a hash."""
+    return {"kind": "app_open", "source": "shortcuts", "start": "2026-09-25T14:00:00-04:00", "app": app, "title": title}
+
+
+def test_a_stateless_resend_across_rule_changes_stays_one_event(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    send(client, tokens, "iphone-1", shortcut("Acme roadmap"))
+    put_rules(client, {"custom": [{"name": "Client", "words": ["Acme"]}]})
+    again = send(client, tokens, "iphone-1", shortcut("Acme roadmap"))  # a retry after the rule was added
+    assert (again["accepted"], again["duplicates"]) == (0, 1)
+    (row,) = rows(db, "iphone-1")
+    original = Event.model_validate({**shortcut("Acme roadmap"), "device_id": "iphone-1"})
+    assert row["title"] == REDACTED and row["dedup_key"] == Redactor(redaction.check_choices([], [("C", ["Acme"])])).event(original).dedup_key()
+    put_rules(client, {})  # the rule switched off again
+    once_more = send(client, tokens, "iphone-1", shortcut("Acme roadmap"))
+    assert (once_more["accepted"], once_more["duplicates"]) == (0, 1) and len(rows(db, "iphone-1")) == 1
+
+
+def test_stored_words_survive_rules_that_changed_since(db: Database) -> None:
+    stored = json.dumps({"disabled": ["retired-rule"], "custom": [{"name": "Work", "words": ["Falcon", "x" * 150] + [f"w{n}" for n in range(60)]}]})
+    with db.connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO settings (key, value) VALUES ('redaction', ?)", (stored,))
+    with db.connect() as conn:
+        found = redaction.redactor_for(conn)
+    assert [rule.id for rule in found.rules][-1] == "custom-1" and len(found.custom[0].words) == 62  # nothing dropped
+    assert found.match("Falcon launch") is not None
+
+
+@pytest.mark.parametrize(("title", "hidden"), [
+    ("acme_notes.docx - Word", True), ("Acme2026 plan", True), ("ACME's plan", True), ("Project_Falcon.pptx", True),
+    ("Project  Falcon kickoff", True), ("Project Falcon", True), ("project-falcon", True),
+    ("Acmeville weather", False), ("Falcon Heavy launch", False), ("Project Phoenix", False),
+])
+def test_your_words_match_their_usual_forms(title: str, hidden: bool) -> None:
+    rules = Redactor(redaction.check_choices([], [("Work", ["Acme", "Project Falcon"])]))
+    assert (rules.match(title) is not None) is hidden
+
+
+def test_words_that_differ_only_in_case_are_one_and_both_match(client: TestClient) -> None:
+    body = put_rules(client, {"custom": [{"name": "Street", "words": ["Straße", "STRASSE"]}]}).json()
+    assert body["rules"][-1]["words"] == ["Straße"]
+    for title in ("STRASSE 5", "Straße 5", "strasse 5"):
+        assert client.post("/api/v1/privacy/redaction/check", json={"title": title}).json()["redacted"], title
+
+
+def test_an_older_retry_still_hides_the_stored_words(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    event = {**window(9, "Falcon plan - Word", app="Word", app_id="WINWORD.EXE"), "external_id": "tracker:2:1"}
+    send(client, tokens, "windows-2", event)
+    put_rules(client, {"custom": [{"name": "Work", "words": ["Falcon"]}]})
+    result = send(client, tokens, "windows-2", {**event, "seq": 8})  # a slow retry of an older copy
+    assert result["duplicates"] == 1 and rows(db)[0]["title"] == REDACTED
+
+
+def test_a_huge_request_is_refused_at_once(client: TestClient) -> None:
+    import time as clock
+
+    started = clock.perf_counter()
+    response = put_rules(client, {"custom": [{"name": "Big", "words": [f"word{n}" for n in range(20000)]}]})
+    assert response.status_code == 422 and clock.perf_counter() - started < 2.0
+
+
+def test_sites_are_redacted_too(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    with db.connect() as conn, transaction(conn):
+        extension = register_device(conn, device_id="browser-1", name="Edge extension", device_type="browser")
+    put_rules(client, {"custom": [{"name": "Client", "words": ["Acme"]}]})
+    web = {"kind": "web", "source": "browser", "start": "2026-09-25T14:00:00-04:00", "end": "2026-09-25T14:05:00-04:00", "app_id": "msedge.exe"}
+    domains = ["onlinebanking.rbc.com", "mychart.example.org", "www.paypal.com", "acme.com", "github.com"]
+    send(client, {**tokens, "browser-1": extension}, "browser-1",
+         *({**web, "seq": n, "data": {"domain": domain}} for n, domain in enumerate(domains, start=1)))
+    stored = [json.loads(row["data"])["domain"] for row in rows(db, "browser-1")]
+    assert stored == [REDACTED, REDACTED, REDACTED, REDACTED, "github.com"]
+    check = client.post("/api/v1/privacy/redaction/check", json={"domain": "mychart.example.org"}).json()
+    assert check["redacted"] and check["rule"] == "health"
+
+
+def test_your_word_in_an_app_name_hides_the_name_too(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    put_rules(client, {"custom": [{"name": "Client", "words": ["Acme"]}]})
+    send(client, tokens, "windows-2", window(1, "Connected", app="Acme VPN", app_id="AcmeVPN.exe"),
+         window(2, "Home", app="1Password", app_id="1Password.exe"))
+    first, second = rows(db)
+    assert (first["title"], first["app"], first["app_id"]) == (REDACTED, REDACTED, REDACTED)  # the word itself is hidden
+    assert (second["title"], second["app"]) == (REDACTED, "1Password")  # a built-in rule keeps the app name
+
+
+def test_applying_the_rules_to_stored_events(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    send(client, tokens, "windows-2", window(1, "Acme roadmap - Word", app="Word", app_id="WINWORD.EXE"),
+         window(2, "stats.py - daytrace", app="Code", app_id="Code.exe"))
+    send(client, tokens, "iphone-1", shortcut("Acme notes"), {**shortcut("Acme notes"), "title": "Acme todo"})
+    put_rules(client, {"custom": [{"name": "Client", "words": ["Acme"]}]})
+    assert client.get("/api/v1/privacy/redaction/stored").json() == {"matches": 3}
+    assert rows(db)[0]["title"] == "Acme roadmap - Word"  # saving a rule leaves history alone
+    refused = client.post("/api/v1/privacy/redaction/apply", json={"confirm": False})
+    assert refused.status_code == 400
+    assert client.post("/api/v1/privacy/redaction/apply", json={"confirm": True}).json() == {"redacted": 3}
+    assert [row["title"] for row in rows(db)] == [REDACTED, "stats.py - daytrace"]
+    phone = rows(db, "iphone-1")
+    assert [row["title"] for row in phone] == [REDACTED]  # two notes at one moment, the same once redacted: one kept
+    redacted = Event.model_validate({**shortcut(REDACTED), "device_id": "iphone-1"})
+    assert phone[0]["dedup_key"] == redacted.dedup_key()  # keyed again: no hash of the old title is left
+    assert client.get("/api/v1/privacy/redaction/stored").json() == {"matches": 0}
+    with TestClient(client.app, client=PHONE) as other:
+        as_collector = {"Authorization": f"Bearer {tokens['windows-2']}"}
+        assert other.post("/api/v1/privacy/redaction/apply", json={"confirm": True}, headers=as_collector).status_code == 403
+
+
+def test_a_reused_seq_with_other_data_is_still_a_conflict(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    send(client, tokens, "windows-2", window(5, "Acme plan - Word", app="Word", app_id="WINWORD.EXE", data={"monitor": 1}))
+    put_rules(client, {"custom": [{"name": "Client", "words": ["Acme"]}]})
+    result = send(client, tokens, "windows-2", window(5, "Acme draft - Word", app="Word", app_id="WINWORD.EXE", data={"monitor": 2}))
+    assert [item["code"] for item in result["rejected"]] == ["seq_conflict"]  # a redacted title isn't a pass for other data
+
+
+@pytest.mark.parametrize("title", ["Test results - pytest", "dr.py - daytrace - Visual Studio Code", "pharmacy.ts - Visual Studio Code",
+                                   "Clinic.cs - Rider", "paypal_client.py - daytrace"])
+def test_code_named_like_a_rule_is_not_redacted(title: str) -> None:
+    assert Redactor().match(title, "Visual Studio Code", "Code.exe") is None
+
+
+def test_a_calendar_event_sent_redacted_keeps_only_whether_it_is_all_day(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    event = {"kind": "calendar_event", "source": "shortcuts", "external_id": "cal:2", "title": REDACTED,
+             "start": "2026-09-25T16:00:00-04:00", "end": "2026-09-25T17:00:00-04:00",
+             "data": {"all_day": False, "location": "12 Clinic Road"}}
+    send(client, tokens, "iphone-1", event)
+    assert json.loads(rows(db, "iphone-1")[0]["data"]) == {"all_day": False}
+
+
+def test_redaction_stays_quick_with_many_rules(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    import time as clock
+
+    rules = [{"name": f"Rule {n}", "words": [f"secret{n} word{w}" for w in range(50)]} for n in range(20)]
+    assert put_rules(client, {"custom": rules}).status_code == 200
+    events = [window(n, f"Report {n} - Word", app="Word", app_id="WINWORD.EXE") for n in range(1, 501)]
+    started = clock.perf_counter()
+    send(client, tokens, "windows-2", *events)
+    assert clock.perf_counter() - started < 3.0  # 500 events against 1,000 phrases, the write lock held briefly
+
+
+def test_keeper_is_a_password_manager() -> None:
+    found = Redactor().match("Home", "Keeper Password Manager", "keeperpasswordmanager.exe")
+    assert found is not None and found.id == "passwords"

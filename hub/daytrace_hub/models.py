@@ -194,22 +194,29 @@ class Event(BaseModel):
             return f"ext:{self.external_id}"
         if self.seq is not None:
             return f"seq:{self.seq}"
-        content = {
-            "kind": self.kind.value,
-            "start": self.start.astimezone(UTC).isoformat(),
-            "end": self.end.astimezone(UTC).isoformat() if self.end else None,
-            "app": self.app,
-            "app_id": self.app_id,
-            "title": self.title,
-            "data": self.data,
-        }
-        digest = hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return f"content:{digest}"
+        return content_key(self.kind.value, self.start, self.end, self.app, self.app_id, self.title, self.data)
 
     @property
     def replaces_existing(self) -> bool:
         """True when a newer copy should overwrite a stored event with the same key (external IDs only)."""
         return self.external_id is not None
+
+
+def content_key(kind: str, start: datetime, end: datetime | None, app: str | None, app_id: str | None,
+                title: str | None, data: dict[str, Any]) -> str:
+    """The key of an event from a stateless collector: a hash of what it says (also used to key a stored event
+    again after redaction changed it, DT-44)."""
+    content = {
+        "kind": kind,
+        "start": start.astimezone(UTC).isoformat(),
+        "end": end.astimezone(UTC).isoformat() if end else None,
+        "app": app,
+        "app_id": app_id,
+        "title": title,
+        "data": data,
+    }
+    digest = hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return f"content:{digest}"
 
 
 def _is_blank(value: Any) -> bool:

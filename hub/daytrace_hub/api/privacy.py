@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ..auth import Editor, Reader, get_database
 from ..db import Database, transaction
@@ -17,12 +18,14 @@ from ..redaction import (
     MAX_CUSTOM_RULES,
     MAX_WORDS,
     REDACTED,
+    WORD_LENGTH,
     Redactor,
     RulesError,
     builtin_rules,
     check_choices,
     redactor_for,
     save_choices,
+    stored_matches,
 )
 from . import API_PREFIX, ApiError
 
@@ -43,26 +46,30 @@ class RedactionRules(BaseModel):
     rules: list[RedactionRule]
 
 
+# The sizes are checked as the request is read, so an oversized one is refused before any work (422).
 class CustomRule(BaseModel):
-    name: str
-    words: list[str] = Field(description="Words or phrases, matched whole and ignoring case, in titles and app names.")
+    name: str = Field(max_length=200)
+    words: list[Annotated[str, Field(max_length=4 * WORD_LENGTH[1])]] = Field(
+        max_length=MAX_WORDS, description="Words or phrases, matched whole and ignoring case, in titles, app names and sites.")
 
 
 class RedactionChoices(BaseModel):
-    disabled: list[str] = Field(default_factory=list, description="Built-in rules to switch off, by id.")
-    custom: list[CustomRule] = Field(default_factory=list, description=f"Your own rules, up to {MAX_CUSTOM_RULES}, "
-                                                                          f"each with up to {MAX_WORDS} words or phrases.")
+    disabled: list[Annotated[str, Field(max_length=100)]] = Field(default_factory=list, max_length=20,
+                                                                  description="Built-in rules to switch off, by id.")
+    custom: list[CustomRule] = Field(default_factory=list, max_length=MAX_CUSTOM_RULES,
+                                     description=f"Your own rules, up to {MAX_CUSTOM_RULES}, each with up to {MAX_WORDS} words or phrases.")
 
 
 class TitleCheck(BaseModel):
-    title: str = Field(max_length=500)
+    title: str | None = Field(default=None, max_length=500)
     app: str | None = Field(default=None, max_length=200)
     app_id: str | None = Field(default=None, max_length=200)
+    domain: str | None = Field(default=None, max_length=253, description="A site, as the browser extension sends it.")
 
 
 class TitleCheckResult(BaseModel):
     redacted: bool
-    stored_as: str = Field(description="The title as the hub would store it.")
+    stored_as: str | None = Field(description="The title (or, for a site alone, the site) as the hub would store it.")
     rule: str | None = Field(description="The id of the rule that matched.")
     rule_name: str | None
 
@@ -97,6 +104,31 @@ def put_redaction(body: RedactionChoices, _: Editor, database: Annotated[Databas
 @router.post("/privacy/redaction/check", response_model=TitleCheckResult, summary="Try a title against the rules in force")
 def check_title(body: TitleCheck, _: Reader, database: Annotated[Database, Depends(get_database)]) -> TitleCheckResult:
     with database.connect() as conn:
-        rule = redactor_for(conn).match(body.title, body.app, body.app_id)
-    return TitleCheckResult(redacted=rule is not None, stored_as=REDACTED if rule else body.title,
+        rule = redactor_for(conn).match(body.title, body.app, body.app_id, body.domain)
+    shown = body.title if body.title is not None else body.domain
+    return TitleCheckResult(redacted=rule is not None, stored_as=REDACTED if rule else shown,
                             rule=rule.id if rule else None, rule_name=rule.name if rule else None)
+
+
+class StoredMatches(BaseModel):
+    matches: int = Field(description="Stored events whose title, app or site the rules in force would hide.")
+
+
+class ApplyRules(BaseModel):
+    confirm: bool = Field(description="Must be true: hiding stored words can't be undone.")
+
+
+class Applied(BaseModel):
+    redacted: int
+
+
+@router.get("/privacy/redaction/stored", response_model=StoredMatches, summary="How many stored events the rules would hide")
+async def stored_redaction(_: Reader, database: Annotated[Database, Depends(get_database)]) -> StoredMatches:
+    return StoredMatches(matches=await run_in_threadpool(stored_matches, database))
+
+
+@router.post("/privacy/redaction/apply", response_model=Applied, summary="Hide the stored events the rules match (can't be undone)")
+async def apply_redaction(body: ApplyRules, _: Editor, database: Annotated[Database, Depends(get_database)]) -> Applied:
+    if not body.confirm:
+        raise ApiError(400, "bad_request", "hiding stored words can't be undone: send confirm true to go ahead")
+    return Applied(redacted=await run_in_threadpool(stored_matches, database, apply=True))
