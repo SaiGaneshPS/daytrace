@@ -5,7 +5,6 @@ agrees: the timeline's lanes, the hero cards and the story all count the same pi
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import date
 from typing import Annotated
 
@@ -16,7 +15,7 @@ from ..auth import Reader, get_database
 from ..db import Database
 from ..stats import DESK_TYPES, PHONE_TYPES, Stats
 from . import API_PREFIX, ApiError
-from .timeline import EARLIEST, LATEST, current_time, minutes, resolve_tz
+from .timeline import EARLIEST, LATEST, current_time, resolve_tz
 
 router = APIRouter(prefix=API_PREFIX, tags=["insights"])
 TOP_APPS = 10
@@ -31,8 +30,9 @@ class AppMinutes(BaseModel):
 class DaySummary(BaseModel):
     date: date
     tz: str
-    in_progress: bool = Field(description="True while the day is not over: the numbers are the day so far.")
+    in_progress: bool = Field(description="True while the day is going (it has begun and not ended): the numbers so far.")
     screen_minutes: float | None = Field(description="Screen time, per device and added up (as the timeline); null without screen data.")
+    screen_estimated: bool = Field(description="True when some screen time was inferred (an iPhone app without a close).")
     phone_minutes: float | None
     computer_minutes: float | None
     focused_minutes: float | None = Field(description="Work or study in blocks of 10+ minutes with no phone distraction.")
@@ -46,41 +46,6 @@ class DaySummary(BaseModel):
     estimated: bool = Field(description="True when any of this was inferred (an iPhone app without a close, a guessed night).")
 
 
-def day_steps(stats: Stats, day: date) -> int | None:
-    """The day's steps: per device, the step counts that started this day added up; the largest device total wins
-    (two phones syncing one Health account send the same steps twice)."""
-    window = stats.day(day)
-    by_device: dict[str, int] = defaultdict(int)
-    seen: set[tuple[str, object, object]] = set()
-    for event in window.events:
-        if event.kind != "steps" or not window.start <= event.start < window.end:
-            continue
-        key = (event.device_id, event.start, event.end)
-        if key in seen:
-            continue
-        seen.add(key)
-        count = event.data.get("count")
-        if isinstance(count, int) and count >= 0:
-            by_device[event.device_id] += count
-    return max(by_device.values()) if by_device else None
-
-
-def top_apps(stats: Stats, day: date) -> list[AppMinutes]:
-    """The apps and sites with the most time, from the same pieces totals(group_by="app") counts."""
-    seconds: dict[str, int] = defaultdict(int)
-    by_category: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for piece in stats.day(day).pieces:
-        key = piece.app or piece.app_id or "unknown"
-        seconds[key] += piece.seconds
-        by_category[key][piece.category or "other"] += piece.seconds
-    ranked = sorted(seconds.items(), key=lambda item: (-item[1], item[0]))[:TOP_APPS]
-    return [
-        AppMinutes(app=key, category=max(by_category[key].items(), key=lambda item: (item[1], item[0]))[0],
-                   minutes=minutes(total))
-        for key, total in ranked if total > 0
-    ]
-
-
 def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
     iso = day.isoformat()
     totals = stats.totals(day)
@@ -90,11 +55,13 @@ def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
     focus, score = stats.focused_minutes(day), stats.focus_score(day)
     pickups, switches = stats.pickups(day), stats.switches_per_hour(day)
     sleep = stats.sleep_estimate(day)
+    window = stats.day(day)
     return DaySummary(
         date=day,
         tz=tz_name,
-        in_progress=not stats.day(day).over,
+        in_progress=window.until > window.start and not window.over,  # not a day that hasn't begun
         screen_minutes=totals["total_minutes"] if has_screen else None,
+        screen_estimated=bool(totals["estimated"]),
         phone_minutes=phones["total_minutes"] if has_screen else None,
         computer_minutes=desks["total_minutes"] if has_screen else None,
         focused_minutes=focus["value"],
@@ -103,8 +70,8 @@ def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
         switches_per_hour=switches["value"],
         sleep_minutes=sleep["value"],
         sleep_estimated=bool(sleep["value"] is not None and not sleep.get("measured", False)),
-        steps=day_steps(stats, day),
-        top_apps=top_apps(stats, day) if has_screen else [],
+        steps=stats.steps(day),
+        top_apps=[AppMinutes(**app) for app in stats.top_apps(day, TOP_APPS)] if has_screen else [],
         estimated=bool(totals["estimated"] or (sleep["value"] is not None and not sleep.get("measured", False))),
     )
 

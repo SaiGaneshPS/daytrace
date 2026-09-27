@@ -13,15 +13,15 @@ const session = (start: string, end: string, app: string, category: string, esti
   return { start: at(start), end: at(end), seconds, minutes: Math.round((seconds / 60) * 100) / 100, app, app_id: null, title: null, category, kind: "app", estimated };
 };
 
-function lane(device_id: string, device_type: string, name: string, sessions: Session[], counted = true) {
+function lane(device_id: string, device_type: string, name: string, sessions: Session[], counted = true, last_seen: string | null = null) {
   const seconds = sessions.reduce((sum, s) => sum + s.seconds, 0);
-  return { device_id, device_type, name, counted, seconds, minutes: seconds / 60, sessions };
+  return { device_id, device_type, name, counted, last_seen, seconds, minutes: seconds / 60, sessions };
 }
 
 function timeline(extra: ReturnType<typeof lane>[] = [], estimated = false) {
   const lanes = [
-    lane("windows-1", "windows", "Desk PC", [session("09:00:00", "11:05:00", "Visual Studio Code", "work"), session("13:00:00", "13:20:00", "Steam", "games")]),
-    lane("android-1", "android", "Galaxy phone", [session("12:00:00", "12:30:00", "Instagram", "social", estimated), session("13:30:00", "13:45:00", "YouTube", "video")]),
+    lane("windows-1", "windows", "Desk PC", [session("09:00:00", "11:05:00", "Visual Studio Code", "work"), session("13:00:00", "13:20:00", "Steam", "games")], true, at("12:00:00")),
+    lane("android-1", "android", "Galaxy phone", [session("12:00:00", "12:30:00", "Instagram", "social", estimated), session("13:30:00", "13:45:00", "YouTube", "video")], true, at("13:59:40")),
     lane("browser-1", "browser", "Edge", [session("10:00:00", "10:10:00", "github.com", "work")], false),
     ...extra,
   ];
@@ -45,7 +45,7 @@ function timeline(extra: ReturnType<typeof lane>[] = [], estimated = false) {
 const SUMMARY = {
   date: DAY, tz: "America/Toronto", in_progress: true, screen_minutes: 190, phone_minutes: 45, computer_minutes: 145,
   focused_minutes: 125, focus_score: 71, pickups: 4, switches_per_hour: 1.3, sleep_minutes: 447, sleep_estimated: true,
-  steps: 8412, estimated: true,
+  steps: 8412, estimated: true, screen_estimated: false,
   top_apps: [
     { app: "Visual Studio Code", category: "work", minutes: 125 },
     { app: "Instagram", category: "social", minutes: 30 },
@@ -54,14 +54,16 @@ const SUMMARY = {
   ],
 };
 
-const DEVICES = {
-  devices: [
-    { device_id: "windows-1", name: "Desk PC", device_type: "windows", paired_at: at("08:00:00"), last_seen: at("12:00:00"), revoked_at: null, last_seq: 10, event_count: 10, events_24h: 10 },
-    { device_id: "android-1", name: "Galaxy phone", device_type: "android", paired_at: at("08:00:00"), last_seen: at("13:59:40"), revoked_at: null, last_seq: 5, event_count: 5, events_24h: 5 },
-  ],
-};
-
 test.use({ timezoneId: "America/Toronto", locale: "en-US" });
+
+/** Wait for fades and slides to finish, so axe measures colors as they end up (not halfway through a fade). */
+async function settled(page: Page) {
+  await page.evaluate(() =>
+    Promise.all(
+      document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
+}
 
 async function mockHub(page: Page, timelines: (count: number, url: URL) => object = () => timeline()) {
   const seen = { timeline: [] as URL[] };
@@ -76,7 +78,6 @@ async function mockHub(page: Page, timelines: (count: number, url: URL) => objec
     const date = new URL(route.request().url()).searchParams.get("date");
     return route.fulfill({ json: { ...SUMMARY, date, in_progress: date === DAY } }); // only today is still going
   });
-  await page.route("**/api/v1/devices", (route) => route.fulfill({ json: DEVICES }));
   return seen;
 }
 
@@ -135,7 +136,7 @@ test("the sub-tabs: apps, devices and health", async ({ page }) => {
   await tabs.getByRole("tab", { name: "Apps" }).click();
   const apps = page.getByRole("region", { name: "Top apps and sites" });
   await expect(apps.locator(".chart")).toHaveAttribute("aria-label", /Top 4 apps and sites/);
-  await expect(apps.getByText("Estimated").first()).toBeVisible();
+  await expect(apps.getByText("Estimated")).toHaveCount(0); // no screen time was inferred (sleep was)
   await tabs.getByRole("tab", { name: "Devices" }).click();
   const devices = page.getByRole("region", { name: "Minutes per device" });
   await expect(devices.locator(".chart canvas")).toBeVisible();
@@ -181,6 +182,7 @@ for (const scheme of ["light", "dark"] as const) {
     await mockHub(page);
     await page.goto("/");
     await expect(page.locator(".timeline-chart canvas")).toBeVisible();
+    await settled(page);
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
     expect(results.violations.map((v) => `${v.id} (${v.nodes.length}): ${v.help}`)).toEqual([]);
   });
@@ -195,4 +197,117 @@ test("screenshots of Today for review", async ({ page }, testInfo) => {
     await page.waitForTimeout(300);
     await page.screenshot({ path: testInfo.outputPath(`today-${scheme}.png`), fullPage: true });
   }
+});
+
+// --- review fixes ----------------------------------------------------------------------------------------------------
+
+test("when the day's numbers can't load, the cards and tabs say so", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page);
+  await page.route("**/api/v1/insights/day?**", (route) => route.fulfill({ status: 500, json: { error: { code: "x", message: "stats broke" } } }));
+  await page.goto("/");
+  for (const name of ["Phone and computer", "Focused time", "Phone pickups"]) {
+    await expect(page.getByRole("region", { name })).toContainText("Couldn't load", { timeout: 8_000 });
+    await expect(page.getByRole("region", { name })).toContainText("stats broke");
+  }
+  await page.getByRole("tab", { name: "Apps" }).click();
+  await expect(page.getByRole("region", { name: "Top apps and sites" })).toContainText("The apps couldn't load: stats broke");
+});
+
+test("a slow refresh is never cut off by the next one", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const tablet = lane("android-2", "android", "Tablet", [session("13:50:00", "13:58:00", "WhatsApp", "comms")]);
+  const seen = { count: 0 };
+  await mockHub(page);
+  await page.route("**/api/v1/timeline?**", async (route) => {
+    seen.count += 1;
+    if (seen.count === 2) await new Promise((resolve) => setTimeout(resolve, 4_500)); // slower than the 3 s refresh
+    await route.fulfill({ json: seen.count >= 2 ? timeline([tablet]) : timeline() });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("list", { name: "Devices" }).getByRole("listitem")).toHaveCount(3);
+  await page.waitForTimeout(6_500); // the second request is still on its way
+  expect(seen.count).toBe(2); // no third request piled on (or cut the second off)
+  await expect(page.getByRole("list", { name: "Devices" }).getByRole("listitem").filter({ hasText: "Tablet" })).toBeVisible();
+});
+
+test("a failed day's error doesn't show for the next day while it loads", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page);
+  await page.route("**/api/v1/timeline?**", async (route) => {
+    const date = new URL(route.request().url()).searchParams.get("date");
+    if (date === DAY) return route.fulfill({ status: 404, json: { error: { code: "not_found", message: "gone" } } });
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    return route.fulfill({ json: { ...timeline(), date } });
+  });
+  await page.goto("/");
+  const card = page.getByRole("region", { name: "Timeline" });
+  await expect(card).toContainText("The timeline couldn't load: gone");
+  await expect(page.getByRole("region", { name: /^Screen time/ })).toContainText("Couldn't load");
+  await page.getByRole("button", { name: "Previous day" }).click();
+  await expect(card).toHaveAttribute("aria-busy", "true"); // loading, not the old error
+  await expect(card).not.toContainText("couldn't load");
+  await expect(card.locator(".timeline-chart canvas")).toBeVisible();
+});
+
+test("the wheel over the timeline scrolls the page (Ctrl and the wheel zoom)", async ({ page, isMobile }) => {
+  test.skip(isMobile, "a mouse wheel");
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page);
+  await page.goto("/");
+  const chart = page.locator(".timeline-chart");
+  await expect(chart.locator("canvas")).toBeAttached();
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  const box = (await chart.boundingBox())!;
+  expect(box.y).toBeLessThan(560); // the chart's top is on screen, the page can still scroll down
+  // Ctrl and the wheel reach the chart's zoom (it takes the event, so the browser doesn't zoom the page); a plain wheel
+  // is left alone.
+  const taken = await chart.locator("canvas").first().evaluate((canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const wheel = (ctrlKey: boolean) => {
+      const event = new WheelEvent("wheel", { deltaY: -100, ctrlKey, bubbles: true, cancelable: true, clientX: rect.x + rect.width / 2, clientY: rect.y + 40 });
+      canvas.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    return { ctrl: wheel(true), plain: wheel(false) };
+  });
+  expect(taken).toEqual({ ctrl: true, plain: false });
+  await page.mouse.move(box.x + box.width / 2, Math.min(box.y + 40, 590));
+  await page.mouse.wheel(0, 400);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+});
+
+test("the zoom stays when the chart is rebuilt (a theme switch)", async ({ page, isMobile }) => {
+  test.skip(isMobile, "Ctrl and the wheel");
+  await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
+  await mockHub(page);
+  await page.goto("/");
+  const chart = page.locator(".timeline-chart");
+  await expect(chart.locator("canvas").first()).toBeVisible();
+  await page.mouse.move(0, 0); // no tooltip in the pictures
+  const framed = await chart.screenshot();
+  await chart.locator("canvas").first().evaluate((canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    for (let i = 0; i < 3; i++) {
+      const init = { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true, clientX: rect.x + rect.width / 2, clientY: rect.y + 40 };
+      canvas.dispatchEvent(new WheelEvent("wheel", init));
+    }
+  });
+  await expect.poll(async () => (await chart.screenshot()).equals(framed)).toBe(false); // zoomed in
+  const zoomed = await chart.screenshot();
+  await page.emulateMedia({ colorScheme: "dark" }); // the chart is made again with the dark theme
+  await expect.poll(async () => (await chart.screenshot()).equals(zoomed)).toBe(false);
+  await page.emulateMedia({ colorScheme: "light" });
+  // Back in light, the chart looks exactly as it did zoomed (a lost zoom would show the whole framed day again).
+  await expect.poll(async () => (await chart.screenshot()).equals(zoomed)).toBe(true);
+});
+
+test("the screen-time badge follows the screen data only", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page, () => timeline([], true)); // the timeline says something is estimated (a guessed night, say)
+  await page.goto("/");
+  const screen = page.getByRole("region", { name: "Screen time so far" });
+  await expect(screen.locator(".stat-value")).toContainText("3h 10m");
+  await expect(screen.getByText("Estimated")).toHaveCount(0); // the hub says no screen time was inferred
 });

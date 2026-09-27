@@ -229,12 +229,13 @@ Example with two devices (the `...` stands for more sessions of the same shape):
 {
   "date": "2026-09-25", "tz": "America/Toronto",
   "lanes": [
-    { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true, "seconds": 4500, "minutes": 75.0,
+    { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true,
+      "last_seen": "2026-09-25T22:41:07.000000Z", "seconds": 4500, "minutes": 75.0,
       "sessions": [ { "start": "2026-09-25T09:00:00-04:00", "end": "2026-09-25T09:40:00-04:00", "seconds": 2400,
         "minutes": 40.0, "app": "Code", "app_id": null, "title": "stats.py", "category": "work", "kind": "app",
         "estimated": false }, "..." ] },
-    { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "counted": true, "seconds": 2100, "minutes": 35.0,
-      "sessions": [ "..." ] } ],
+    { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "counted": true,
+      "last_seen": null, "seconds": 2100, "minutes": 35.0, "sessions": [ "..." ] } ],
   "calendar": [ { "start": "2026-09-25T15:00:00-04:00", "end": "2026-09-25T17:00:00-04:00", "title": "Study: algorithms",
     "all_day": false, "device_id": "iphone-1" } ],
   "sleep": [ { "start": "2026-09-24T23:40:00-04:00", "end": "2026-09-25T07:05:00-04:00", "minutes": 445.0,
@@ -248,6 +249,9 @@ Example with two devices (the `...` stands for more sessions of the same shape):
     "tz": "America/Toronto" }, "source": "real", "estimated": false }
 }
 ```
+
+A lane's `last_seen` is when its device last reached the hub (UTC, updated at most once a minute; null for a device
+that never has, like a seeded one). The Today tab marks a device that synced in the last minute as live.
 
 How the numbers are made (`hub/daytrace_hub/sessions.py`):
 
@@ -414,7 +418,7 @@ engine, so the dashboard never works one out itself:
   "focused_minutes": 45.0, "focus_score": 36, "pickups": 3, "switches_per_hour": 2.3,
   "sleep_minutes": 447.0, "sleep_estimated": true, "steps": 8412,
   "top_apps": [ { "app": "Minecraft", "category": "games", "minutes": 60.0 } ],
-  "estimated": true }
+  "screen_estimated": false, "estimated": true }
 ```
 
 - `screen_minutes` is the timeline's total (per device, added up); `phone_minutes` and `computer_minutes` add up to it.
@@ -422,7 +426,10 @@ engine, so the dashboard never works one out itself:
 - `top_apps`: up to 10 apps and sites, most time first, each with the category holding most of its time.
 - `sleep_minutes`: last night (the night ending this morning). `steps`: the day's steps; when two phones send
   steps, the larger total.
-- `in_progress` is true for today: every number is the day so far.
+- `screen_estimated` is true when some of the screen time was inferred (an iPhone app with no close event);
+  `estimated` is true when anything was (screen time or sleep), so a badge on screen time follows `screen_estimated`.
+- `in_progress` is true only for a day that has begun and not yet ended (today): every number is the day so far.
+  A future day is false, with no data.
 
 The rest of the insights API (DT-41) is planned as:
 

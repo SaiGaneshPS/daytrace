@@ -1,9 +1,10 @@
 // DT-31: Today against a real hub, for the claims mocks can't prove: a seeded day renders in under a second, its
-// total is the sum of its blocks, and a new session shows within 5 seconds. Opt-in: set DAYTRACE_E2E_HUB to a demo or
-// shared-dev hub serving this build, for example
+// total is the sum of its blocks, and a new session shows within 5 seconds. Opt-in: set DAYTRACE_E2E_HUB to a demo
+// hub running on this computer and serving this build, for example
 //   daytrace-hub seed --profile demo && daytrace-hub run --profile demo
 //   DAYTRACE_E2E_HUB=http://localhost:8767 npm run test:e2e
-// It pairs a test device and sends it an event, so it refuses the personal profile.
+// Pairing and revoking only work from the hub's own computer. Each run leaves a revoked "E2E live" device and a
+// 90 second session in that hub (re-seeding the demo profile clears them), so it refuses the personal profile.
 import { expect, type Page, test } from "@playwright/test";
 
 const HUB = process.env.DAYTRACE_E2E_HUB;
@@ -29,9 +30,11 @@ test("a seeded day renders in under a second, and its total is the sum of its bl
   test.skip(isMobile, "once is enough");
   await notPersonal(page);
   await page.goto("/");
-  await expect(page.locator(".timeline-chart canvas")).toBeVisible();
-  const rendered = await page.evaluate(() => performance.now()); // since the navigation started
-  expect(rendered).toBeLessThan(1_000);
+  // Checked on every frame, so the time is when the chart appeared (not when a slower poll noticed it).
+  const appeared = await page.waitForFunction(() => (document.querySelector(".timeline-chart canvas") ? performance.now() : 0), undefined, {
+    polling: "raf",
+  });
+  expect(await appeared.jsonValue()).toBeLessThan(1_000); // since the navigation started
 
   const [day, tz] = await page.evaluate(() => {
     const now = new Date();
@@ -52,7 +55,9 @@ test("a new session shows within 5 seconds", async ({ page, isMobile }) => {
   await notPersonal(page);
   await page.goto("/");
   await expect(page.locator(".timeline-chart canvas")).toBeVisible();
-  const { code } = (await (await page.request.post("/api/v1/pair/start")).json()) as { code: string };
+  const started = await page.request.post("/api/v1/pair/start");
+  expect(started.ok(), "pairing only works on the hub's own computer: run the hub locally").toBe(true);
+  const { code } = (await started.json()) as { code: string };
   const name = `E2E live ${Date.now()}`;
   const claimed = (await (await page.request.post("/api/v1/pair/claim", { data: { code, device_name: name, device_type: "android" } })).json()) as {
     device_id: string;

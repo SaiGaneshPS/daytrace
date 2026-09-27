@@ -23,7 +23,7 @@ import {
 } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMediaQuery, useReducedMotionPreference } from "./motion";
 
 echarts.use([
@@ -160,15 +160,21 @@ export type ChartSettings = {
   /** Update in place instead of replacing the chart: only what changed animates (new blocks slide in, bars
    * re-sort), and the user's zoom and pan stay. For charts that refresh live. Series need stable ids. */
   merge?: boolean;
+  /** Chart events to listen to ("datazoom": the user zoomed or panned). The latest handlers are always used. */
+  events?: Record<string, (params: unknown) => void>;
 };
 
-/** A ref for a chart's <div>. `label` names the chart for screen readers; `option` may be null while loading. */
+/** A ref for a chart's <div>. `label` names the chart for screen readers; `option` may be null while loading, or
+ * a function (memoized) that builds it at the moment it is applied, so it can read state kept in refs (a zoom). */
 export function useEChart(
-  option: ChartOption | null,
+  option: ChartOption | (() => ChartOption) | null,
   label: string,
   settings: ChartSettings = {},
 ): (box: HTMLDivElement | null) => void {
   const merge = settings.merge ?? false;
+  const events = useRef(settings.events);
+  events.current = settings.events;
+  const eventNames = Object.keys(settings.events ?? {}).sort().join(",");
   // A callback ref: the chart is made when the div mounts, whenever that is, and remade if it is replaced.
   const [box, setBox] = useState<HTMLDivElement | null>(null);
   const [chart, setChart] = useState<echarts.ECharts | null>(null);
@@ -180,6 +186,9 @@ export function useEChart(
     const name = `daytrace-${scheme}`;
     echarts.registerTheme(name, chartTheme()); // read again: the tokens differ per scheme
     const instance = echarts.init(box, name, { renderer: "canvas" });
+    for (const event of eventNames ? eventNames.split(",") : []) {
+      instance.on(event, (params: unknown) => events.current?.[event]?.(params));
+    }
     setChart(instance);
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(box);
@@ -188,7 +197,7 @@ export function useEChart(
       instance.dispose();
       setChart(null);
     };
-  }, [box, scheme]);
+  }, [box, scheme, eventNames]);
 
   useEffect(() => {
     if (!box || !chart || !option) return;
@@ -196,12 +205,13 @@ export function useEChart(
     // description (which starts with this label) takes its place.
     box.setAttribute("role", "img");
     box.setAttribute("aria-label", label);
-    const aria = (option.aria as Record<string, unknown> | undefined) ?? {};
+    const built = typeof option === "function" ? option() : option;
+    const aria = (built.aria as Record<string, unknown> | undefined) ?? {};
     chart.setOption(
       resolveTokens({
-        ...option,
+        ...built,
         // Set after the page's option, so no page can switch these off.
-        animation: reduced ? false : (option.animation ?? true),
+        animation: reduced ? false : (built.animation ?? true),
         aria: { ...aria, enabled: true, label: { general: { withoutTitle: `${label}. ` } }, decal: { show: true } },
       }),
       merge ? { replaceMerge: ["series"] } : { notMerge: true },

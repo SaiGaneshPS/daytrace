@@ -35,17 +35,21 @@ type Props = {
   estimated?: boolean;
   /** A category color for the card's accent stripe. */
   tone?: string;
+  /** Why the number couldn't be loaded (shown instead of a skeleton that would never end). */
+  error?: string;
   children?: ReactNode;
 };
 
-export default function StatCard({ label, value, format, unit, hint, estimated, tone, children }: Props) {
+export default function StatCard({ label, value, format, unit, hint, estimated, tone, error, children }: Props) {
   return (
     <motion.section className={`card stat-card${tone ? ` cat-${tone}` : ""}`} aria-label={label} variants={cardVariants}>
       <p className="stat-label">
         <span>{label}</span>
         {estimated && <span className="badge badge-estimated">Estimated</span>}
       </p>
-      {value === undefined ? (
+      {value === undefined && error ? (
+        <p className="stat-value stat-empty">Couldn&apos;t load</p>
+      ) : value === undefined ? (
         <Skeleton height={38} width="65%" radius={10} />
       ) : value === null ? (
         <p className="stat-value stat-empty">No data yet</p>
@@ -55,7 +59,7 @@ export default function StatCard({ label, value, format, unit, hint, estimated, 
           {unit && <span className="stat-unit">{unit}</span>}
         </p>
       )}
-      {hint && <p className="stat-hint">{hint}</p>}
+      {value === undefined && error ? <p className="stat-hint">{error}</p> : hint && <p className="stat-hint">{hint}</p>}
       {children}
     </motion.section>
   );

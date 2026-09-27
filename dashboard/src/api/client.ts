@@ -19,6 +19,7 @@ export const PAIRED_EVENT = "daytrace:paired";
 const TOKEN_KEY = "daytrace.token";
 const RETRIES = 2;
 const RETRY_STATUSES = new Set([502, 503, 504]);
+const TIMEOUT_MS = 15_000; // a hub that went to sleep never answers: give up and say so
 
 // --- types from the schema -----------------------------------------------------------------------------------
 
@@ -154,8 +155,12 @@ async function send<T>(method: string, template: string, options: RawOptions): P
   const attempts = method === "GET" ? RETRIES + 1 : 1;
   for (let attempt = 1; ; attempt++) {
     let response: Response;
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), TIMEOUT_MS);
+    const onAbort = () => timeout.abort();
+    options.signal?.addEventListener("abort", onAbort);
     try {
-      response = await fetch(target, { method, headers, body, signal: options.signal, credentials: "same-origin" });
+      response = await fetch(target, { method, headers, body, signal: timeout.signal, credentials: "same-origin" });
     } catch (error) {
       if (options.signal?.aborted) throw error;
       if (attempt < attempts) {
@@ -163,6 +168,9 @@ async function send<T>(method: string, template: string, options: RawOptions): P
         continue;
       }
       throw new ApiError(0, "unreachable", "Can't reach the hub. Is it running, and is this device on the same network?");
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
     }
     if (RETRY_STATUSES.has(response.status) && attempt < attempts) {
       await wait(retryDelay(attempt, response), options.signal);
@@ -232,13 +240,17 @@ export function useToasts(): Toast[] {
 
 export type Loaded<T> = {
   data: T | undefined;
+  /** The error of the last load of these same options (never one left over from other options). */
   error: ApiError | undefined;
   loading: boolean;
   reload: () => void;
 };
 
+type LoadState<T> = { data: T | undefined; error: ApiError | undefined; errorKey: string | null; loading: boolean };
+
 /** GET `path` when the component shows (and again when the options change or reload() is called). While it
- * reloads, the last data stays. A failure shows a toast unless `quiet`. */
+ * reloads, the last data stays; a reply equal to the last one keeps the same object, so a refresh that changed
+ * nothing re-renders nothing. A failure shows a toast unless `quiet`. */
 export function useApi<P extends PathsWith<"get">>(
   path: P,
   ...[given]: Args<Operation<P, "get">, { enabled?: boolean; quiet?: boolean }>
@@ -246,9 +258,10 @@ export function useApi<P extends PathsWith<"get">>(
   const options = (given ?? {}) as RawOptions & { enabled?: boolean; quiet?: boolean };
   const { enabled = true, quiet = false } = options;
   const key = JSON.stringify([path, options.query ?? null, options.path ?? null]);
-  const [state, setState] = useState<Omit<Loaded<GetReply<P>>, "reload">>({
+  const [state, setState] = useState<LoadState<GetReply<P>>>({
     data: undefined,
     error: undefined,
+    errorKey: null,
     loading: enabled,
   });
   const [attempt, setAttempt] = useState(0);
@@ -263,14 +276,26 @@ export function useApi<P extends PathsWith<"get">>(
     setState((previous) => ({ ...previous, loading: true }));
     const request: RawOptions = { query: query ?? undefined, path: pathParams ?? undefined, signal: controller.signal };
     send<GetReply<P>>("GET", target, request)
-      .then((data) => setState({ data, error: undefined, loading: false }))
+      .then((data) =>
+        setState((previous) => ({
+          data: previous.data !== undefined && JSON.stringify(previous.data) === JSON.stringify(data) ? previous.data : data,
+          error: undefined,
+          errorKey: null,
+          loading: false,
+        })),
+      )
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         const failure = error instanceof ApiError ? error : new ApiError(0, "unexpected", String(error));
         if (!quiet) toast(failure.message);
-        setState((previous) => ({ data: previous.data, error: failure, loading: false }));
+        setState((previous) => ({ data: previous.data, error: failure, errorKey: key, loading: false }));
       });
     return () => controller.abort();
   }, [key, attempt, enabled, quiet]);
-  return { ...state, reload };
+  return {
+    data: state.data,
+    error: state.errorKey === key ? state.error : undefined,
+    loading: state.loading,
+    reload,
+  };
 }

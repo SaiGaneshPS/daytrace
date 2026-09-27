@@ -454,7 +454,7 @@ export interface components {
             tz: string;
             /**
              * In Progress
-             * @description True while the day is not over: the numbers are the day so far.
+             * @description True while the day is going (it has begun and not ended): the numbers so far.
              */
             in_progress: boolean;
             /**
@@ -462,6 +462,11 @@ export interface components {
              * @description Screen time, per device and added up (as the timeline); null without screen data.
              */
             screen_minutes: number | null;
+            /**
+             * Screen Estimated
+             * @description True when some screen time was inferred (an iPhone app without a close).
+             */
+            screen_estimated: boolean;
             /** Phone Minutes */
             phone_minutes: number | null;
             /** Computer Minutes */
@@ -598,6 +603,11 @@ export interface components {
              * @description False for browser-extension lanes, whose time is inside the desktop lane.
              */
             counted: boolean;
+            /**
+             * Last Seen
+             * @description When the device last sent anything (for live dots).
+             */
+            last_seen?: string | null;
             /** Seconds */
             seconds: number;
             /** Minutes */
