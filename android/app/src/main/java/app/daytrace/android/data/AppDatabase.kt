@@ -10,11 +10,12 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-/** DT-23: health and calendar events carry a title and data. Every event already queued stays. */
+/** DT-23: health and calendar events carry a title, data and their own id. Every event already queued stays. */
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE events ADD COLUMN title TEXT")
         db.execSQL("ALTER TABLE events ADD COLUMN data TEXT")
+        db.execSQL("ALTER TABLE events ADD COLUMN is_record INTEGER NOT NULL DEFAULT 0")
     }
 }
 

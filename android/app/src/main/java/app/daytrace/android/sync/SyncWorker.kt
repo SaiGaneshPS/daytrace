@@ -260,20 +260,23 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         return Result.success()
     }
 
-    /** Runs one collector; its failure is its own. A stopped worker still stops. */
-    private suspend fun collecting(collect: suspend () -> Unit) {
-        try {
-            collect()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            // the next sync tries again
-        }
-    }
-
     companion object {
         internal const val PERIODIC = "daytrace-sync"
         internal const val NOW = "daytrace-sync-now"
+
+        /**
+         * Runs one collector; its failure is its own, even an Error (a Health Connect that is mid-update can throw
+         * NoSuchMethodError), so what is stored still goes. A stopped worker still stops.
+         */
+        internal suspend fun collecting(collect: suspend () -> Unit) {
+            try {
+                collect()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // the next sync tries again
+            }
+        }
 
         /** Every 15 minutes (Android's shortest period) while on an unmetered network. Kept across restarts. */
         fun schedule(context: Context) {

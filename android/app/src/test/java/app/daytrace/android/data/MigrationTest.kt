@@ -36,7 +36,8 @@ class MigrationTest {
     @Test
     fun anUpdateKeepsEveryQueuedEventAndItsNumbers() {
         val context = ApplicationProvider.getApplicationContext<Application>()
-        val file = context.getDatabasePath("migration-test.db").apply { parentFile!!.mkdirs(); delete() }
+        val file = context.getDatabasePath("migration-test.db").apply { parentFile!!.mkdirs() }
+        SQLiteDatabase.deleteDatabase(file) // anything a stopped run left behind
         SQLiteDatabase.openOrCreateDatabase(file, null).use { old -> version1.forEach(old::execSQL) }
 
         val db = Room.databaseBuilder(context, AppDatabase::class.java, file.absolutePath)
@@ -49,11 +50,12 @@ class MigrationTest {
             assertEquals(7L to "YouTube", kept.seq to kept.app)
             assertNull(kept.title)
             assertNull(kept.data)
+            assertNull(kept.toPhoneEvent().id) // an app session, not a record
             store.add(listOf(PhoneEvent("steps", "health_connect", 0, 900, data = "{\"count\":1}", id = "steps:2026-09-27")))
             assertEquals(listOf(7L, 8L), store.pending(10).map { it.seq }) // numbering carries on where it was
         } finally {
             db.close()
-            file.delete()
+            SQLiteDatabase.deleteDatabase(file) // with its -wal, -shm and -journal files
         }
     }
 }

@@ -52,10 +52,14 @@ data class PhoneEvent(
     fun isoEnd(zone: ZoneId = ZoneId.systemDefault()): String? = endMs?.let { iso(it, zone) }
 
     companion object {
-        /** DT-23: the prefixes of record ids ([id]); a usage event's key never starts with one. */
-        val RECORD_PREFIXES = listOf("hc:", "steps:", "meal:", "cal:")
+        /**
+         * DT-23: an event's data as JSON with its keys in one order, so the same values always make the same text
+         * (the store compares the text to tell whether a record changed).
+         */
+        fun dataJson(values: Map<String, Any>): String = JSONObject(values.toSortedMap()).toString()
 
-        fun isRecordKey(key: String): Boolean = RECORD_PREFIXES.any(key::startsWith)
+        /** Whether [data] is a JSON object, as the hub needs it. */
+        fun isDataJson(data: String): Boolean = runCatching { JSONObject(data) }.isSuccess
 
         fun iso(epochMs: Long, zone: ZoneId): String =
             OffsetDateTime.ofInstant(Instant.ofEpochMilli(epochMs), zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
@@ -85,6 +89,9 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
      * how many events were added or extended. Commits are on disk before this returns (see AppDatabase).
      */
     fun add(events: List<PhoneEvent>, zone: ZoneId = ZoneId.systemDefault()): Int {
+        // Only this app's own code writes data: data that isn't JSON is a bug, caught here rather than as an event
+        // the hub refuses for a missing field.
+        events.forEach { event -> require(event.data == null || PhoneEvent.isDataJson(event.data)) { "${event.kind} data is not a JSON object" } }
         moveLegacyEvents()
         if (events.isEmpty()) return 0 // most collections find nothing new: no write transaction for that
         return transaction { addNow(events, zone.id) }
@@ -149,7 +156,7 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
                     EventEntity(
                         seq = next++, key = event.key, kind = event.kind, source = event.source, startMs = event.startMs,
                         endMs = event.endMs, app = event.app, appId = event.appId, zone = zone, title = event.title,
-                        data = event.data,
+                        data = event.data, record = event.id != null,
                     ),
                 )
                 changed++

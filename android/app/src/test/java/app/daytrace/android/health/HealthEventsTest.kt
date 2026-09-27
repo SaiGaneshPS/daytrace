@@ -142,4 +142,40 @@ class HealthEventsTest {
         val many = (1..40).map { FoodRead(0, "Item $it", MealType.MEAL_TYPE_DINNER) }
         assertEquals(30, data(HealthEvents.meals(many).single()).getJSONArray("items").length())
     }
+
+    // --- which days to read ---
+
+    private val today = LocalDate.parse("2026-09-27")
+    private fun day(text: String) = LocalDate.parse(text)
+
+    @Test
+    fun theFirstReadCoversTheLast30Days() {
+        assertEquals(listOf(day("2026-08-28")..today), HealthEvents.daysToRead(today, changed = null))
+    }
+
+    @Test
+    fun laterReadsCoverTodayYesterdayAndEveryChangedDay() {
+        assertEquals(listOf(day("2026-09-26")..today), HealthEvents.daysToRead(today, changed = emptySet()))
+        // A week off Wi-Fi: the changes list the nights in between, whatever the gap was.
+        val away = (20..24).map { day("2026-09-$it") }.toSet()
+        assertEquals(listOf(day("2026-09-20")..day("2026-09-24"), day("2026-09-26")..today), HealthEvents.daysToRead(today, away))
+    }
+
+    @Test
+    fun oldNightsBackfilledLaterAreReadWithinThe30Days() {
+        // Samsung Health started sharing after the first read, and wrote three weeks of history with its own dates.
+        val backfill = setOf(day("2026-09-05"), day("2026-09-06"), day("2026-06-01"))
+        assertEquals(
+            listOf(day("2026-09-05")..day("2026-09-06"), day("2026-09-26")..today),
+            HealthEvents.daysToRead(today, backfill), // June is further back than Health Connect lets an app read
+        )
+    }
+
+    @Test
+    fun aRecordFallsOnEveryDayItTouches() {
+        val night = HealthEvents.daysOf(at("2026-09-26T23:40"), at("2026-09-27T07:10"), zone)
+        assertEquals(setOf(day("2026-09-26"), day("2026-09-27")), night)
+        assertEquals(setOf(day("2026-09-27")), HealthEvents.daysOf(at("2026-09-27T12:30"), at("2026-09-27T12:30"), zone))
+        assertEquals(30, HealthEvents.daysOf(0, at("2026-09-27T00:00"), zone).size) // never unbounded
+    }
 }

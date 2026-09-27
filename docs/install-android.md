@@ -33,7 +33,8 @@ On the **Health Connect** step, Health Connect opens its own permission screen:
 1. Allow **Sleep**, **Steps** and **Nutrition**.
 2. If it also offers **Access data in the background** (Android 14 and newer), allow it too. Syncs run in the
    background every 15 minutes, and Health Connect only lets an app read while it is open unless this is allowed.
-   Without it, health data still arrives, but only when you sync with the app open.
+   Without it, health data still arrives, but only when you sync with the app open. The Health Connect card then
+   says so, with an **Allow in the background** button.
 
 The hub hides calendar titles that match its redaction rules (banking, health portals and the words you add on the
 dashboard's Privacy page) before anything is stored.
@@ -60,19 +61,24 @@ together are one meal on your timeline, each food an item.
 
 - **The first time:** the last 30 days. Health Connect lets an app read at most 30 days from before it was first
   allowed, so older nights can't be read.
-- **Every sync after that:** the last 3 days again, so a night Samsung Health adds late, or a meal you edit, still
-  arrives. Reading the same data again never adds anything twice: each record keeps its key, and a changed one
-  replaces its copy on the hub.
+- **Every sync after that:** today and yesterday, and every day Health Connect says changed since the last sync,
+  within the last 30 days. That covers a week without Wi-Fi, a night Samsung Health adds late, a meal you edit, and
+  the history Samsung Health shares if you turn its sharing on after allowing Daytrace. Reading the same data again
+  never adds anything twice: each record keeps its key, and a changed one replaces its copy on the hub.
 - **Steps:** one total per day, as Health Connect adds them up (steps counted by two apps are counted once). Today's
   total goes up during the day.
-- **Calendar:** yesterday, today and tomorrow, every sync. A moved or renamed event replaces its copy. Declined and
-  cancelled events are left out.
+- **Calendar:** yesterday, today and tomorrow, every sync, and after days without a sync, from the day before the
+  last one (at most 30 days back). A moved or renamed event replaces its copy, and so does one occurrence of a
+  repeating event that you change. Declined and cancelled events are left out.
 
 ### Known limits
 
 - **Deleting doesn't reach the hub yet.** An event you delete from your calendar, a meal you delete in Samsung
-  Health, or a calendar event you decline after it was sent stays on the hub.
-- **A night Samsung Health splits into fewer stages later** keeps the extra stages from before on the hub.
+  Health, or a calendar event you decline after it was sent stays on the hub. So do the old copies of changes that
+  give a record a new key:
+  - a meal whose time or meal type you change (a meal is keyed by both);
+  - every occurrence of a repeating event whose time you change for the whole series;
+  - the extra stages of a night that Samsung Health later splits into fewer stages.
 
 ## Battery settings (Never sleeping apps)
 

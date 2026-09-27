@@ -155,6 +155,14 @@ class EventStoreTest {
     }
 
     @Test
+    fun dataThatIsNotJsonIsABugCaughtBeforeAnythingIsStored() {
+        val broken = PhoneEvent("steps", "health_connect", 0, 900, data = "count=12", id = "steps:2026-09-27")
+        val thrown = runCatching { store.add(listOf(steps(10, end = 100).copy(id = "steps:2026-09-26"), broken)) }.exceptionOrNull()
+        assertTrue(thrown is IllegalArgumentException)
+        assertEquals(StoreCounts(waiting = 0, refused = 0), store.counts()) // nothing half-stored either
+    }
+
+    @Test
     fun usageEventsStillOnlyGrow() {
         store.add(listOf(session(100, 200)))
         assertEquals(0, store.add(listOf(session(100, 150)))) // an app session is never shortened by an older copy

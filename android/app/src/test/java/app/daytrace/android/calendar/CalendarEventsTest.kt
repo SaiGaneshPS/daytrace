@@ -42,17 +42,24 @@ class CalendarEventsTest {
     fun eachOccurrenceOfARepeatingEventIsItsOwnEvent() {
         val monday = row(id = 9, begin = at("2026-09-28T09:00"), end = at("2026-09-28T09:15")).copy(repeats = true)
         val tuesday = monday.copy(beginMs = at("2026-09-29T09:00"), endMs = at("2026-09-29T09:15"))
-        assertEquals(listOf("cal:9:2026-09-28", "cal:9:2026-09-29"), CalendarEvents.events(listOf(monday, tuesday), zone).map { it.id })
-        // Late in the evening here it is already the next day in UTC: the day is the local one.
-        assertEquals("cal:9:2026-09-28", one(monday.copy(beginMs = at("2026-09-28T22:30"), endMs = at("2026-09-28T23:00"))).id)
+        val evening = monday.copy(beginMs = at("2026-09-28T20:00"), endMs = at("2026-09-28T20:15")) // twice a day
+        val keys = CalendarEvents.events(listOf(monday, evening, tuesday), zone).map { it.id }
+        assertEquals(listOf("cal:9:${monday.beginMs}", "cal:9:${evening.beginMs}", "cal:9:${tuesday.beginMs}"), keys)
+    }
+
+    @Test
+    fun anOccurrenceKeepsItsKeyInAnotherTimeZone() {
+        val late = row(id = 9, begin = at("2026-09-28T23:30"), end = at("2026-09-28T23:45")).copy(repeats = true)
+        assertEquals(one(late).id, CalendarEvents.events(listOf(late), ZoneId.of("Asia/Tokyo")).single().id) // after a flight east
     }
 
     @Test
     fun aChangedOccurrenceReplacesTheOneItWasMeantToBe() {
         // Monday's stand-up moved to the afternoon: the calendar makes it an event of its own (id 12).
+        val monday = row(id = 9, begin = at("2026-09-28T09:00"), end = at("2026-09-28T09:15")).copy(repeats = true)
         val moved = row(id = 12, begin = at("2026-09-28T14:00"), end = at("2026-09-28T14:15"))
             .copy(originalId = 9, originalBeginMs = at("2026-09-28T09:00"))
-        assertEquals("cal:9:2026-09-28", one(moved).id)
+        assertEquals(one(monday).id, one(moved).id)
     }
 
     @Test
@@ -61,7 +68,7 @@ class CalendarEventsTest {
         val event = one(holiday)
         assertEquals(at("2026-10-12T00:00") to at("2026-10-13T00:00"), event.startMs to event.endMs)
         assertTrue(JSONObject(event.data!!).getBoolean("all_day"))
-        assertEquals("cal:3:2026-10-12", event.id) // the calendar's own day, not the local day of its UTC midnight
+        assertEquals("cal:3:${utcMidnight("2026-10-12")}", event.id)
     }
 
     @Test
@@ -76,9 +83,20 @@ class CalendarEventsTest {
         assertTrue(CalendarEvents.events(listOf(row(begin = at("2026-09-27T11:00"), end = at("2026-09-27T10:00"))), zone).isEmpty())
     }
 
+    private val now = Instant.ofEpochMilli(at("2026-09-27T01:10"))
+
     @Test
     fun theWindowIsYesterdayTodayAndTomorrow() {
-        val (from, to) = CalendarEvents.window(Instant.ofEpochMilli(at("2026-09-27T01:10")), zone)
-        assertEquals(at("2026-09-26T00:00") to at("2026-09-29T00:00"), from to to)
+        assertEquals(at("2026-09-26T00:00") to at("2026-09-29T00:00"), CalendarEvents.window(now, zone))
+        // Read 15 minutes ago: the same three days.
+        assertEquals(at("2026-09-26T00:00") to at("2026-09-29T00:00"), CalendarEvents.window(now, zone, at("2026-09-27T00:55")))
+    }
+
+    @Test
+    fun afterDaysWithoutASyncTheWindowStartsTheDayBeforeTheLastRead() {
+        val lastRead = at("2026-09-21T18:00") // a week off Wi-Fi
+        assertEquals(at("2026-09-20T00:00") to at("2026-09-29T00:00"), CalendarEvents.window(now, zone, lastRead))
+        val longAgo = at("2026-06-01T12:00")
+        assertEquals(at("2026-08-28T00:00"), CalendarEvents.window(now, zone, longAgo).first) // at most 30 days back
     }
 }

@@ -49,8 +49,10 @@ data class EventEntity(
     val title: String? = null,
     /** DT-23: the event's data as compact JSON (a sleep stage, a step count, a meal's items, all-day). */
     val data: String? = null,
+    /** DT-23: the key is a record's own id ([PhoneEvent.id]): any change replaces the stored copy. */
+    @ColumnInfo(name = "is_record", defaultValue = "0") val record: Boolean = false,
 ) {
-    fun toPhoneEvent() = PhoneEvent(kind, source, startMs, endMs, app, appId, title = title, data = data, id = key.takeIf { PhoneEvent.isRecordKey(it) })
+    fun toPhoneEvent() = PhoneEvent(kind, source, startMs, endMs, app, appId, title = title, data = data, id = key.takeIf { record })
 }
 
 /** Named numbers kept next to the events and changed in the same transactions (the lowest free seq, say). */
