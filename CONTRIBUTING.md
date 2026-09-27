@@ -59,11 +59,19 @@ Run from the **repo root**:
 |---|---|---|
 | Hub lint | `hub\.venv\Scripts\python.exe -m ruff check hub` | `hub/.venv/bin/python -m ruff check hub` |
 | Hub tests | `hub\.venv\Scripts\python.exe -m pytest hub` | `hub/.venv/bin/python -m pytest hub` |
-| Dashboard | `npm --prefix dashboard run build` | `npm --prefix dashboard run build` |
+| Dashboard build | `npm.cmd --prefix dashboard run build` | `npm --prefix dashboard run build` |
+| Dashboard unit tests | `npm.cmd --prefix dashboard test` | `npm --prefix dashboard test` |
+| Dashboard e2e (after the build) | `npm.cmd --prefix dashboard run test:e2e` | `npm --prefix dashboard run test:e2e` |
 | Android (after DT-19) | `android\gradlew.bat -p android assembleDebug` | `./android/gradlew -p android assembleDebug` |
 
 One-time setup for each part is in its own README ([hub](hub/README.md), [dashboard](dashboard/README.md),
 [android](android/README.md)).
+- **Hub:** the lint and tests need the dev extras: `pip install -e "./hub[dev]"` with the venv's Python.
+- **Windows:** `npm.cmd`, because PowerShell's default policy blocks the `npm.ps1` script that plain `npm` runs.
+  After `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` ([setup-windows.md](docs/setup-windows.md)), plain
+  `npm` works too.
+- **e2e on macOS and Linux:** run `npx playwright install chromium` in `dashboard/` once. On Windows the tests use
+  the installed Edge.
 
 ## Never commit
 
