@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Request
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import nudges
@@ -364,8 +364,12 @@ class NudgeSettings(BaseModel):
 
 
 class NudgeChoices(BaseModel):
-    disabled: Annotated[list[str], Field(description="The rules switched off, by id; the others are on.")] = Field(default_factory=list)
-    desktop: bool = True
+    """The whole choice, both fields: a typo or a missing field is refused rather than turning every rule back on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disabled: Annotated[list[str], Field(max_length=len(nudges.RULE_IDS), description="The rules switched off, by id; the others are on.")]
+    desktop: Annotated[bool, Field(description="Desktop notifications for the hub computer's own activity.")]
 
 
 def _nudge_settings(conn: sqlite3.Connection) -> NudgeSettings:

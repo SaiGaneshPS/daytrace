@@ -53,6 +53,11 @@ def command(title: str, body: str, platform: str = sys.platform) -> tuple[list[s
     return None
 
 
+def available() -> bool:
+    """Whether this system has a way to show a notification."""
+    return command("", "") is not None
+
+
 def _run(argv: list[str], extra: dict[str, str]) -> None:
     subprocess.run(
         argv,

@@ -13,10 +13,12 @@ hub's own tracker saw the activity. Four rules, checked in this order, one nudge
 - `social_cap`: a social app once today's social time is over the social goal (DT-53).
 
 Only what is happening now counts: an event that ended more than 10 minutes ago (a phone catching up on a day of
-data) nudges no one. Each rule rests 20 minutes after it fires, across every device, so a phone and the computer
-never nag twice; the check and the log entry are one transaction. Every nudge is logged (`nudge_log`), and each rule
-can be switched off (settings key "nudges", with the desktop notifications). The streak and goal numbers are the
-Streaks page's own (streaks.evaluation), worked out at most once a minute here.
+data) nudges no one. Each rule rests 20 minutes after it fires, and no nudge follows another within 5 minutes, across
+every device, so a phone and the computer never nag twice; the checks and the log entry are one transaction. Every
+nudge is logged (`nudge_log`; applying redaction rules to stored data covers it too), and each rule can be switched
+off (settings key "nudges", with the desktop notifications). The streak and goal numbers are the Streaks page's own
+(the streaks engine), worked out at most once a minute here for the goals in force: today's alone first, and the
+whole history only when a streak is at risk and could still be kept.
 """
 
 from __future__ import annotations
@@ -36,14 +38,16 @@ from . import streaks
 from .categories import Categorizer
 from .db import Database, transaction, utc_text
 from .models import Event, Nudge
+from .redaction import REDACTED
 from .sessions import parse_utc
-from .stats import DISTRACTING
+from .stats import DISTRACTING, FOCUS_BLOCK
 from .story import duration
 
 logger = logging.getLogger(__name__)
 
 SETTINGS_KEY = "nudges"
-COOLDOWN = timedelta(minutes=20)
+COOLDOWN = timedelta(minutes=20)  # a rule rests this long after it fires
+GAP = timedelta(minutes=5)  # and no nudge follows another (of any rule) sooner: one at a time
 FRESH = timedelta(minutes=10)  # older activity is a device catching up, not what is happening now
 ACTIVITY_KINDS = frozenset({"app_session", "app_open", "window", "web"})
 LATE_UNTIL = time(4)  # late-night scrolling lasts until 04:00
@@ -162,8 +166,8 @@ def activities(conn: sqlite3.Connection, events: Sequence[Event], now: datetime)
         if last < now - FRESH or event.start > now + timedelta(minutes=1):
             continue
         is_web = event.kind.value == "web"
-        name = str(event.data.get("domain")) if is_web and event.data.get("domain") else event.app
-        if not name or name == "[redacted]":
+        name = str(event.data.get("domain")) if is_web and event.data.get("domain") else event.app or event.app_id
+        if not name or REDACTED in (name, event.app):
             continue
         categorizer = categorizer or Categorizer.from_db(conn)
         category = categorizer.category(name if is_web else event.app, event.app_id, "web" if is_web else "app", event.category)
@@ -194,28 +198,52 @@ def calendar_events(conn: sqlite3.Connection, start: datetime, end: datetime) ->
     return found
 
 
+def _clip(text: str, limit: int) -> str:
+    """Text cut to `limit` characters at a word, with "..." when cut."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    return (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(" ,.;:") + "..."
+
+
 def _quoted(title: str, limit: int = 60) -> str:
-    title = " ".join(title.split())
-    return f'"{title if len(title) <= limit else title[: limit - 3].rstrip() + "..."}"'
+    return f'"{_clip(title, limit)}"'
 
 
-# The Streaks page's numbers, worked out at most once a minute for nudges (the tracker writes every 2 seconds, and a
-# new write would otherwise mean working out the whole history again each time).
-_evaluations: OrderedDict[tuple[str, str, datetime], streaks.Evaluation] = OrderedDict()
+def _named(activity: Activity) -> str:
+    return _clip(activity.name, 40)
+
+
+# The Streaks page's numbers, worked out at most once a minute for nudges, for the goals in force: the tracker writes
+# every 2 seconds, and each write would otherwise mean working them out again. Today alone is enough for the goals;
+# the whole history is only needed for the length of a run.
+_evaluations: OrderedDict[tuple[object, ...], streaks.Evaluation] = OrderedDict()
 _evaluations_guard = threading.Lock()
 
 
-def _evaluation(moment: Moment) -> streaks.Evaluation:
-    key = (str(moment.database.path), moment.tz_name, moment.now.replace(second=0, microsecond=0))
+def _evaluation(moment: Moment, history: bool) -> streaks.Evaluation:
+    targets = tuple(sorted(streaks.load_targets(moment.conn).items()))
+    minute = moment.now.replace(second=0, microsecond=0)
+    key = (str(moment.database.path), moment.tz_name, targets, minute, history)
     with _evaluations_guard:
         if key in _evaluations:
             return _evaluations[key]
-    found = streaks.evaluation(moment.database, moment.tz, moment.tz_name, moment.now)
+    if history:
+        found = streaks.evaluation(moment.database, moment.tz, moment.tz_name, moment.now)
+    else:
+        found = streaks.evaluate_days(moment.database, moment.tz, moment.tz_name, moment.now, [moment.local.date()])
     with _evaluations_guard:
         _evaluations[key] = found
         while len(_evaluations) > 8:
             _evaluations.popitem(last=False)
     return found
+
+
+def forget() -> None:
+    """Let go of every number worked out (DT-46: after delete-all nothing may be quoted from before)."""
+    with _evaluations_guard:
+        _evaluations.clear()
 
 
 # --- the rules -------------------------------------------------------------------------------------------------------
@@ -230,7 +258,7 @@ def focus_block(moment: Moment) -> Draft | None:
         return None
     for title, start, end in calendar_events(moment.conn, moment.now, moment.now + timedelta(seconds=1)):
         if start <= moment.now < end and FOCUS_WORDS.search(title):
-            return "Time to focus", f"{distracting.name} during {_quoted(title)}, which runs until {moment.clock(end)}."
+            return "Time to focus", f"{_named(distracting)} during {_quoted(title)}, which runs until {moment.clock(end)}."
     return None
 
 
@@ -245,23 +273,40 @@ def late_scroll(moment: Moment) -> Draft | None:
     if not bedtime <= after_six < until:
         return None
     # The day after this night: tomorrow before midnight, today after it.
+    from .api.timeline import day_window
+
     morning: date = local.date() + timedelta(days=1) if local.hour >= 12 else local.date()
-    start = datetime.combine(morning, time(0), tzinfo=moment.tz).astimezone(UTC)
-    upcoming = [event for event in calendar_events(moment.conn, max(start, moment.now), start + timedelta(days=1)) if event[1] >= moment.now]
-    lead = f"It's {local:%H:%M}, past your {streaks.clock_text(bedtime)} bedtime, and {scrolling.name} is open."
+    start, end = day_window(morning, moment.tz)  # 23 or 25 hours on a clock-change day
+    upcoming = [event for event in calendar_events(moment.conn, max(start, moment.now), end) if start <= event[1] < end and event[1] >= moment.now]
+    lead = f"It's {local:%H:%M}, past your {streaks.clock_text(bedtime)} bedtime, and {_named(scrolling)} is open."
     if upcoming:
         title, begins, _ = upcoming[0]
         return "Past your bedtime", f"{lead} Your day starts with {_quoted(title, 50)} at {moment.clock(begins)}."
     return "Past your bedtime", f"{lead} Nothing is on your calendar in the morning, but sleep still counts."
 
 
+def _can_keep(moment: Moment, track: streaks.Track) -> bool:
+    """Whether what is left of a streak to reach can still be done today: not minutes more than the day has left
+    (and focus counts only in blocks of 10 minutes or more)."""
+    left = track.today.remaining
+    if track.kind != "at_least" or track.today.status != "at_risk" or left is None or left <= 0 or track.measure not in MORE:
+        return False
+    if track.unit != "minutes":
+        return True
+    from .api.timeline import day_window
+
+    _, midnight = day_window(moment.local.date(), moment.tz)
+    minutes_left = (midnight - moment.now).total_seconds() / 60
+    return left <= minutes_left and (track.measure != "focused_minutes" or minutes_left >= FOCUS_BLOCK.total_seconds() / 60)
+
+
 def streak_at_risk(moment: Moment) -> Draft | None:
     if not moment.activities or moment.local.time() < EVENING:
         return None
-    found = _evaluation(moment)
-    at_risk = [track for track in found.streaks
-               if track.kind == "at_least" and track.today.status == "at_risk" and track.current
-               and track.today.remaining is not None and track.today.remaining > 0 and track.measure in MORE]
+    # Today alone says which streaks could still be kept; only then is the whole history read for their runs.
+    if not any(_can_keep(moment, track) for track in _evaluation(moment, history=False).streaks):
+        return None
+    at_risk = [track for track in _evaluation(moment, history=True).streaks if track.current and _can_keep(moment, track)]
     if not at_risk:
         return None
     track = max(at_risk, key=lambda item: len(item.current))  # the longest run has the most to lose
@@ -276,11 +321,12 @@ def social_cap(moment: Moment) -> Draft | None:
     social = moment.using({"social"})
     if social is None:
         return None
-    goal = _evaluation(moment).goals.get("social_cap")
-    if goal is None or goal.target is None or goal.today.value is None or goal.today.value <= goal.target:
+    goal = _evaluation(moment, history=False).goals.get("social_cap")
+    # Over the goal in whole minutes, as it is said: 60.4 minutes is "1 hour", not over a 1 hour goal.
+    if goal is None or goal.target is None or goal.today.value is None or round(goal.today.value) <= round(goal.target):
         return None
     return ("Over your social limit",
-            f"{duration(goal.today.value)} in social apps today, over your {duration(goal.target)} goal. {social.name} can wait.")
+            f"{duration(goal.today.value)} in social apps today, over your {duration(goal.target)} goal. {_named(social)} can wait.")
 
 
 CHECKS: dict[str, Callable[[Moment], Draft | None]] = {
@@ -298,15 +344,28 @@ def _resting(conn: sqlite3.Connection, rule: str, now: datetime) -> bool:
     return row is not None
 
 
+def _quiet(conn: sqlite3.Connection, now: datetime) -> bool:
+    """Whether any nudge was sent less than 5 minutes ago (one at a time, whatever the rule)."""
+    return conn.execute("SELECT 1 FROM nudge_log WHERE created_at > ? LIMIT 1", (utc_text(now - GAP),)).fetchone() is not None
+
+
 def _fire(conn: sqlite3.Connection, rule: str, device_id: str, draft: Draft, now: datetime) -> Nudge | None:
-    """Log the nudge, unless another request fired the same rule meanwhile (checked in the same transaction)."""
-    title, body = draft
+    """Log the nudge, unless another request sent one meanwhile (checked in the same transaction)."""
+    title, body = _clip(draft[0], 80), _clip(draft[1], 240)
     with transaction(conn):
-        if _resting(conn, rule, now):
+        if _resting(conn, rule, now) or _quiet(conn, now):
             return None
         conn.execute("INSERT INTO nudge_log (rule, device_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)",
-                     (rule, device_id, title[:80], body[:240], utc_text(now)))
-    return Nudge(rule=rule, title=title[:80], body=body[:240], created_at=now)
+                     (rule, device_id, title, body, utc_text(now)))
+    return Nudge(rule=rule, title=title, body=body, created_at=now)
+
+
+def withdraw(database: Database, device_id: str, nudge: Nudge) -> None:
+    """Take back a logged nudge nobody saw (a desktop notification that couldn't be shown): its rule isn't resting
+    for the phones, and `recent` doesn't list it."""
+    with database.connect() as conn, transaction(conn):
+        conn.execute("DELETE FROM nudge_log WHERE rule = ? AND device_id = ? AND created_at = ?",
+                     (nudge.rule, device_id, utc_text(nudge.created_at)))
 
 
 def hub_zone() -> tuple[tzinfo, str]:
@@ -316,18 +375,21 @@ def hub_zone() -> tuple[tzinfo, str]:
     return resolve_tz(None)
 
 
-def pick_nudge(database: Database, device_id: str, events: Sequence[Event], now: datetime | None = None) -> Nudge | None:
-    """The first rule that fires for these just-stored events, logged, or None. Never raises: a stored event must
-    never fail because of a nudge."""
+def pick_nudge(database: Database, device_id: str, events: Sequence[Event], now: datetime | None = None,
+               desktop: bool = False) -> Nudge | None:
+    """The first rule that fires for these just-stored events, logged, or None; for the desktop tracker (`desktop`),
+    only while desktop notifications are on. Never raises: a stored event must never fail because of a nudge."""
     from .api.timeline import current_time
 
     now = (now or current_time()).astimezone(UTC)
     try:
         with database.connect() as conn:
+            choices = load_choices(conn)
+            if (desktop and not choices.desktop) or _quiet(conn, now):
+                return None
             used = activities(conn, events, now)
             if not used:
                 return None
-            choices = load_choices(conn)
             tz, tz_name = hub_zone()
             moment = Moment(database, conn, now, tz, tz_name, used)
             for rule in RULE_IDS:
@@ -341,15 +403,6 @@ def pick_nudge(database: Database, device_id: str, events: Sequence[Event], now:
     except Exception:  # a nudge is never worth a failed request
         logger.exception("no nudge: the rules failed")
     return None
-
-
-def desktop_wanted(database: Database) -> bool:
-    """Whether this computer's own activity should nudge it (a desktop notification)."""
-    try:
-        with database.connect() as conn:
-            return load_choices(conn).desktop
-    except sqlite3.Error:
-        return False
 
 
 def recent(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:

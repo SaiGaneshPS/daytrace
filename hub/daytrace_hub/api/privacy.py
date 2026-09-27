@@ -362,12 +362,13 @@ def delete_everything(database: Database, keep_redaction_rules: bool = True) -> 
 def forget_in_memory(app: Any) -> None:
     """What the hub process still held of the deleted data: cached answers and redaction rules, and the pairing
     code (a code shown before the delete must not pair a device after it)."""
-    from .. import redaction, streaks
+    from .. import nudges, redaction, streaks
     from . import devices as devices_api
     from . import insights as insights_api
 
     for cached in (insights_api._cache, streaks._cache, streaks._readings):
         cached.clear()
+    nudges.forget()
     redaction._parse_choices.cache_clear()
     redaction._redactor.cache_clear()
     app.state.pairing = devices_api.PairingCodes()

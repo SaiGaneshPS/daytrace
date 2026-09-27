@@ -145,14 +145,17 @@ ended more than 10 minutes ago (a phone catching up) nudges no one. The rules, c
 |---|---|---|
 | `focus_block` | a social, video or game app during a timed calendar event whose title is about focus (study, work, deep work, an exam, revision, homework, an assignment, a lecture, a thesis, an essay, a deadline; whole words) | the app, the event and when it ends |
 | `late_scroll` | a social or video app after the bedtime goal (23:30 unless changed) and before 04:00 | the time, the bedtime, and the first event of the coming day (tomorrow before midnight, today after it) |
-| `streak_at_risk` | from 20:00, a streak to reach (Focus flame, Logged it, Synced) with a run going and today not kept yet | the real amount left, rounded up ("20 more focused minutes keeps your 3-day Focus flame streak going") |
-| `social_cap` | a social app once today's social time is over the social goal | today's social time and the goal, the numbers the Streaks page shows |
+| `streak_at_risk` | from 20:00, a streak to reach (Focus flame, Logged it, Synced) with a run going and today not kept yet, if it can still be kept (not more minutes than the day has left) | the real amount left, rounded up ("20 more focused minutes keeps your 3-day Focus flame streak going") |
+| `social_cap` | a social app once today's social time is over the social goal, in whole minutes | today's social time and the goal, the numbers the Streaks page shows |
 
-- Each rule rests 20 minutes after it fires, across every device (the check and the log entry are one
-  transaction, so two requests at once nudge once). Every nudge is logged in `nudge_log`.
+- Each rule rests 20 minutes after it fires, and no nudge follows another within 5 minutes, across every device
+  (the checks and the log entry are one transaction, so two requests at once nudge once). Every nudge is logged in
+  `nudge_log`; applying redaction rules to stored data (`POST /privacy/redaction/apply`) hides the words of logged
+  nudges too.
 - The hub's own desktop tracker never goes through `POST /events`: its nudges show as a desktop notification on the
   hub computer (a Windows toast, a macOS notification, `notify-send` on Linux) when `desktop` is on. The words are
-  data, never part of a script: Windows reads them from environment variables into the toast as text.
+  data, never part of a script: Windows reads them from environment variables into the toast as text. A
+  notification that couldn't be shown is taken back from the log, so its rule doesn't rest for the phones.
 - Times are the hub computer's clock.
 
 `GET /nudges` (viewer):
@@ -164,7 +167,8 @@ ended more than 10 minutes ago (a phone catching up) nudges no one. The rules, c
 ```
 
 `recent` is the latest 20 nudges, newest first. `PUT /nudges` (the dashboard) with `{ "disabled": ["late_scroll"],
-"desktop": true }` switches rules off (the others on) and desktop notifications on or off; an unknown rule is `400`.
+"desktop": true }` switches rules off (the others on) and desktop notifications on or off. Both fields are needed
+(a missing or unknown field is `422`, not a reset), and an unknown rule is `400`.
 
 ### GET /devices/{device_id}/cursor
 
