@@ -131,6 +131,7 @@ class Category(StrEnum):
 
 SLEEP_STAGES = frozenset({"in_bed", "asleep", "awake", "core", "deep", "rem"})
 MEAL_TYPES = frozenset({"breakfast", "lunch", "dinner", "snack"})
+MealType = Literal["breakfast", "lunch", "dinner", "snack"]
 
 
 class Event(BaseModel):
@@ -202,10 +203,21 @@ class Event(BaseModel):
         return self.external_id is not None
 
 
+HUB_READING = "parsed"  # DT-42: what the hub read from a meal's text, stored in its data
+
+
+def identity_data(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    """An event's data as its collector sent it: without the hub's own reading of a meal (DT-42). Every key and every
+    comparison of two copies of an event uses this, so a meal is the same meal however the hub read it."""
+    if kind != "meal" or HUB_READING not in data:
+        return data
+    return {key: value for key, value in data.items() if key != HUB_READING}
+
+
 def content_key(kind: str, start: datetime, end: datetime | None, app: str | None, app_id: str | None,
                 title: str | None, data: dict[str, Any]) -> str:
     """The key of an event from a stateless collector: a hash of what it says (also used to key a stored event
-    again after redaction changed it, DT-44)."""
+    again after redaction changed it, DT-44). The hub's reading of a meal is never part of it."""
     content = {
         "kind": kind,
         "start": start.astimezone(UTC).isoformat(),
@@ -213,7 +225,7 @@ def content_key(kind: str, start: datetime, end: datetime | None, app: str | Non
         "app": app,
         "app_id": app_id,
         "title": title,
-        "data": data,
+        "data": identity_data(kind, data),
     }
     digest = hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return f"content:{digest}"
@@ -292,6 +304,8 @@ def _check_meal_data(data: dict[str, Any]) -> None:
             raise ValueError("each meal item must be 1 to 100 characters and not just spaces")
     if "meal_type" in data and (not isinstance(data["meal_type"], str) or data["meal_type"] not in MEAL_TYPES):
         raise ValueError(f"meal data.meal_type must be one of {sorted(MEAL_TYPES)}")
+    if HUB_READING in data:  # what the hub read from the text (DT-42): resends compare without it
+        raise ValueError("meal data.parsed is written by the hub; send data.text, data.items or data.meal_type")
 
 
 class EventBatch(BaseModel):
@@ -400,6 +414,19 @@ class Nudge(BaseModel):
     created_at: AwareDatetime
 
 
+class ParsedMeal(BaseModel):
+    """What the hub read from a meal's text (DT-42), stored with it under data.parsed and returned by the ingest,
+    so a Shortcut can say "Logged: two rotis, dal". No calories and no amounts beyond what the text said."""
+
+    index: Annotated[int, Field(ge=0, description="The meal's position in the request.")]
+    items: list[str] = Field(description="The foods and drinks, as the text named them (the event's own items when it had some).")
+    meal_type: MealType = Field(description="The event's own meal type, else the one the text named, else a guess from the time of day.")
+    items_by: Literal["event", "ai", "text"] = Field(
+        description="Where the items come from: the event itself, the local model, or splitting the text on commas and 'and'.")
+    type_by: Literal["event", "text", "time"] = Field(
+        description="Where the meal type comes from: the event itself, a word in the text (lunch), or the time of day.")
+
+
 class IngestResult(BaseModel):
     """Response of POST /api/v1/events."""
 
@@ -409,3 +436,4 @@ class IngestResult(BaseModel):
     rejected: list[RejectedEvent] = Field(default_factory=list)
     last_seq: Annotated[int | None, Field(description="Highest seq stored for this device, or null.")] = None
     nudge: Nudge | None = None
+    meals: list[ParsedMeal] = Field(default_factory=list, description="DT-42: each meal sent as text, as the hub read it.")

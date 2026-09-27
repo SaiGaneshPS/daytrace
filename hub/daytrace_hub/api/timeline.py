@@ -370,12 +370,14 @@ def _sleep_entry(e: StoredEvent, tz: tzinfo) -> SleepEntry:
 
 
 def _meal(e: StoredEvent, tz: tzinfo) -> MealEntry:
-    items = e.data.get("items")
+    """A meal as logged; one sent as text has the items and type the hub read from it (DT-42) where it had none."""
+    reading = e.data.get("parsed") if isinstance(e.data.get("parsed"), dict) else {}
+    items = e.data.get("items") if isinstance(e.data.get("items"), list) else reading.get("items")
     return MealEntry(
         time=e.start.astimezone(tz),
         items=[str(item) for item in items] if isinstance(items, list) else None,
         text=_text(e.data, "text"),
-        meal_type=_text(e.data, "meal_type"),
+        meal_type=_text(e.data, "meal_type") or _text(reading, "meal_type"),
         device_id=e.device_id,
     )
 

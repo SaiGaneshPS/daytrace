@@ -39,8 +39,11 @@ The day story and "Ask your day" use a model running on your own machines, never
 |---|---|---|
 | `DAYTRACE_LLM_BASE_URL` | `http://127.0.0.1:1234/v1` (LM Studio) | Any OpenAI-compatible server; Ollama is `http://127.0.0.1:11434/v1` |
 | `DAYTRACE_LLM_MODEL` | the first model the server lists | The model to use |
+| `DAYTRACE_AI_CATEGORIES` | `on` | DT-42: the model sorts apps nothing knows into categories, in the background (`off` stops it) |
+| `DAYTRACE_AI_MEALS` | `on` | DT-42: the model lists the foods in a meal sent as text (`off`: the text is only split) |
 
-In LM Studio, load a chat model and start the server (Developer tab). `GET /api/v1/ai/status` shows whether the
+The model also reads meals sent as text (DT-42: "two rotis and dal" is two items), with a plain split of the
+text when there is no model. In LM Studio, load a chat model and start the server (Developer tab). `GET /api/v1/ai/status` shows whether the
 hub reaches it and whether the model can call tools, and explains any problem (a typo in the address included:
 the hub still starts).
 

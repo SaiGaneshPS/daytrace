@@ -18,8 +18,9 @@ Only what the collectors send, as events ([event-schema.json](event-schema.json)
 - **About each device:** its name and type, when it paired and was last seen, and a hash of its token (never the
   token itself).
 - **Your choices:** the categories you set, your goals, your redaction words, and your nudge settings.
-- **What the hub keeps of its own:** the text of stories and Wrapped, the badges you earned, and a log of the
-  nudges it sent.
+- **What the hub keeps of its own:** the text of stories and Wrapped, the badges you earned, a log of the nudges
+  it sent, the categories the local model guessed for apps nothing else knew (under the app's name, never one your
+  rules hide), and what it read from a meal's text (its items and type).
 
 Nothing is read from inside an app: no screenshots, no keystrokes, no page contents or full web addresses. A window
 title is the most detailed thing stored, and the redaction rules below keep the sensitive ones out.

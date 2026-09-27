@@ -1209,6 +1209,11 @@ export interface components {
              */
             last_seq?: number | null;
             nudge?: components["schemas"]["Nudge"] | null;
+            /**
+             * Meals
+             * @description DT-42: each meal sent as text, as the hub read it.
+             */
+            meals?: components["schemas"]["ParsedMeal"][];
         };
         /** InsightsTab */
         InsightsTab: {
@@ -1628,6 +1633,41 @@ export interface components {
             /** @description The device that used it, once it has been used. */
             claimed_by: components["schemas"]["ClaimedDevice"] | null;
         };
+        /**
+         * ParsedMeal
+         * @description What the hub read from a meal's text (DT-42), stored with it under data.parsed and returned by the ingest,
+         *     so a Shortcut can say "Logged: two rotis, dal". No calories and no amounts beyond what the text said.
+         */
+        ParsedMeal: {
+            /**
+             * Index
+             * @description The meal's position in the request.
+             */
+            index: number;
+            /**
+             * Items
+             * @description The foods and drinks, as the text named them (the event's own items when it had some).
+             */
+            items: string[];
+            /**
+             * Meal Type
+             * @description The event's own meal type, else the one the text named, else a guess from the time of day.
+             * @enum {string}
+             */
+            meal_type: "breakfast" | "lunch" | "dinner" | "snack";
+            /**
+             * Items By
+             * @description Where the items come from: the event itself, the local model, or splitting the text on commas and 'and'.
+             * @enum {string}
+             */
+            items_by: "event" | "ai" | "text";
+            /**
+             * Type By
+             * @description Where the meal type comes from: the event itself, a word in the text (lunch), or the time of day.
+             * @enum {string}
+             */
+            type_by: "event" | "text" | "time";
+        };
         /** Point */
         Point: {
             /** X */
@@ -1873,7 +1913,7 @@ export interface components {
             first_event: string | null;
             /**
              * Last Event
-             * @description When the latest stored event started (UTC).
+             * @description When the latest stored event started (UTC), up to now: calendar events synced ahead don't count.
              */
             last_event: string | null;
             /**
