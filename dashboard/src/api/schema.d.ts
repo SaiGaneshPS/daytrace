@@ -317,10 +317,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/streaks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every streak: today, the current run, the best, and the days */
+        get: operations["get_streaks_api_v1_streaks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The daily goals, with today's progress */
+        get: operations["get_goals_api_v1_goals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/goals/{goal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set a goal's target */
+        put: operations["put_goal_api_v1_goals__goal_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/achievements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every badge, earned or not, with its rule */
+        get: operations["get_achievements_api_v1_achievements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Achievement */
+        Achievement: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Rule */
+            rule: string;
+            /** Unlocked */
+            unlocked: boolean;
+            /**
+             * Earned On
+             * @description The day it was earned, in the time zone of that moment.
+             */
+            earned_on: string | null;
+            /**
+             * Unlocked At
+             * @description When the hub first saw it earned.
+             */
+            unlocked_at: string | null;
+            /**
+             * Dates
+             * @description The days that counted.
+             */
+            dates: string[];
+            progress: components["schemas"]["Progress"] | null;
+        };
+        /** AchievementList */
+        AchievementList: {
+            /** Tz */
+            tz: string;
+            /** Unlocked */
+            unlocked: number;
+            /** Achievements */
+            achievements: components["schemas"]["Achievement"][];
+        };
         /** AiStatus */
         AiStatus: {
             /** Base Url */
@@ -335,6 +439,13 @@ export interface components {
             models: string[];
             /** Error */
             error: string | null;
+        };
+        /** Amount */
+        Amount: {
+            /** Value */
+            value: number;
+            /** Unit */
+            unit: string;
         };
         /** Answer */
         Answer: {
@@ -635,6 +746,74 @@ export interface components {
             value: number | string;
             /** Unit */
             unit: string;
+        };
+        /** Goal */
+        Goal: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Rule */
+            rule: string;
+            /** Explain */
+            explain: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "at_least" | "at_most";
+            /**
+             * Unit
+             * @description minutes, or time (a clock time, HH:MM).
+             */
+            unit: string;
+            /** Target */
+            target: number | string;
+            /** Default */
+            default: number | string;
+            /** Min */
+            min: number | string;
+            /** Max */
+            max: number | string;
+            today: components["schemas"]["GoalToday"];
+        };
+        /** GoalList */
+        GoalList: {
+            /** Tz */
+            tz: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Goals */
+            goals: components["schemas"]["Goal"][];
+        };
+        /** GoalTarget */
+        GoalTarget: {
+            /**
+             * Target
+             * @description Minutes for focused time and social apps, HH:MM for bedtime.
+             */
+            target: number | string;
+        };
+        /** GoalToday */
+        GoalToday: {
+            /**
+             * Value
+             * @description Today's reading so far (a time as HH:MM); null without data.
+             */
+            value: number | string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "met" | "missed" | "at_risk" | "no_data";
+            /**
+             * Progress
+             * @description 0 to 100: toward a target, or how much of a limit is used.
+             */
+            progress: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -953,6 +1132,15 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** Progress */
+        Progress: {
+            /** Value */
+            value: number;
+            /** Target */
+            target: number;
+            /** Unit */
+            unit: string;
+        };
         /** RangeInfo */
         RangeInfo: {
             /**
@@ -1132,6 +1320,105 @@ export interface components {
              */
             in_progress: boolean;
         };
+        /** Streak */
+        Streak: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Rule
+             * @description The rule in words, with the current target.
+             */
+            rule: string;
+            /**
+             * Needs
+             * @description What must send data for a day to count; without it the day is no_data.
+             */
+            needs: string;
+            /** Unit */
+            unit: string;
+            /**
+             * Target
+             * @description The target on the rule's scale; null when it changes by day (Synced).
+             */
+            target: number | null;
+            /**
+             * Current
+             * @description Met days in a row, up to today (up to yesterday while today is at_risk).
+             */
+            current: number;
+            /**
+             * Best
+             * @description The longest run in the history (up to a year).
+             */
+            best: number;
+            /**
+             * Today
+             * @description met, at_risk (not yet: see remaining), missed (can't be any more) or no_data.
+             * @enum {string}
+             */
+            today: "met" | "missed" | "at_risk" | "no_data";
+            /**
+             * Value
+             * @description Today's reading so far.
+             */
+            value: number | null;
+            /** @description While at_risk: still to go, or the room left under a limit. */
+            remaining: components["schemas"]["Amount"] | null;
+            /**
+             * Counted
+             * @description The days in the current streak.
+             */
+            counted: string[];
+            /**
+             * Best Dates
+             * @description The days in the best run.
+             */
+            best_dates: string[];
+            /**
+             * Days
+             * @description The last days, oldest first, today last.
+             */
+            days: components["schemas"]["StreakDay"][];
+        };
+        /** StreakDay */
+        StreakDay: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "met" | "missed" | "at_risk" | "no_data";
+            /**
+             * Value
+             * @description The day's reading (minutes, meals, devices); null without data.
+             */
+            value: number | null;
+        };
+        /** StreakList */
+        StreakList: {
+            /** Tz */
+            tz: string;
+            /**
+             * Date
+             * Format: date
+             * @description Today, in tz.
+             */
+            date: string;
+            /**
+             * Since
+             * Format: date
+             * @description The first day judged: the first day with data (at most a year back).
+             */
+            since: string;
+            /** Streaks */
+            streaks: components["schemas"]["Streak"][];
+        };
         /** TimeRange */
         TimeRange: {
             /**
@@ -1253,6 +1540,29 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** WeekStreakOut */
+        WeekStreakOut: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Rule */
+            rule: string;
+            /**
+             * Met
+             * @description Days in the week that met the rule.
+             */
+            met: number;
+            /** Days With Data */
+            days_with_data: number;
+            /**
+             * Longest
+             * @description The longest run of met days inside the week.
+             */
+            longest: number;
+            /** Dates */
+            dates: string[];
+        };
         /** Wrapped */
         Wrapped: {
             /**
@@ -1301,11 +1611,9 @@ export interface components {
             reason: string | null;
             /**
              * Streaks
-             * @description The week's streak highlights (DT-53); empty until then.
+             * @description Each streak in the week (DT-53): the days met and the longest run.
              */
-            streaks?: {
-                [key: string]: unknown;
-            }[];
+            streaks: components["schemas"]["WeekStreakOut"][];
             meta: components["schemas"]["Meta"];
         };
     };
@@ -1908,6 +2216,151 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Wrapped"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_streaks_api_v1_streaks_get: {
+        parameters: {
+            query?: {
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+                /** @description How many recent days to list for each streak */
+                days?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreakList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goals_api_v1_goals_get: {
+        parameters: {
+            query?: {
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_goal_api_v1_goals__goal_id__put: {
+        parameters: {
+            query?: {
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                /** @description focus_target, social_cap or bedtime */
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalTarget"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_achievements_api_v1_achievements_get: {
+        parameters: {
+            query?: {
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AchievementList"];
                 };
             };
             /** @description Validation Error */

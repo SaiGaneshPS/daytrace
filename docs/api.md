@@ -64,7 +64,8 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `PUT /categories/{key}`, `DELETE /categories/{key}` | dashboard (viewer token or the hub computer) | DT-14 |
 | `GET /ai/status`, `GET /story`, `POST /ask` | viewer | DT-37, DT-39, DT-40 |
 | `GET /insights/{tab}`, `GET /wrapped` | viewer | DT-41 |
-| `GET /streaks`, `GET /goals`, `PUT /goals/{goal_id}`, `GET /achievements` | viewer | DT-53 |
+| `GET /streaks`, `GET /goals`, `GET /achievements` | viewer | DT-53 |
+| `PUT /goals/{goal_id}` | dashboard (viewer token or the hub computer) | DT-53 |
 | `GET /privacy/network` | viewer | DT-45 |
 | `GET /privacy/export`, `POST /privacy/delete` | local only | DT-46 |
 
@@ -502,7 +503,7 @@ days); anything else is `400`.
   "metrics": [ "the overview's metrics for the week" ], "top_apps": [ { "app": "Code", "category": "work", "minutes": 1494.0 } ],
   "lines": [ "You spent 3942 minutes on screens this week.", "...", "..." ],
   "facts_used": [ { "label": "screen time this week", "value": 3942, "unit": "minutes" } ],
-  "model": "google/gemma-4-e4b", "cached": false, "fallback": false, "reason": null, "streaks": [], "meta": { "...": "..." } }
+  "model": "google/gemma-4-e4b", "cached": false, "fallback": false, "reason": null, "streaks": [ { "id": "focus_flame", "met": 5, "days_with_data": 7, "longest": 4, "...": "..." } ], "meta": { "...": "..." } }
 ```
 
 - `lines` are always three: highlight lines by the local model from the week's facts. Every number in them is
@@ -514,25 +515,82 @@ days); anything else is `400`.
   on a Monday morning, would make any change look huge.
 - The lines are cached per week and time zone like the story: until the facts or what wrote them change, and for a
   week not over yet at most every 15 minutes.
-- `streaks` is empty until DT-53 adds them.
+- `streaks` has each streak's week (DT-53): the days that met its rule (`met`, `dates`), the days with data, and the
+  longest run inside the week.
 - The first answer takes as long as the model writes (about 15 s with Gemma 4 E4B on this PC); cached answers are
   instant.
 
 ### Streaks, goals and achievements
 
-`GET /streaks`:
+DT-53. The rules are in `hub/daytrace_hub/data/streak_rules.json`, and every number comes from the stats engine,
+so a streak agrees with Today and Insights. Every streak, goal and badge says its rule in words and the days that
+counted.
+
+`GET /streaks?tz=America/Toronto&days=30` (viewer):
 
 ```json
-{ "streaks": [ { "id": "focus_flame", "name": "Focus flame", "rule": "120 or more focused minutes in a day",
-  "current": 5, "best": 9, "today": "at_risk", "remaining": { "value": 45, "unit": "minutes" },
-  "days": [ { "date": "2026-09-24", "status": "met" } ] } ] }
+{ "tz": "America/Toronto", "date": "2026-09-25", "since": "2026-09-12",
+  "streaks": [ { "id": "focus_flame", "name": "Focus flame", "rule": "240 or more focused minutes in a day",
+    "needs": "a computer's data for the day", "unit": "minutes", "target": 240.0,
+    "current": 3, "best": 5, "today": "met", "value": 384.6, "remaining": null,
+    "counted": ["2026-09-23", "2026-09-24", "2026-09-25"],
+    "best_dates": ["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21"],
+    "days": [ { "date": "2026-09-22", "status": "missed", "value": 140.0 }, "..." ] } ] }
 ```
 
-`today` is `met`, `at_risk` or `no_data`; days with no data from the needed device neither extend nor break
-a streak.
+- The streaks: **Focus flame** (the focus target, in focused minutes), **Screens down** (15 minutes or less on the
+  phone after 11 pm the night before), **Logged it** (a meal logged), **Balanced** (the social cap) and **Synced**
+  (every paired phone and computer sent data that day).
+- Each day is `met`, `missed` or `no_data`. No data means what the rule needs (`needs`) sent nothing for that day,
+  such as no computer on a Sunday for Focus flame, a phone that sent nothing all day for Logged it, or for Screens down
+  a night the phone didn't show up both that evening (from 18:00) and on the day. Such a day neither extends nor
+  breaks a streak.
+- `today` is `met` as soon as today qualifies. A limit (Screens down, Balanced, the bedtime) qualifies only once what
+  it measures is over: the day, the night (03:00), or the sleep window (12:00, or as soon as the health app sends the
+  night). Until then today is `at_risk`, and `remaining` says what is left: the minutes still to go, or the room
+  left under the limit. `current` counts the days up to yesterday while today is at risk. Once today can no longer
+  qualify (the limit passed), it is `missed` and `current` is 0.
+- `best` is the longest run in the hub's history, up to a year back (`since` is the first day judged: the first day
+  with screen data). `days` lists the last `days` days (1 to 366), oldest first.
+- Goals apply to the whole history: a new target judges the past days again, so a streak always means what its rule
+  says now.
 
-- `GET /goals` returns `{ "goals": [ { "id": "social_cap", "label": "Social apps", "target": 60, "unit": "minutes", "progress": 0.42 } ] }`; `PUT /goals/{goal_id}` with `{ "target": 45 }` saves a new target.
-- `GET /achievements` returns `{ "achievements": [ { "id": "first_sync", "name": "First sync", "rule": "...", "unlocked_at": null } ] }`.
+`GET /goals?tz=` (viewer) is the daily goals with today's progress. `PUT /goals/{goal_id}` (the dashboard) with
+`{ "target": 45 }`, or `{ "target": "23:00" }` for the bedtime, saves a new target; out of range is `400`, an unknown
+goal is `404`.
+
+```json
+{ "tz": "America/Toronto", "date": "2026-09-25", "goals": [
+  { "id": "social_cap", "label": "Social apps", "rule": "60 minutes or less in social apps in a day",
+    "explain": "...", "kind": "at_most", "unit": "minutes", "target": 60.0, "default": 60, "min": 5.0, "max": 600.0,
+    "today": { "value": 17.98, "status": "at_risk", "progress": 30 } } ] }
+```
+
+- `focus_target` (focused minutes, at least; 10 to 720, default 120), `social_cap` (social minutes, at most; 5 to
+  600, default 60) and `bedtime` (asleep by, the night before; 20:00 to 03:00, default 23:30).
+- `progress` is 0 to 100: toward a target, or how much of a limit is used. A bedtime is 100 when met, 0 when missed,
+  and null while the night can still change. The bedtime is read by the wall clock, DST nights included.
+- The demo profile's seed sets the focus target to 240 minutes, the goal its 5-day focus streak is built around.
+
+`GET /achievements?tz=` (viewer):
+
+```json
+{ "tz": "America/Toronto", "unlocked": 4, "achievements": [
+  { "id": "streak_7", "name": "One week strong", "rule": "Any streak reached 7 days.", "unlocked": true,
+    "earned_on": "2026-09-18", "unlocked_at": "2026-09-25T21:00:00Z", "dates": ["2026-09-12", "...", "2026-09-18"],
+    "progress": { "value": 7, "target": 7, "unit": "days" } } ] }
+```
+
+- The badges: first sync, a full set (a Windows PC, a Mac, an Android phone and an iPhone all sent data), 7-day and
+  30-day streaks, 1,000 focused minutes, and a perfect week (Monday to Sunday with no goal missed and every goal met
+  on at least 5 days; a day without data for a goal doesn't count against it).
+- A badge, once earned, is kept with the day it was earned and when the hub first saw it (the `achievements`
+  table, migration `0006`): later data never takes it back, and its `progress` shows complete. Locked badges show
+  how far along they are. Re-running the seed clears them, since it replaces the history they came from.
+- Streaks, goals and badges are worked out together, once for requests that arrive together, and reused for the
+  rest of the minute unless the data or a goal changes. A day's readings that can't change any more are kept until
+  new data arrives, so a new minute only reads today (and last night until 03:00). 90 seeded days take about
+  0.15 s to work out from nothing on this PC.
 
 ### Privacy
 

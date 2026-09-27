@@ -221,6 +221,13 @@ def migrate(conn: sqlite3.Connection, migrations: list[Migration] | None = None)
     return applied
 
 
+def data_version(conn: sqlite3.Connection) -> int:
+    """The database's change counter (migration 0005): triggers add one for every event added, replaced or
+    deleted, every category choice, and every device paired, renamed or revoked, in any process. One row to read,
+    so a cache of worked-out numbers (insights, streaks) can check it on every request."""
+    return conn.execute("SELECT changes FROM data_changes WHERE id = 1").fetchone()[0]
+
+
 def utc_text(moment: datetime) -> str:
     """Fixed-width UTC text (2026-09-25T18:03:10.000000Z), so stored times compare and sort as plain text."""
     if moment.tzinfo is None:

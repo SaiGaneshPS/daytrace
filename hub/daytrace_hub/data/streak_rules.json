@@ -1,0 +1,92 @@
+{
+  "_comment": "DT-53: the daily goals, streaks and one-time achievements. Every rule is worked out by streaks.py from the stats engine. A goal's target is the user's (the goals table); `default` is used until they change it. A streak with a `goal` counts the days that goal was met; one with a `measure` has its own fixed target. `rule` is shown as written, with {target} filled in.",
+  "goals": [
+    {
+      "id": "focus_target",
+      "label": "Focused time",
+      "measure": "focused_minutes",
+      "kind": "at_least",
+      "unit": "minutes",
+      "default": 120,
+      "min": 10,
+      "max": 720,
+      "rule": "{target} or more focused minutes in a day",
+      "explain": "Work or study in blocks of 10 minutes or more with no phone distraction, on a computer."
+    },
+    {
+      "id": "social_cap",
+      "label": "Social apps",
+      "measure": "social_minutes",
+      "kind": "at_most",
+      "unit": "minutes",
+      "default": 60,
+      "min": 5,
+      "max": 600,
+      "rule": "{target} minutes or less in social apps in a day",
+      "explain": "Time in social apps and sites, every device added up. A day counts once it is over."
+    },
+    {
+      "id": "bedtime",
+      "label": "Bedtime",
+      "measure": "bedtime",
+      "kind": "at_most",
+      "unit": "time",
+      "default": "23:30",
+      "min": "20:00",
+      "max": "03:00",
+      "rule": "asleep by {target} the night before",
+      "explain": "When sleep started last night: from your health app, or the phone's quiet time."
+    }
+  ],
+  "streaks": [
+    {
+      "id": "focus_flame",
+      "name": "Focus flame",
+      "goal": "focus_target",
+      "needs": "a computer's data for the day"
+    },
+    {
+      "id": "screens_down",
+      "name": "Screens down",
+      "measure": "late_phone_minutes",
+      "kind": "at_most",
+      "unit": "minutes",
+      "target": 15,
+      "rule": "{target} minutes or less on the phone after 11 pm the night before",
+      "needs": "a phone's data that evening and on the day"
+    },
+    {
+      "id": "logged_it",
+      "name": "Logged it",
+      "measure": "meals",
+      "kind": "at_least",
+      "unit": "meals",
+      "target": 1,
+      "rule": "at least {target} meal logged in a day",
+      "needs": "a phone's data for the day"
+    },
+    {
+      "id": "balanced",
+      "name": "Balanced",
+      "goal": "social_cap",
+      "needs": "screen data for the day"
+    },
+    {
+      "id": "synced",
+      "name": "Synced",
+      "measure": "devices_synced",
+      "kind": "at_least",
+      "unit": "devices",
+      "rule": "every paired phone and computer sent data that day",
+      "needs": "a phone or computer paired that day"
+    }
+  ],
+  "achievements": [
+    {"id": "first_sync", "name": "First sync", "kind": "first_data", "rule": "Your devices' first data reached the hub."},
+    {"id": "full_set", "name": "Full set", "kind": "every_device_type", "rule": "A Windows PC, a Mac, an Android phone and an iPhone all sent data."},
+    {"id": "streak_7", "name": "One week strong", "kind": "streak_days", "amount": 7, "rule": "Any streak reached 7 days."},
+    {"id": "streak_30", "name": "Thirty days", "kind": "streak_days", "amount": 30, "rule": "Any streak reached 30 days."},
+    {"id": "focus_1000", "name": "1,000 focused minutes", "kind": "focused_total", "amount": 1000, "rule": "1,000 focused minutes in all."},
+    {"id": "perfect_week", "name": "Perfect week", "kind": "perfect_week", "rule": "A whole week, Monday to Sunday, with no goal missed and every goal met on at least 5 days (a day without data for a goal doesn't count against it)."}
+  ]
+}

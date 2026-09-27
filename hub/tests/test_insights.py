@@ -444,7 +444,10 @@ def test_wrapped_is_last_week_by_default_with_three_checked_lines(hub: TestClien
     assert body["in_progress"] is False and body["fallback"] is False and body["model"]
     assert len(body["lines"]) == 3 and body["lines"][0].startswith("You spent ")
     assert body["top_apps"] and body["metrics"][0]["id"] == "screen_time"
-    assert body["streaks"] == []  # DT-53 fills these
+    streaks = {item["id"]: item for item in body["streaks"]}  # DT-53: each streak's days in the week
+    assert list(streaks) == ["focus_flame", "screens_down", "logged_it", "balanced", "synced"]
+    assert (streaks["focus_flame"]["met"], streaks["focus_flame"]["longest"]) == (5, 4)  # 14, 17 to 20 September
+    assert streaks["logged_it"]["met"] == streaks["logged_it"]["days_with_data"] == 7
     again = hub.get("/api/v1/wrapped", params={"tz": TZ_NAME, "week": "2026-W38"}).json()
     assert again["cached"] is True and again["lines"] == body["lines"]
     assert len(fake_llm.chats()) == 1  # the model wrote once
