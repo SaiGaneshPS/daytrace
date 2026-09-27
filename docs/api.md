@@ -477,7 +477,7 @@ days); anything else is `400`.
   - `heatmap`: `x`, `y` and `cells` (indexes into them).
   - `sankey`: `nodes` and `links`. Node names are unique: a device name two devices share, or one that is also a
     category's, gets the device id, as in `Galaxy phone (android-3)`. Lines and heatmap rows use the same names.
-  - `scatter`: `points`, with `stats` (rho, p, n) and a `note` for a correlation.
+  - `scatter`: `points`, with `stats` (rho, p, n, and the trend line's slope and intercept) and a `note` for a correlation.
   - `gauge`: `value` and `max`.
   - `leaderboard`: `items` in order, each with its minutes (`value`), `spark` (minutes on each of the series' `x`
     days, null on a day no device sent screen data) and `change` (as below, or null).
@@ -498,8 +498,12 @@ days); anything else is `400`.
     `node_categories`; a switch over midnight counts for the day it lands in), when each device sent data (`sync`, a
     strip), and the metrics `handoffs` (the count), `top_handoff` and `last_seen:<device>` (when the hub last heard
     from it, UTC, or null: read fresh for every answer, a cached one too).
-  - **focus:** the average score (gauge); focused, other work or study, and distracted time by day; switches by hour;
-    late nights against the next day's focus (scatter, with Spearman's rho and "correlation, not cause").
+  - **focus:** the average score (gauge, its `explain` spelling out the formula); focused, other work or study, and
+    distracted time by day; switches by hour; late nights against the next day's focus (scatter, with Spearman's rho
+    and "correlation, not cause"). DT-56 adds switches an hour by day (`switches_by_day`), when distractions happen
+    (`distraction_hours`: social, video and games by weekday and hour), and the scatter's least-squares trend line
+    (`stats.slope`, points of focus per late minute, and `stats.intercept`; null with fewer than 2 nights or when every
+    night had the same late minutes).
   - **sleep:** each night, measured or estimated; bedtime and wake time (minutes after 18:00 the evening before);
     after 11 pm.
   - **food:** meals by day and type, when you ate, the most logged foods.

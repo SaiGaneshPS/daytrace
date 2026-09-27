@@ -10,7 +10,7 @@
 // loading skeleton), follows the color scheme, resizes with its box and cleans up. Colors in an option may be
 // written as "var(--token)" (categoryStyle does): they are read again whenever the scheme changes, so a chart never
 // keeps the other theme's colors. Only the chart types and components below are bundled.
-import { BarChart, CustomChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart } from "echarts/charts";
+import { BarChart, CustomChart, GaugeChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart } from "echarts/charts";
 import {
   AriaComponent,
   DatasetComponent,
@@ -28,7 +28,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMediaQuery, useReducedMotionPreference } from "./motion";
 
 echarts.use([
-  BarChart, CustomChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart,
+  BarChart, CustomChart, GaugeChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart,
   AriaComponent, DatasetComponent, DataZoomInsideComponent, DataZoomSliderComponent, GridComponent, LegendComponent,
   MarkLineComponent, TooltipComponent, VisualMapComponent,
   CanvasRenderer,

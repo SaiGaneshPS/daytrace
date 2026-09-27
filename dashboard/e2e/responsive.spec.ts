@@ -64,6 +64,7 @@ const DEVICE = (device_id: string, name: string, device_type: string, has_token 
 const LAN = "http://192.168.100.200:8765";
 // The hub's own Overview answers for 14 seeded days (made by the hub's code: e2e/fixtures).
 const INSIGHTS = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-overview.json"), "utf-8")) as Record<string, object>;
+const FOCUS_SLEEP = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-focus-sleep.json"), "utf-8")) as Record<string, Record<string, object>>;
 const APPS_DEVICES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-apps-devices.json"), "utf-8")) as Record<string, Record<string, object>>;
 
 async function mockHub(page: Page, local: boolean) {
@@ -76,10 +77,11 @@ async function mockHub(page: Page, local: boolean) {
     const range = new URL(route.request().url()).searchParams.get("range") ?? "";
     return route.fulfill({ json: INSIGHTS[range] ?? INSIGHTS["7d"] });
   });
-  for (const tab of ["apps", "devices"]) {
+  for (const tab of ["apps", "devices", "focus", "sleep"]) {
+    const answers = tab === "focus" || tab === "sleep" ? FOCUS_SLEEP : APPS_DEVICES;
     await page.route(`**/api/v1/insights/${tab}?**`, (route) => {
       const range = new URL(route.request().url()).searchParams.get("range") ?? "";
-      return route.fulfill({ json: APPS_DEVICES[tab][range] ?? APPS_DEVICES[tab]["7d"] });
+      return route.fulfill({ json: answers[tab][range] ?? answers[tab]["7d"] });
     });
   }
   await page.route("**/api/v1/insights/apps/detail?**", (route) => route.fulfill({ json: APPS_DEVICES.detail["7d"] }));
@@ -229,6 +231,13 @@ test("Insights, Apps and Devices, fits every screen and text size", async ({ pag
   await mockHub(page, true);
   await page.goto("/insights?tab=apps&range=7d");
   await sweep(page, () => expect(page.getByRole("region", { name: "Switching between devices" }).locator(".chart canvas").first()).toBeVisible());
+});
+
+test("Insights, Focus and Sleep, fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/insights?tab=focus&range=7d");
+  await sweep(page, () => expect(page.getByRole("region", { name: "Late nights and the next day's focus" }).locator(".chart canvas").first()).toBeVisible());
 });
 
 test("one app's detail fits every screen and text size", async ({ page }) => {

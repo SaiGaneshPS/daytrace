@@ -102,7 +102,8 @@ def test_every_tab_answers_with_its_metrics_and_series(hub: TestClient) -> None:
                      "phone_vs_computer": "stacked"},
         "apps": {"top_apps": "bars", "treemap": "treemap", "by_category": "stacked", "switches": "trend", "leaderboard": "leaderboard"},
         "devices": {"share": "donut", "by_day": "stacked", "hours": "heatmap", "flow": "sankey", "handoffs": "sankey", "sync": "strip"},
-        "focus": {"score": "gauge", "focus_by_day": "stacked", "switches_by_hour": "bars", "late_vs_focus": "scatter"},
+        "focus": {"score": "gauge", "focus_by_day": "stacked", "switches_by_hour": "bars", "late_vs_focus": "scatter",
+                  "switches_by_day": "trend", "distraction_hours": "heatmap"},
         "sleep": {"sleep_by_night": "stacked", "schedule": "trend", "late_night": "bars"},
         "food": {"meals_by_day": "stacked", "meal_times": "scatter", "top_items": "bars"},
         "calendar": {"plan_by_day": "stacked", "blocks": "bars", "hours": "heatmap"},
@@ -584,8 +585,8 @@ DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" /
 
 
 def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
-    """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34) and the Apps and Devices tab
-    with one app's detail (DT-55), for 14 seeded days."""
+    """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34), the Apps and Devices tab with
+    one app's detail (DT-55), and the Focus and Sleep tab (DT-56), for 14 seeded days."""
     def fresh(body: dict[str, Any]) -> dict[str, Any]:
         return {**body, "cached": False}
 
@@ -597,6 +598,10 @@ def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
             "apps": apps,
             "devices": {span: fresh(tab(client, "devices", span)) for span in ("14d", "7d")},
             "detail": {"7d": fresh(detail(client, leader))},
+        },
+        "insights-focus-sleep.json": {
+            "focus": {span: fresh(tab(client, "focus", span)) for span in ("14d", "7d")},
+            "sleep": {span: fresh(tab(client, "sleep", span)) for span in ("14d", "7d")},
         },
     }
 
@@ -811,3 +816,41 @@ def test_the_leaderboard_reads_the_ranges_own_split(hub: TestClient, monkeypatch
     insights_api._cache.clear()
     tab(hub, "apps", "today")
     assert (TODAY - timedelta(days=6), TODAY, "day", "app") in calls  # a range shorter than the week reads the days before
+
+
+# --- DT-56: the Focus and Sleep tab ------------------------------------------------------------------------------
+
+
+def test_distractions_by_hour_add_up_to_the_distracting_categories(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    heat = tab(hub, "focus", "14d")["series"]["distraction_hours"]
+    assert heat["x"] == insights_api.HOURS and heat["y"] == insights_api.WEEKDAYS
+    categories = {item["key"]: item["minutes"] for item in stats_of().totals(FIRST, TODAY, group_by="category")["items"]}
+    distracted = sum(categories.get(key, 0) for key in ("social", "video", "games"))
+    assert close(distracted, [cell["value"] for cell in heat["cells"]], len(heat["cells"]))
+    evenings = sum(cell["value"] for cell in heat["cells"] if cell["x"] >= 21)
+    assert evenings > 0  # the seeded late-night scrolling is there
+
+
+def test_switches_by_day_are_the_stats_engines(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    line = tab(hub, "focus", "14d")["series"]["switches_by_day"]["lines"][0]["values"]
+    stats = stats_of()
+    assert line == [stats.switches_per_hour(FIRST + timedelta(days=i))["value"] for i in range(14)]
+
+
+def test_the_trend_line_is_least_squares() -> None:
+    pairs = [{"late_minutes": x, "focus_score": y} for x, y in ((0, 80), (60, 60), (120, 40))]
+    assert insights_api.trend_line(pairs) == {"slope": -0.3333, "intercept": 80.0}  # exactly 80 - x / 3
+    assert insights_api.trend_line(pairs[:1]) == {"slope": None, "intercept": None}  # one point: no line
+    flat = [{"late_minutes": 30, "focus_score": y} for y in (50, 70)]
+    assert insights_api.trend_line(flat) == {"slope": None, "intercept": None}  # every night the same: no line
+
+
+def test_the_late_night_pattern_has_its_line_size_and_caveat(hub: TestClient) -> None:
+    body = tab(hub, "focus", "14d")
+    scatter = body["series"]["late_vs_focus"]
+    stats = scatter["stats"]
+    assert stats["n"] == len(scatter["points"]) >= 10 and stats["rho"] < -0.5  # the seeded pattern: later nights, less focus
+    assert stats["slope"] < 0 and 0 <= stats["intercept"] <= 100
+    assert scatter["note"].startswith("Correlation, not cause")
+    explain = body["series"]["score"]["explain"]
+    assert "100 × focused time ÷ (work or study time + distracted time)" in explain  # the formula, for the gauge's tooltip
