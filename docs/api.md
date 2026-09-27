@@ -405,6 +405,27 @@ template when the model is down; `/ask` returns 503 `ai_unavailable` then (400 f
 
 ### Insights and Wrapped
 
+`GET /insights/day?date=2026-09-25&tz=America/Toronto` (DT-31, viewer) gives the Today tab's numbers from the stats
+engine, so the dashboard never works one out itself:
+
+```json
+{ "date": "2026-09-25", "tz": "America/Toronto", "in_progress": false,
+  "screen_minutes": 157.5, "phone_minutes": 37.5, "computer_minutes": 120.0,
+  "focused_minutes": 45.0, "focus_score": 36, "pickups": 3, "switches_per_hour": 2.3,
+  "sleep_minutes": 447.0, "sleep_estimated": true, "steps": 8412,
+  "top_apps": [ { "app": "Minecraft", "category": "games", "minutes": 60.0 } ],
+  "estimated": true }
+```
+
+- `screen_minutes` is the timeline's total (per device, added up); `phone_minutes` and `computer_minutes` add up to it.
+  All three are null on a day without screen data (missing, not zero).
+- `top_apps`: up to 10 apps and sites, most time first, each with the category holding most of its time.
+- `sleep_minutes`: last night (the night ending this morning). `steps`: the day's steps; when two phones send
+  steps, the larger total.
+- `in_progress` is true for today: every number is the day so far.
+
+The rest of the insights API (DT-41) is planned as:
+
 `GET /insights/{tab}?range=7d&tz=...` where `tab` is `overview`, `apps`, `devices`, `focus`, `sleep`, `food`
 or `calendar`, and `range` is `today`, `7d`, `30d` or `YYYY-MM-DD..YYYY-MM-DD`:
 

@@ -14,6 +14,8 @@ import { BarChart, CustomChart, LineChart, PieChart, ScatterChart } from "echart
 import {
   AriaComponent,
   DatasetComponent,
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
@@ -26,7 +28,8 @@ import { useMediaQuery, useReducedMotionPreference } from "./motion";
 
 echarts.use([
   BarChart, CustomChart, LineChart, PieChart, ScatterChart,
-  AriaComponent, DatasetComponent, GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
+  AriaComponent, DatasetComponent, DataZoomInsideComponent, DataZoomSliderComponent, GridComponent, LegendComponent,
+  MarkLineComponent, TooltipComponent,
   CanvasRenderer,
 ]);
 
@@ -153,8 +156,19 @@ function useScheme(): "light" | "dark" {
   return forced === "dark" || forced === "light" ? forced : systemDark ? "dark" : "light";
 }
 
+export type ChartSettings = {
+  /** Update in place instead of replacing the chart: only what changed animates (new blocks slide in, bars
+   * re-sort), and the user's zoom and pan stay. For charts that refresh live. Series need stable ids. */
+  merge?: boolean;
+};
+
 /** A ref for a chart's <div>. `label` names the chart for screen readers; `option` may be null while loading. */
-export function useEChart(option: ChartOption | null, label: string): (box: HTMLDivElement | null) => void {
+export function useEChart(
+  option: ChartOption | null,
+  label: string,
+  settings: ChartSettings = {},
+): (box: HTMLDivElement | null) => void {
+  const merge = settings.merge ?? false;
   // A callback ref: the chart is made when the div mounts, whenever that is, and remade if it is replaced.
   const [box, setBox] = useState<HTMLDivElement | null>(null);
   const [chart, setChart] = useState<echarts.ECharts | null>(null);
@@ -190,9 +204,9 @@ export function useEChart(option: ChartOption | null, label: string): (box: HTML
         animation: reduced ? false : (option.animation ?? true),
         aria: { ...aria, enabled: true, label: { general: { withoutTitle: `${label}. ` } }, decal: { show: true } },
       }),
-      { notMerge: true },
+      merge ? { replaceMerge: ["series"] } : { notMerge: true },
     );
-  }, [box, chart, option, label, reduced, scheme]);
+  }, [box, chart, option, label, reduced, scheme, merge]);
 
   return useCallback((element: HTMLDivElement | null) => setBox(element), []);
 }

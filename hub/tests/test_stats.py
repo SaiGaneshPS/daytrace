@@ -9,9 +9,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi.testclient import TestClient
 
+from daytrace_hub.api import insights as insights_api
 from daytrace_hub.api import timeline as timeline_api
 from daytrace_hub.api.events import store_events
+from daytrace_hub.app import create_app
 from daytrace_hub.auth import register_device
 from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database, transaction
@@ -484,3 +487,54 @@ def test_seeded_days_have_every_stat(seeded: tuple[Database, datetime, list[date
         assert s.sleep_estimate(yesterday)["method"] == "health"  # the seed phone syncs measured sleep
         assert s.switches_per_hour(yesterday)["value"] > 0
         assert s.planned_vs_actual(yesterday)["totals_seconds"]["planned"] >= 0
+
+
+# --- DT-31: the day summary behind the Today tab --------------------------------------------------------------------
+
+
+def test_the_day_summary_uses_the_same_numbers_as_everything_else(day: Database) -> None:
+    with stats(day) as engine:
+        summary = insights_api.summarize(engine, DAY, TORONTO)
+        assert summary.screen_minutes == engine.totals(DAY)["total_minutes"] == TOTAL / 60
+        assert summary.focused_minutes == engine.focused_minutes(DAY)["value"]
+        assert summary.focus_score == engine.focus_score(DAY)["value"]
+        assert summary.pickups == engine.pickups(DAY)["value"]
+        assert summary.switches_per_hour == engine.switches_per_hour(DAY)["value"]
+        by_app = {item["key"]: item["minutes"] for item in engine.totals(DAY, group_by="app")["items"]}
+    assert (summary.phone_minutes, summary.computer_minutes) == (37.5, 120.0)  # they add up to the screen time
+    assert [(app.app, app.minutes) for app in summary.top_apps] == sorted(by_app.items(), key=lambda kv: (-kv[1], kv[0]))
+    assert [app.category for app in summary.top_apps[:3]] == ["games", "work", "social"]  # Minecraft, Code, Instagram
+    assert summary.in_progress is False and summary.steps is None and summary.estimated is False
+
+
+def test_steps_count_once_and_the_largest_phone_total_wins(db: Database) -> None:
+    add(db, "android-1", "android", [
+        span("steps", at("00:00:00"), at("21:00:00"), source="health_connect", data={"count": 8000}, external_id="steps:2026-09-25"),
+    ])
+    add(db, "iphone-1", "ios", [
+        span("steps", at("00:00:00"), at("20:00:00"), source="healthkit", data={"count": 9100}, seq=1),
+        span("steps", at("00:00:00", date(2026, 9, 24)), at("20:00:00", date(2026, 9, 24)), source="healthkit",
+             data={"count": 5000}, seq=2),  # yesterday's
+    ])
+    with stats(db) as engine:
+        assert insights_api.day_steps(engine, DAY) == 9100
+        assert insights_api.day_steps(engine, date(2026, 9, 24)) == 5000
+        assert insights_api.day_steps(engine, NEXT) is None
+
+
+def test_a_day_without_screen_data_has_no_screen_numbers(day: Database) -> None:
+    with stats(day) as engine:
+        summary = insights_api.summarize(engine, date(2026, 9, 20), TORONTO)
+    assert (summary.screen_minutes, summary.phone_minutes, summary.computer_minutes) == (None, None, None)
+    assert summary.top_apps == [] and summary.focused_minutes is None and summary.pickups is None
+
+
+def test_the_day_summary_endpoint(day: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(insights_api, "current_time", lambda: LATER)
+    with TestClient(create_app(settings), client=("127.0.0.1", 50000), base_url="http://localhost:8765") as hub:
+        body = hub.get("/api/v1/insights/day", params={"date": "2026-09-25", "tz": TORONTO}).json()
+        assert hub.get("/api/v1/insights/day", params={"date": "2026-09-25", "tz": "Mars/Base"}).status_code == 400
+        phone = TestClient(hub.app, client=("192.168.1.50", 40000))
+        assert phone.get("/api/v1/insights/day", params={"date": "2026-09-25"}).status_code == 401
+    assert body["screen_minutes"] == TOTAL / 60 and body["top_apps"][0] == {"app": "Minecraft", "category": "games", "minutes": 60.0}
+    assert body["date"] == "2026-09-25" and body["tz"] == TORONTO and body["in_progress"] is False

@@ -249,6 +249,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/insights/day": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One day's numbers for the Today tab */
+        get: operations["day_summary_api_v1_insights_day_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -336,6 +353,18 @@ export interface components {
              */
             events: number;
         };
+        /** AppMinutes */
+        AppMinutes: {
+            /** App */
+            app: string;
+            /**
+             * Category
+             * @description The category with the most of this app's time that day.
+             */
+            category: string;
+            /** Minutes */
+            minutes: number;
+        };
         /** AskIn */
         AskIn: {
             /**
@@ -413,6 +442,66 @@ export interface components {
             device_id: string;
             /** Last Seq */
             last_seq: number | null;
+        };
+        /** DaySummary */
+        DaySummary: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Tz */
+            tz: string;
+            /**
+             * In Progress
+             * @description True while the day is not over: the numbers are the day so far.
+             */
+            in_progress: boolean;
+            /**
+             * Screen Minutes
+             * @description Screen time, per device and added up (as the timeline); null without screen data.
+             */
+            screen_minutes: number | null;
+            /** Phone Minutes */
+            phone_minutes: number | null;
+            /** Computer Minutes */
+            computer_minutes: number | null;
+            /**
+             * Focused Minutes
+             * @description Work or study in blocks of 10+ minutes with no phone distraction.
+             */
+            focused_minutes: number | null;
+            /**
+             * Focus Score
+             * @description 0 to 100; null on a day with neither work nor distraction.
+             */
+            focus_score: number | null;
+            /** Pickups */
+            pickups: number | null;
+            /** Switches Per Hour */
+            switches_per_hour: number | null;
+            /**
+             * Sleep Minutes
+             * @description Last night's sleep (the night ending this morning).
+             */
+            sleep_minutes: number | null;
+            /** Sleep Estimated */
+            sleep_estimated: boolean;
+            /**
+             * Steps
+             * @description The day's steps; the largest total when two phones sent one.
+             */
+            steps: number | null;
+            /**
+             * Top Apps
+             * @description Up to 10 apps and sites with the most time, most first.
+             */
+            top_apps: components["schemas"]["AppMinutes"][];
+            /**
+             * Estimated
+             * @description True when any of this was inferred (an iPhone app without a close, a guessed night).
+             */
+            estimated: boolean;
         };
         /** DeviceInfo */
         DeviceInfo: {
@@ -1296,6 +1385,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Answer"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    day_summary_api_v1_insights_day_get: {
+        parameters: {
+            query?: {
+                /** @description YYYY-MM-DD; default: today in tz */
+                date?: string | null;
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaySummary"];
                 };
             };
             /** @description Validation Error */

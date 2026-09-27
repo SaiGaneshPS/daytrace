@@ -29,6 +29,7 @@ from .api import ai as ai_api
 from .api import categories as categories_api
 from .api import devices as devices_api
 from .api import events as events_api
+from .api import insights as insights_api
 from .api import timeline as timeline_api
 from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
@@ -289,6 +290,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, dashboa
     app.include_router(timeline_api.router)
     app.include_router(categories_api.router)
     app.include_router(ai_api.router)
+    app.include_router(insights_api.router)
     # What no route takes is the dashboard's: as the router's default, not a route, so a route added later still
     # comes first and a wrong method on an API path is still the API's 405.
     folder = dashboard_dir or settings.dashboard_dir or default_dashboard_dir()

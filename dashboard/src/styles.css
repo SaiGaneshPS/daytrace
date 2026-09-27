@@ -258,6 +258,54 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
   min-width: var(--touch); min-height: var(--touch); background: none; border: 0; color: inherit; font-size: 1.3rem; cursor: pointer;
 }
 
+/* --- pages: header, hero stats (DT-31) ------------------------------------------------------------------------ */
+
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.page-head h1 { margin: 0; }
+.eyebrow { margin: 0 0 var(--space-1); color: var(--muted); font-size: var(--text-sm); font-weight: 600; }
+.day-picker { display: flex; align-items: center; gap: var(--space-1); }
+.date-input {
+  min-height: var(--touch); padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--text); font: inherit; font-weight: 600;
+}
+.icon-button:disabled { opacity: 0.4; cursor: default; background: none; }
+.stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 1100px) { .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.stat-card { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: var(--space-1); min-height: 132px; }
+.stat-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c, var(--accent)); }
+.stat-label { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin: 0; color: var(--muted); font-size: var(--text-sm); font-weight: 600; }
+.stat-value { margin: 0; font-family: var(--font-numbers); font-size: var(--text-2xl); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+@media (min-width: 640px) { .stat-value { font-size: var(--text-3xl); } }
+.stat-value.stat-empty { font-size: var(--text-lg); color: var(--muted); font-weight: 700; }
+.stat-unit { margin-left: var(--space-1); font-size: var(--text-base); color: var(--muted); font-weight: 600; }
+.stat-hint { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.split { display: flex; height: 8px; margin-top: auto; border-radius: var(--radius-pill); overflow: hidden; gap: 2px; }
+.split-phone { background: var(--cat-comms); }
+.split-computer { background: var(--cat-work); }
+
+/* --- the timeline -------------------------------------------------------------------------------------------- */
+
+.timeline { display: flex; flex-direction: column; gap: var(--space-3); }
+.device-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.device-chip {
+  display: inline-flex; align-items: center; gap: var(--space-2); min-height: 32px; padding: 0 var(--space-3);
+  border-radius: var(--radius-pill); background: var(--surface-2); font-size: var(--text-sm);
+}
+.device-chip-name { font-weight: 700; }
+.device-chip .live-dot.live { background: var(--ok); }
+.timeline-chart { min-height: 160px; }
+.timeline-legend { margin: 0; padding: 0; list-style: none; }
+
+/* --- health ---------------------------------------------------------------------------------------------------- */
+
+.sleep { display: flex; flex-direction: column; gap: var(--space-2); }
+.sleep-bar { height: 14px; border-radius: var(--radius-pill); background: var(--surface-2); overflow: hidden; }
+.sleep-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--cat-study), var(--accent)); }
+.sleep-scale { display: flex; justify-content: space-between; margin: 0; font-size: var(--text-xs); }
+.steps { display: flex; align-items: center; gap: var(--space-4); }
+.ring-track { fill: none; stroke: var(--surface-2); stroke-width: 12; }
+.ring-fill { fill: none; stroke: var(--cat-health); stroke-width: 12; stroke-linecap: round; transition: stroke-dashoffset var(--duration-slow) var(--ease); }
+
 /* --- styleguide ------------------------------------------------------------------------------------------------ */
 
 .palette { display: flex; flex-wrap: wrap; gap: var(--space-2); }
