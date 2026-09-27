@@ -55,6 +55,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nudges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The nudge rules, on or off, and the latest nudges */
+        get: operations["get_nudges_api_v1_nudges_get"];
+        /** Switch nudge rules and desktop notifications on or off */
+        put: operations["put_nudges_api_v1_nudges_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pair/start": {
         parameters: {
             query?: never;
@@ -465,6 +483,23 @@ export interface paths {
         put?: never;
         /** Hide the stored events the rules match (can't be undone) */
         post: operations["apply_redaction_api_v1_privacy_redaction_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/privacy/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where the data lives and how much there is */
+        get: operations["storage_api_v1_privacy_storage_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1444,6 +1479,64 @@ export interface components {
              */
             created_at: string;
         };
+        /**
+         * NudgeChoices
+         * @description The whole choice, both fields: a typo or a missing field is refused rather than turning every rule back on.
+         */
+        NudgeChoices: {
+            /**
+             * Disabled
+             * @description The rules switched off, by id; the others are on.
+             */
+            disabled: string[];
+            /**
+             * Desktop
+             * @description Desktop notifications for the hub computer's own activity.
+             */
+            desktop: boolean;
+        };
+        /** NudgeLogEntry */
+        NudgeLogEntry: {
+            /** Rule */
+            rule: string;
+            /** Device Id */
+            device_id: string | null;
+            /** Title */
+            title: string;
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** NudgeRuleState */
+        NudgeRuleState: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Enabled */
+            enabled: boolean;
+        };
+        /**
+         * NudgeSettings
+         * @description Each rule, on or off; whether this computer shows desktop notifications for its own activity; and the latest
+         *     nudges, newest first.
+         */
+        NudgeSettings: {
+            /** Rules */
+            rules: components["schemas"]["NudgeRuleState"][];
+            /** Desktop */
+            desktop: boolean;
+            /** Cooldown Minutes */
+            cooldown_minutes: number;
+            /** Recent */
+            recent: components["schemas"]["NudgeLogEntry"][];
+        };
         /** OverrideOut */
         OverrideOut: {
             /** Key */
@@ -1748,6 +1841,46 @@ export interface components {
             estimated: boolean;
             /** Device Id */
             device_id: string;
+        };
+        /**
+         * Storage
+         * @description DT-36: where the profile's data lives and how much there is.
+         */
+        Storage: {
+            /** Profile */
+            profile: string;
+            /**
+             * Folder
+             * @description The folder that holds the database, on the hub computer only (it names that computer's folders); null anywhere else.
+             */
+            folder: string | null;
+            /**
+             * File
+             * @description The database file's name.
+             */
+            file: string;
+            /**
+             * Size Bytes
+             * @description The database file with its write-ahead log.
+             */
+            size_bytes: number;
+            /** Events */
+            events: number;
+            /**
+             * First Event
+             * @description When the earliest stored event started (UTC).
+             */
+            first_event: string | null;
+            /**
+             * Last Event
+             * @description When the latest stored event started (UTC).
+             */
+            last_event: string | null;
+            /**
+             * Devices
+             * @description Devices paired now (not revoked).
+             */
+            devices: number;
         };
         /** StoredMatches */
         StoredMatches: {
@@ -2227,6 +2360,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Cursor"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nudges_api_v1_nudges_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NudgeSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_nudges_api_v1_nudges_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NudgeChoices"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NudgeSettings"];
                 };
             };
             /** @description Validation Error */
@@ -3093,6 +3292,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Applied"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    storage_api_v1_privacy_storage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Storage"];
                 };
             };
             /** @description Validation Error */

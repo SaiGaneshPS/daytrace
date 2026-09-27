@@ -19,7 +19,9 @@
   --accent-ink: #4338ca;
   --on-accent: #ffffff;
   --ok: #047857;
+  --on-ok: #ffffff; /* a mark on an --ok fill */
   --bad: #b91c1c;
+  --on-bad: #ffffff; /* text on a --bad fill (a danger button) */
   --focus: #4f46e5;
 
   /* gradients (white text stays at 4.5:1 or more across the whole gradient) */
@@ -91,7 +93,9 @@
     --accent-ink: #a5b4fc;
     --on-accent: #0b1020;
     --ok: #34d399;
+    --on-ok: #0b1020;
     --bad: #f87171;
+    --on-bad: #0b1020;
     --focus: #a5b4fc;
     --hero: linear-gradient(135deg, #4338ca 0%, #6d28d9 55%, #be185d 100%);
     --hero-soft: linear-gradient(135deg, rgb(129 140 248 / 0.14), rgb(244 114 182 / 0.12));
@@ -120,7 +124,9 @@
   --accent-ink: #a5b4fc;
   --on-accent: #0b1020;
   --ok: #34d399;
+  --on-ok: #0b1020;
   --bad: #f87171;
+  --on-bad: #0b1020;
   --focus: #a5b4fc;
   --hero: linear-gradient(135deg, #4338ca 0%, #6d28d9 55%, #be185d 100%);
   --hero-soft: linear-gradient(135deg, rgb(129 140 248 / 0.14), rgb(244 114 182 / 0.12));

@@ -28,6 +28,7 @@ from daytrace_hub.api.insights import RangeInfo
 from daytrace_hub.app import create_app
 from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database, transaction
+from daytrace_hub.redaction import tokens
 from daytrace_hub.seed import seed
 from daytrace_hub.stats import Stats
 from daytrace_hub.story import (
@@ -584,12 +585,13 @@ def detail(client: TestClient, app: str, span: str = "7d") -> dict[str, Any]:
 
 
 DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" / "fixtures"
+TOKEN_SAMPLES = ("e-mail", "E mail", "--", "Café", "STRASSE", "Straße", "Q3 2026", "naïve", "x_y", "Project-X12", "ÉCOLE", "Σίσυφος", "日本語")
 
 
 def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
     """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34), the Apps and Devices tab with
-    one app's detail (DT-55), the Focus and Sleep tab (DT-56), the Food and Calendar tab (DT-57), and the streaks,
-    goals, badges and Wrapped (DT-54), for 14 seeded days."""
+    one app's detail (DT-55), the Focus and Sleep tab (DT-56), the Food and Calendar tab (DT-57), the streaks,
+    goals, badges and Wrapped (DT-54), for 14 seeded days, and the redaction rules with a title tried (DT-36)."""
     def fresh(body: dict[str, Any]) -> dict[str, Any]:
         return {**body, "cached": False}
 
@@ -615,6 +617,12 @@ def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
             "goals": client.get("/api/v1/goals", params={"tz": TZ_NAME}).json(),
             "achievements": client.get("/api/v1/achievements", params={"tz": TZ_NAME}).json(),
             "wrapped": fresh(client.get("/api/v1/wrapped", params={"tz": TZ_NAME}).json()),
+        },
+        "privacy.json": {
+            "rules": client.get("/api/v1/privacy/redaction").json(),
+            "check": client.post("/api/v1/privacy/redaction/check", json={"title": "MyBank - Account Summary"}).json(),
+            # How the hub reads words (redaction.tokens), for the dashboard's own copy to be checked against.
+            "tokens": {word: list(tokens(word)) for word in TOKEN_SAMPLES},
         },
     }
 

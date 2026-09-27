@@ -668,3 +668,70 @@ def test_the_routes_describe_their_answers() -> None:
     export = paths["/api/v1/privacy/export"]["get"]["responses"]
     assert "application/json" in export["200"]["content"] and "403" in export
     assert {"400", "403"} <= set(paths["/api/v1/privacy/delete"]["post"]["responses"])
+
+
+# --- where the data lives (DT-36) ------------------------------------------------------------------------------
+
+
+def test_storage_says_where_the_data_lives_and_how_much_there_is(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    body = client.get("/api/v1/privacy/storage").json()
+    path = settings.database_path
+    wal = path.with_name(path.name + "-wal")
+    size = path.stat().st_size + (wal.stat().st_size if wal.exists() else 0)
+    with Database(path).connect() as conn:
+        events, first, last = conn.execute("SELECT COUNT(*), MIN(start_utc), MAX(start_utc) FROM events").fetchone()
+        devices = conn.execute("SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL").fetchone()[0]
+    assert (body["profile"], body["folder"], body["file"]) == ("demo", str(path.parent), path.name)
+    assert body["size_bytes"] == size and size > 0
+    assert (body["events"], body["devices"]) == (events, devices) and events > 0
+    assert datetime.fromisoformat(body["first_event"]) == datetime.fromisoformat(first)
+    assert datetime.fromisoformat(body["last_event"]) == datetime.fromisoformat(last)
+
+
+def test_storage_names_the_folder_only_on_the_hub_computer(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        viewer = register_device(conn, device_id="viewer-6", name="Phone browser", device_type="viewer")
+    here = client.get("/api/v1/privacy/storage").json()
+    with TestClient(client.app, client=LAN) as phone:
+        there = phone.get("/api/v1/privacy/storage", headers={"Authorization": f"Bearer {viewer}"}).json()
+        assert phone.get("/api/v1/privacy/storage").status_code == 401  # unpaired
+    assert there["folder"] is None  # the folder names this computer's user
+    assert {**there, "folder": here["folder"], "size_bytes": 0} == {**here, "size_bytes": 0}
+
+
+def test_storage_of_an_empty_profile(demo: TestClient) -> None:
+    body = demo.get("/api/v1/privacy/storage").json()
+    assert (body["events"], body["devices"], body["first_event"], body["last_event"]) == (0, 0, None, None)
+
+
+def test_storage_survives_the_write_ahead_log_going_away(seeded: tuple[TestClient, Settings], monkeypatch: pytest.MonkeyPatch) -> None:
+    client, settings = seeded
+    real = Path.stat
+
+    def vanishing(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name.endswith("-wal"):
+            raise FileNotFoundError(self)  # closed and removed between a check and a look
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", vanishing)
+    response = client.get("/api/v1/privacy/storage")
+    assert response.status_code == 200 and response.json()["size_bytes"] == real(settings.database_path).st_size
+
+
+def test_the_last_event_is_never_in_the_future(seeded: tuple[TestClient, Settings], monkeypatch: pytest.MonkeyPatch) -> None:
+    from daytrace_hub.api import timeline as timeline_api
+
+    client, settings = seeded
+    now = SEEDED_AT
+    monkeypatch.setattr(timeline_api, "current_time", lambda: now)
+    before = client.get("/api/v1/privacy/storage").json()
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO events (device_id, dedup_key, kind, source, start_utc, end_utc, utc_offset_min, data, received_at)"
+                     " SELECT device_id, 'future-meeting', 'calendar_event', 'calendar', ?, ?, 0, '{}', ? FROM devices LIMIT 1",
+                     (utc_text(now + timedelta(days=9)), utc_text(now + timedelta(days=9, hours=1)), utc_text(now)))
+    after = client.get("/api/v1/privacy/storage").json()
+    assert after["events"] == before["events"] + 1  # counted ...
+    assert after["last_event"] == before["last_event"] and datetime.fromisoformat(after["last_event"]) <= now  # ... but not the latest
+
