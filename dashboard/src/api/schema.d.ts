@@ -1813,6 +1813,12 @@ export interface components {
              * @description What must send data for a day to count; without it the day is no_data.
              */
             needs: string;
+            /**
+             * Kind
+             * @description at_least: a target to reach (remaining is still to go); at_most: a limit (remaining is the room left).
+             * @enum {string}
+             */
+            kind: "at_least" | "at_most";
             /** Unit */
             unit: string;
             /**

@@ -2,7 +2,7 @@
 // Pages fade in and their cards follow one after another; everything respects reduced motion (MotionConfig).
 // Also here: the hub's status (a live dot), pairing and error notices, toasts, and page titles.
 // Each page is filled in by its own ticket (Today DT-31, Devices DT-32, Story and Ask DT-33, Insights and Wrapped
-// DT-34, Privacy DT-36; Streaks joins with DT-54). /styleguide shows the design system (DT-52) and isn't in the menu.
+// DT-34, Streaks and Wrapped DT-54, Privacy DT-36). /styleguide shows the design system (DT-52) and isn't in the menu.
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { Component, type ReactNode, Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation } from "react-router";
@@ -16,6 +16,7 @@ const Today = lazy(() => import("./pages/Today"));
 const Story = lazy(() => import("./pages/Story"));
 const Ask = lazy(() => import("./pages/Ask"));
 const Insights = lazy(() => import("./pages/Insights"));
+const Streaks = lazy(() => import("./pages/Streaks"));
 const Wrapped = lazy(() => import("./pages/Wrapped"));
 const Devices = lazy(() => import("./pages/Devices"));
 const Privacy = lazy(() => import("./pages/Privacy"));
@@ -28,6 +29,7 @@ const pages: Page[] = [
   { path: "/story", label: "Story", icon: "story", element: <Story /> },
   { path: "/ask", label: "Ask", icon: "ask", element: <Ask /> },
   { path: "/insights", label: "Insights", icon: "insights", element: <Insights /> },
+  { path: "/streaks", label: "Streaks", icon: "streaks", element: <Streaks /> },
   { path: "/wrapped", label: "Wrapped", icon: "wrapped", element: <Wrapped /> },
   { path: "/devices", label: "Devices", icon: "devices", element: <Devices /> },
   { path: "/privacy", label: "Privacy", icon: "privacy", element: <Privacy /> },
