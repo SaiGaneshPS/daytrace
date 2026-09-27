@@ -2,13 +2,13 @@
 // tabs: Overview (this ticket), Apps and Devices (DT-55), Focus and Sleep (DT-56), Food and Calendar (DT-57). The
 // tab and the range live in the address (?tab=overview&range=7d), so a link or a reload opens the same view, and
 // switching tabs keeps the range.
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import ChartCard from "../components/ChartCard";
 import { useToday } from "../components/DayPicker";
 import Tabs from "../components/Tabs";
 import OverviewTab from "./insights/OverviewTab";
-import { MAX_DAYS, PRESETS, daysBetween, localZone, spanOf, validRange } from "./insights/shared";
+import { EARLIEST, PRESETS, localZone, rangeProblem, spanOf, validRange } from "./insights/shared";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -24,24 +24,28 @@ function RangePicker({ range, today, onChange }: { range: string; today: string;
   const span = spanOf(range, today) ?? { first: today, last: today };
   const [from, setFrom] = useState(span.first);
   const [to, setTo] = useState(span.last);
+  const noteId = useId();
+  const wasCustom = useRef(custom);
   useEffect(() => {
-    // A custom range from the address (or Back) shows in the fields.
+    // A custom range from the address (or Back) shows in the fields; Back to a preset closes them.
     if (custom) {
       setOpen(true);
       setFrom(span.first);
       setTo(span.last);
+    } else if (wasCustom.current) {
+      setOpen(false);
     }
+    wasCustom.current = custom;
   }, [custom, span.first, span.last]);
-  const problem =
-    !from || !to
-      ? "Pick both days."
-      : to < from
-        ? "The last day is before the first."
-        : to > today
-          ? "The range can't go past today."
-          : daysBetween(from, to) > MAX_DAYS
-            ? `Up to ${MAX_DAYS} days at a time.`
-            : null;
+  const toggle = () => {
+    if (!open) {
+      // Start from the range shown now (30 days shows the last 30 days), not whatever the fields held before.
+      setFrom(span.first);
+      setTo(span.last);
+    }
+    setOpen(!open);
+  };
+  const problem = rangeProblem(from, to, today);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!problem) onChange(`${from}..${to}`);
@@ -63,28 +67,29 @@ function RangePicker({ range, today, onChange }: { range: string; today: string;
             {preset.label}
           </button>
         ))}
-        <button type="button" className="segment" aria-pressed={custom} aria-expanded={open} onClick={() => setOpen((shown) => !shown)}>
+        <button type="button" className="segment" aria-pressed={custom} aria-expanded={open} onClick={toggle}>
           Custom
         </button>
       </div>
       {open && (
-        <form className="range-custom" onSubmit={submit} aria-label="Custom range">
-          <label className="range-field">
-            <span>From</span>
-            <input type="date" className="date-input" value={from} max={today} onChange={(event) => setFrom(event.target.value)} />
-          </label>
-          <label className="range-field">
-            <span>To</span>
-            <input type="date" className="date-input" value={to} max={today} onChange={(event) => setTo(event.target.value)} />
-          </label>
-          <button type="submit" className="button" disabled={problem !== null}>
-            Show
-          </button>
-          {problem && (
-            <p className="field-note" role="status">
-              {problem}
-            </p>
-          )}
+        <form className="range-form" onSubmit={submit} aria-label="Custom range">
+          <div className="range-custom">
+            <label className="range-field">
+              <span>From</span>
+              <input type="date" className="date-input" value={from} min={EARLIEST} max={today} onChange={(event) => setFrom(event.target.value)} />
+            </label>
+            <label className="range-field">
+              <span>To</span>
+              <input type="date" className="date-input" value={to} min={EARLIEST} max={today} onChange={(event) => setTo(event.target.value)} />
+            </label>
+            <button type="submit" className="button" disabled={problem !== null} aria-describedby={problem ? noteId : undefined}>
+              Show
+            </button>
+          </div>
+          {/* Always there, so a screen reader hears each new problem (a live region added with its text often isn't read). */}
+          <p id={noteId} className="field-note" role="status">
+            {problem}
+          </p>
         </form>
       )}
     </div>

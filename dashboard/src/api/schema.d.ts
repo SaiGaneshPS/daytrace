@@ -1203,6 +1203,11 @@ export interface components {
             /** Category */
             category?: string | null;
             /**
+             * Device Type
+             * @description A device's line: its kind (windows, android...).
+             */
+            device_type?: string | null;
+            /**
              * Values
              * @description One per x label; null where there is no data (not zero).
              */

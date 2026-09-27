@@ -1,18 +1,20 @@
 // DT-34: the Insights page with the hub mocked by the hub's own answers for 14 seeded days (e2e/fixtures, made by the
 // hub's code): every Overview chart and how fast it shows, the totals agreeing, the change chips, the range picker
 // and the address keeping the view, the best and toughest days, an empty range, a hub that can't answer, and
-// accessibility. The clock is fixed at 21:00 on Friday 25 September 2026 in Toronto, as when the fixture was made.
+// accessibility. The clock is fixed at 21:00 on Friday 25 September 2026 in Toronto, as when the fixture was made
+// (tests of what happens as time passes run their own clock).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { DEVICE_COLORS, deviceColors } from "../src/theme/devices";
 
 type Overview = {
   range: { first: string; last: string; days: number; label: string };
   in_progress: boolean;
   metrics: { id: string; value: number | string | null; explain: string }[];
   series: Record<string, { lines?: { values: (number | null)[] }[] | null; items?: { value: number }[] | null; cells?: unknown[] | null }>;
-  changes: { id: string; direction: string; better: string; change_pct: number | null; delta: number; unit: string }[];
+  changes: { id: string; label: string; direction: string; better: string; change_pct: number | null; delta: number; now: number; before: number; unit: string }[];
   meta: { source: string };
 };
 const FIXTURES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-overview.json"), "utf-8")) as Record<string, Overview>;
@@ -47,9 +49,9 @@ function answerFor(range: string): Overview {
   return { ...FIXTURES["14d"], in_progress: last === TODAY, range: { first, last, days, label } };
 }
 
-async function mockHub(page: Page, answer: (range: string) => object | "fail" = answerFor) {
+async function mockHub(page: Page, answer: (range: string) => object | "fail" = answerFor, { fixedClock = true } = {}) {
   const asked: string[] = [];
-  await page.clock.setFixedTime(new Date("2026-09-25T21:00:00-04:00"));
+  if (fixedClock) await page.clock.setFixedTime(new Date("2026-09-25T21:00:00-04:00"));
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked" } } }));
   await page.route("**/api/v1/health", (route) => route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: true } }));
   await page.route("**/api/v1/insights/overview?**", (route) => {
@@ -63,8 +65,17 @@ async function mockHub(page: Page, answer: (range: string) => object | "fail" = 
   return asked;
 }
 
-/** Whether all four Overview charts have drawn (a chart may draw on more than one canvas). */
-const chartsDrawn = () => [...document.querySelectorAll(".chart")].filter((chart) => chart.querySelector("canvas")).length >= 4;
+/** Whether all four Overview charts have drawn: each has a canvas with something painted on it (a chart may use
+ * more than one canvas, and makes them before it draws). */
+const chartsDrawn = () =>
+  [...document.querySelectorAll(".chart")].filter((chart) =>
+    [...chart.querySelectorAll("canvas")].some((canvas) => {
+      if (!canvas.width || !canvas.height) return false;
+      const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data ?? [];
+      for (let alpha = 3; alpha < pixels.length; alpha += 4 * 37) if (pixels[alpha]) return true;
+      return false;
+    }),
+  ).length >= 4;
 
 async function settled(page: Page) {
   await page.evaluate(() =>
@@ -72,12 +83,17 @@ async function settled(page: Page) {
   );
 }
 
-test("every Overview chart shows 14 seeded days in under 1.5 s", async ({ page }) => {
+test("every Overview chart draws 14 seeded days within 1.5 s of the hub's answer", async ({ page }) => {
   await mockHub(page);
+  // Timed from the answer arriving, not from the page starting to load (a slow machine's loading isn't the charts').
+  let answeredAt: number | null = null;
+  page.on("response", (response) => {
+    if (response.url().includes("/api/v1/insights/overview")) answeredAt = performance.now();
+  });
   await page.goto(`/insights?range=${FOURTEEN}`);
   await page.waitForFunction(chartsDrawn);
-  const shownAfter = await page.evaluate(() => performance.now()); // since the page started loading
-  expect(shownAfter).toBeLessThan(1500);
+  expect(answeredAt).not.toBeNull();
+  expect(performance.now() - (answeredAt ?? 0)).toBeLessThan(1500);
   for (const title of ["Screen time by device", "By category", "Phone and computer", "When screens were on"]) {
     await expect(page.getByRole("region", { name: title }).locator(".chart canvas").first()).toBeVisible();
   }
@@ -118,11 +134,49 @@ test("each change says which way it went, and whether that is good", async ({ pa
       await expect(chip).toHaveClass(/change-same/);
       continue;
     }
-    const amount = change.unit === "score" ? `${Math.abs(Math.round(change.delta))} points` : `${Math.abs(change.change_pct ?? 0)}%`;
+    const amount = change.unit === "score" ? `${Math.round(Math.abs(change.delta))} points` : `${Math.abs(change.change_pct ?? 0)}%`;
     await expect(chip).toContainText(`${change.direction} ${amount}`);
     await expect(chip).toHaveClass(change.direction === change.better ? /change-good/ : /change-bad/);
     await expect(chip).toContainText(change.direction === change.better ? "a good change" : "a change the wrong way"); // for screen readers
   }
+  // Its title has both day averages (not "9h 25m in the 7 days before", which reads as that week's total).
+  const screen = changes.find((change) => change.id === "daily_average");
+  await expect(page.getByRole("region", { name: "Screen time", exact: true }).locator(".change")).toHaveAttribute(
+    "title",
+    `Screen time a day: ${minutes(screen?.now ?? 0)} against ${minutes(screen?.before ?? 0)} in the 7 days before`,
+  );
+});
+
+test("a change from nothing is in its own unit, and a half point shows as one", async ({ page }) => {
+  await mockHub(page, (range) => {
+    const base = answerFor(range);
+    const changes = base.changes.map((change) =>
+      change.id === "pickups"
+        ? { ...change, now: 5, before: 0, delta: 5, change_pct: null, direction: "up" } // no pickups at all before
+        : change.id === "focus_score"
+          ? { ...change, now: 64, before: 64.5, delta: -0.5, change_pct: -1, direction: "down" } // -0.503, sent as -0.5
+          : change,
+    );
+    return { ...base, changes };
+  });
+  await page.goto("/insights?range=7d");
+  const pickups = page.getByRole("region", { name: "Pickups a day" }).locator(".change");
+  await expect(pickups).toContainText("up 5 pickups");
+  await expect(pickups).toHaveAttribute("title", "Phone pickups a day: 5 pickups against 0 pickups in the 7 days before");
+  await expect(page.getByRole("region", { name: "Focus score", exact: true }).locator(".change")).toContainText("down 1 point on");
+});
+
+test("devices get their kind's color, and two of a kind never share one", () => {
+  expect(deviceColors(["android", "windows", "macos", "ios"])).toEqual([DEVICE_COLORS.android, DEVICE_COLORS.windows, DEVICE_COLORS.macos, DEVICE_COLORS.ios]);
+  const two = deviceColors(["android", "android", "windows", "windows"]);
+  expect(new Set(two).size).toBe(4);
+  expect([two[0], two[2]]).toEqual([DEVICE_COLORS.android, DEVICE_COLORS.windows]);
+  // A second phone, or a browser, never takes the color of a kind that is in the chart.
+  const mixed = deviceColors(["browser", "android", "android", "windows"]);
+  expect([mixed[1], mixed[3]]).toEqual([DEVICE_COLORS.android, DEVICE_COLORS.windows]);
+  expect([mixed[0], mixed[2]]).not.toContain(DEVICE_COLORS.windows);
+  expect(new Set(mixed).size).toBe(4);
+  expect(new Set(deviceColors(Array(12).fill("android"))).size).toBe(8); // more devices than colors: all are used
 });
 
 test("the range picker, the tabs and the address keep the same view", async ({ page }) => {
@@ -143,20 +197,76 @@ test("the range picker, the tabs and the address keep the same view", async ({ p
   await page.getByRole("tab", { name: "Overview" }).click();
   await expect(page.getByRole("region", { name: "By category" }).locator(".chart canvas").first()).toBeVisible();
 
+  await page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "Today" }).click();
   await page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "Custom" }).click();
   const form = page.getByRole("form", { name: "Custom range" });
-  await form.getByLabel("From", { exact: true }).fill("2026-09-01");
-  await form.getByLabel("To", { exact: true }).fill("2026-08-30");
+  const from = form.getByLabel("From", { exact: true });
+  const to = form.getByLabel("To", { exact: true });
+  await expect(from).toHaveValue(TODAY); // the fields start from the range shown now (today), not the one at load
+  await expect(to).toHaveValue(TODAY);
+  // The status line is there before any problem, so a screen reader hears the problem when it comes.
+  await expect(form.getByRole("status")).toHaveText("");
+  await from.fill("2026-09-01");
+  await to.fill("2026-08-30");
   await expect(form.getByRole("status")).toHaveText("The last day is before the first.");
   await expect(form.getByRole("button", { name: "Show" })).toBeDisabled();
-  await form.getByLabel("To", { exact: true }).fill("2026-09-10");
+  await expect(form.getByRole("button", { name: "Show" })).toHaveCSS("opacity", "0.55"); // and looks it
+  await expect(form.getByRole("button", { name: "Show" })).toHaveAccessibleDescription("The last day is before the first.");
+  await to.fill("2026-09-10");
+  await expect(form.getByRole("status")).toHaveText("");
   await form.getByRole("button", { name: "Show" }).click();
   await expect(page).toHaveURL(/range=2026-09-01\.\.2026-09-10/);
   await expect(page.getByRole("region", { name: "By category" })).toContainText("Sep 1 to Sep 10");
+  await page.goBack(); // Back to today: the custom fields close
+  await expect(page).toHaveURL(/range=today/);
+  await expect(page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "Today" })).toHaveAttribute("aria-pressed", "true");
+  await expect(form).toBeHidden();
 
   await page.goto("/insights?range=2026-01-01..2026-09-25&tab=nonsense"); // too long, and no such tab
   await expect(page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "7 days" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  for (const unreal of ["2026-02-28..2026-02-30", "1969-12-30..1970-01-02"]) {
+    await page.goto(`/insights?range=${unreal}`); // a day that doesn't exist, and one before the hub's first
+    await expect(page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "7 days" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("region", { name: "By category" }).locator(".chart canvas").first()).toBeVisible();
+    expect(asked).not.toContain(unreal);
+  }
+});
+
+test("at midnight the days move on by themselves", async ({ page }) => {
+  let answers = 0;
+  await mockHub(
+    page,
+    (range) => {
+      if (range !== "7d") return answerFor(range);
+      answers += 1;
+      if (answers === 1) return FIXTURES["7d"];
+      const metrics = FIXTURES["7d"].metrics.map((item) => (item.id === "screen_time" ? { ...item, value: 100 } : item));
+      return { ...FIXTURES["7d"], metrics, range: { ...FIXTURES["7d"].range, first: "2026-09-20", last: "2026-09-26" } };
+    },
+    { fixedClock: false },
+  );
+  await page.clock.install({ time: new Date("2026-09-25T23:59:45-04:00") });
+  await page.goto("/insights?range=7d");
+  const screen = page.getByRole("region", { name: "Screen time", exact: true });
+  await expect(screen.locator(".stat-value")).toContainText(minutes(Number(metricOf(FIXTURES["7d"], "screen_time"))));
+  await page.clock.runFor(35_000); // past midnight, and not yet a minute
+  await expect(screen.locator(".stat-value")).toContainText("1h 40m"); // 20 to 26 September, asked for again
+  expect(answers).toBe(2);
+});
+
+test("a range with today in it is asked for again every minute, and one that is over isn't", async ({ page }) => {
+  const asked = await mockHub(page, answerFor, { fixedClock: false });
+  await page.clock.install({ time: new Date("2026-09-25T14:00:00-04:00") });
+  await page.goto("/insights?range=7d");
+  await expect(page.getByRole("region", { name: "Screen time", exact: true }).locator(".stat-value")).toBeVisible();
+  await page.clock.runFor(61_000);
+  await expect.poll(() => asked.filter((range) => range === "7d").length).toBe(2);
+  const past = "2026-09-01..2026-09-10";
+  await page.goto(`/insights?range=${past}`);
+  await expect(page.getByRole("region", { name: "Screen time", exact: true }).locator(".stat-value")).toBeVisible();
+  await page.clock.runFor(125_000);
+  expect(asked.filter((range) => range === past)).toHaveLength(1);
 });
 
 test("the best and toughest days say why", async ({ page }) => {

@@ -122,7 +122,7 @@ MAX_RANGE_DAYS = 92
 LIVE_CACHE_SECONDS = 60.0  # a range with today in it changes as time passes: worked out again this often
 CACHE_SIZE = 64
 TREEMAP_APPS = 8  # apps named inside each category; the rest are one "Other apps" box
-COMPARE_MIN_DAYS = 4  # whole days with data each side needs before a change is shown (fewer for short ranges)
+COMPARE_MIN_DAYS = 4  # whole days with data each side needs before a change is shown (half a range under 8 days)
 TOP_APP_BARS = 15
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 HOURS = [f"{hour:02d}" for hour in range(24)]
@@ -143,6 +143,7 @@ class Line(BaseModel):
     name: str
     key: str | None = Field(default=None, description="The id behind the name (a device id, a category).")
     category: str | None = None
+    device_type: str | None = Field(default=None, description="A device's line: its kind (windows, android...).")
     values: list[float | None] = Field(description="One per x label; null where there is no data (not zero).")
 
 
@@ -355,8 +356,12 @@ class TabBuilder:
         return [self.stats.sleep_estimate(day) for day in self.days]
 
     @cached_property
+    def late_nights(self) -> list[dict[str, Any]]:
+        return [self.stats.late_night_minutes(day) for day in self.days]
+
+    @cached_property
     def late(self) -> list[float | None]:
-        return [self.stats.late_night_minutes(day)["value"] for day in self.days]
+        return [night["value"] for night in self.late_nights]
 
     @cached_property
     def screen_by_day(self) -> list[float | None]:
@@ -386,11 +391,11 @@ class TabBuilder:
         best, toughest = most(self.focused), most(self.late)
         return [
             Metric(id="best_day", label="Best day", value=best[0].isoformat() if best else None, unit="date",
-                   explain=f"The day with the most focused minutes: {best[1]:g}." if best else "No focused time in the range."),
+                   explain="The day in the range with the most focused time." if best else "No focused time in the range."),
             Metric(id="best_day_focused", label="Its focused time", value=best[1] if best else None, unit="minutes",
                    explain="Work or study in blocks of 10 minutes or more that day."),
             Metric(id="toughest_day", label="Toughest day", value=toughest[0].isoformat() if toughest else None, unit="date",
-                   explain=(f"The day with the most screen time after 11 pm: {toughest[1]:g} minutes that night." if toughest
+                   explain=("The day in the range with the most screen time after 11 pm, that night." if toughest
                             else "No screen time after 11 pm in the range.")),
             Metric(id="toughest_day_late", label="Its late-night time", value=toughest[1] if toughest else None, unit="minutes",
                    explain="Screen time from 23:00 to 03:00 that night, on any device."),
@@ -398,26 +403,37 @@ class TabBuilder:
 
     def compare(self, conn: sqlite3.Connection) -> list[Change]:
         """Each day-average against the same number of days just before the range, over whole days only (a day still
-        going would look like less), and only when both sides have enough days with data to say anything."""
+        going would look like less, and so would a night: 11 pm to 3 am runs into the next day), and only when both
+        sides have enough days with data to say anything: 4, or half a range shorter than 8 days."""
         count = self.span.days
+        needed = max(1, min(COMPARE_MIN_DAYS, -(-count // 2)))
+        if sum(self.stats.day(day).over for day in self.days) < needed:
+            return []  # not enough whole days here: nothing to compare, so the days before aren't worked out
         first = self.span.first - timedelta(days=count)
         before = TabBuilder(self.stats, conn, RangeInfo(first=first, last=self.span.first - timedelta(days=1), days=count, label=""))
-        needed = max(1, min(COMPARE_MIN_DAYS, count // 2))
 
-        def whole(builder: TabBuilder, values: list[float | None]) -> list[float]:
-            return [value for value, day in zip(values, builder.days, strict=True) if value is not None and builder.stats.day(day).over]
+        def days_over(builder: TabBuilder) -> list[bool]:
+            return [builder.stats.day(day).over for day in builder.days]
 
-        rows: list[tuple[str, str, str, Literal["up", "down"], Callable[[TabBuilder], list[float | None]]]] = [
-            ("daily_average", "Screen time a day", "minutes", "down", lambda b: b.screen_by_day),
-            ("focused_time", "Focused time a day", "minutes", "up", lambda b: b.focused),
-            ("focus_score", "Focus score", "score", "up", lambda b: [score["value"] for score in b.scores]),
-            ("pickups", "Phone pickups a day", "pickups", "down", lambda b: b.pickups),
-            ("sleep", "Sleep a night", "minutes", "up", lambda b: [night["value"] for night in b.nights]),
-            ("late_night", "After 11 pm, a night", "minutes", "down", lambda b: b.late),
+        def by_day(values: Callable[[TabBuilder], list[float | None]]) -> Callable[[TabBuilder], Iterable[tuple[float | None, bool]]]:
+            return lambda builder: zip(values(builder), days_over(builder), strict=True)
+
+        def late_nights(builder: TabBuilder) -> Iterable[tuple[float | None, bool]]:
+            return [(night["value"], over and not night.get("in_progress", False))
+                    for night, over in zip(builder.late_nights, days_over(builder), strict=True)]
+
+        rows: list[tuple[str, str, str, Literal["up", "down"], Callable[[TabBuilder], Iterable[tuple[float | None, bool]]]]] = [
+            ("daily_average", "Screen time a day", "minutes", "down", by_day(lambda b: b.screen_by_day)),
+            ("focused_time", "Focused time a day", "minutes", "up", by_day(lambda b: b.focused)),
+            ("focus_score", "Focus score", "score", "up", by_day(lambda b: [score["value"] for score in b.scores])),
+            ("pickups", "Phone pickups a day", "pickups", "down", by_day(lambda b: b.pickups)),
+            ("sleep", "Sleep a night", "minutes", "up", by_day(lambda b: [night["value"] for night in b.nights])),
+            ("late_night", "After 11 pm, a night", "minutes", "down", late_nights),
         ]
         changes = []
-        for metric_id, label, unit, better, values in rows:
-            now_values, before_values = whole(self, values(self)), whole(before, values(before))
+        for metric_id, label, unit, better, readings in rows:
+            now_values = [value for value, whole in readings(self) if whole and value is not None]
+            before_values = [value for value, whole in readings(before) if whole and value is not None]
             if len(now_values) < needed or len(before_values) < needed:
                 continue
             now, then = sum(now_values) / len(now_values), sum(before_values) / len(before_values)
@@ -453,7 +469,7 @@ class TabBuilder:
 
         lines = [
             Line(name=name(key) if name else key, key=key, category=category_of(key) if category_of else None,
-                 values=[value(day, key) for day in self.labels])
+                 device_type=self.types.get(key) if row == "device" else None, values=[value(day, key) for day in self.labels])
             for key in keys
         ]
         return Series(kind="stacked", title=title, unit="minutes", explain=explain, estimated=table["estimated"], x=self.labels, lines=lines)

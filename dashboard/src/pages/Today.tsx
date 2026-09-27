@@ -16,6 +16,7 @@ import StatCard, { formatMinutes, spokenMinutes } from "../components/StatCard";
 import Tabs from "../components/Tabs";
 import Timeline from "../components/Timeline";
 import { type ChartOption, categoryStyle, useEChart } from "../theme/charts";
+import { deviceColors } from "../theme/devices";
 
 type TimelineData = components["schemas"]["Timeline"];
 type Summary = components["schemas"]["DaySummary"];
@@ -24,12 +25,6 @@ const REFRESH_TIMELINE = 3_000;
 const REFRESH_SUMMARY = 10_000;
 const NOW_LINE = 30_000; // how often the "now" line moves
 const STEP_REFERENCE = 10_000; // a common daily reference, not a goal (goals come with DT-53)
-const DEVICE_COLORS: Record<string, string> = {
-  windows: "var(--cat-work)",
-  macos: "var(--cat-study)",
-  android: "var(--cat-comms)",
-  ios: "var(--cat-social)",
-};
 
 function AppsRace({ summary }: { summary: Summary }) {
   const apps = summary.top_apps;
@@ -70,8 +65,9 @@ function AppsRace({ summary }: { summary: Summary }) {
 
 function DevicesDonut({ timeline }: { timeline: TimelineData }) {
   const lanes = useMemo(() => timeline.lanes.filter((lane) => lane.counted && lane.seconds > 0), [timeline.lanes]);
-  const option = useMemo<ChartOption>(
-    () => ({
+  const option = useMemo<ChartOption>(() => {
+    const colors = deviceColors(lanes.map((lane) => lane.device_type)); // two phones never share a color
+    return {
       tooltip: { trigger: "item", valueFormatter: (value: unknown) => `${Number(value).toLocaleString()} min` },
       legend: { bottom: 0 },
       series: [
@@ -81,16 +77,11 @@ function DevicesDonut({ timeline }: { timeline: TimelineData }) {
           radius: ["48%", "72%"],
           center: ["50%", "45%"],
           label: { formatter: (params: { name: string; value: unknown }) => `${params.name}\n${formatMinutes(Number(params.value))}` },
-          data: lanes.map((lane) => ({
-            name: lane.name,
-            value: lane.minutes,
-            itemStyle: { color: DEVICE_COLORS[lane.device_type] ?? "var(--cat-other)" },
-          })),
+          data: lanes.map((lane, index) => ({ name: lane.name, value: lane.minutes, itemStyle: { color: colors[index] } })),
         },
       ],
-    }),
-    [lanes],
-  );
+    };
+  }, [lanes]);
   const chart = useEChart(option, "Screen time per device, in minutes", { merge: true });
   if (!lanes.length) return <p className="muted">No device has screen time on this day yet.</p>;
   return (

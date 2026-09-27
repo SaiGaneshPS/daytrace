@@ -470,7 +470,7 @@ days); anything else is `400`.
   recording began, and on days still to come, they are null.
 - A series has a `kind` and what that kind needs:
   - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
-    device, also where that device sent nothing that day).
+    device, also where that device sent nothing that day). A device's line has its `device_type`.
   - `bars`: `x` and one line, or `items` by name.
   - `donut`: `items`. `treemap`: `items` with `children`.
   - `heatmap`: `x`, `y` and `cells` (indexes into them).
@@ -493,9 +493,10 @@ days); anything else is `400`.
   - **calendar:** planned time by day and where it went (on plan, off plan, other screen time, no screen); the
     longest events with their on-plan share; weekday by hour.
 - The overview also has `changes`: each headline number against the same number of days just before, as
-  `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down, days }`. Only whole
-  days count (today, still going, is left out), and it needs at least 4 on each side (or half the range, for a
-  short one); otherwise the list is empty. `direction` is `same` when the change rounds to nothing, and `better`
+  `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down, days }`, where `now`
+  and `before` are day averages. Only whole days count: today, still going, is left out, and so is a night
+  (11 pm to 3 am) until 3 am. Each side needs 4 of them with data (half the range, rounded up, for a range
+  under 8 days); otherwise that number has no change, and a range with too few whole days has none at all. `direction` is `same` when the change rounds to nothing, and `better`
   says which way is good (less screen time, more focus and sleep). Other tabs have an empty list.
 - Every series is cut from the same pieces as the stats engine's totals (`Stats.crosstab`), so a tab's charts add up
   to its totals and agree with Today and each other.

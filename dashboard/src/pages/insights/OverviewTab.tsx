@@ -4,25 +4,15 @@
 // donut, the stacked days and the heatmap are cut from the same minutes, so they add up to the same total.
 import { type ReactNode, useMemo } from "react";
 import ChartCard from "../../components/ChartCard";
-import { longDay } from "../../components/DayPicker";
+import { longDay, shortDay } from "../../components/DayPicker";
 import StatCard, { formatMinutes } from "../../components/StatCard";
 import { type ChartOption, categoryStyle, useEChart } from "../../theme/charts";
-import { ChangeChip, type InsightsData, type Series, metric, rangeWords, shortDay, useInsights, valueOf } from "./shared";
+import { deviceColors } from "../../theme/devices";
+import { ChangeChip, type InsightsData, type Series, metric, rangeWords, useInsights, valueOf } from "./shared";
 
 type Props = { range: string; tz: string; today: string };
 
-const DEVICE_COLORS: [RegExp, string][] = [
-  [/windows/i, "var(--cat-work)"],
-  [/mac/i, "var(--cat-study)"],
-  [/android/i, "var(--cat-comms)"],
-  [/ios|iphone/i, "var(--cat-social)"],
-];
-const MORE_COLORS = ["var(--cat-video)", "var(--cat-games)", "var(--cat-health)", "var(--cat-other)"];
 const WEEKDAYS: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
-
-function deviceColor(key: string | null | undefined, index: number): string {
-  return DEVICE_COLORS.find(([pattern]) => pattern.test(key ?? ""))?.[1] ?? MORE_COLORS[index % MORE_COLORS.length];
-}
 
 const minutesText = (value: unknown) => (value === null || value === undefined || value === "-" ? "no data" : formatMinutes(Number(value)));
 const hasValues = (series: Series | undefined) =>
@@ -35,6 +25,7 @@ function Empty() {
 function ScreenByDevice({ series }: { series: Series }) {
   const option = useMemo<ChartOption>(() => {
     const lines = series.lines ?? [];
+    const colors = deviceColors(lines.map((line) => line.device_type)); // by kind, and two of a kind apart
     return {
       tooltip: { trigger: "axis", valueFormatter: minutesText },
       legend: { bottom: 0, type: "scroll" },
@@ -51,7 +42,7 @@ function ScreenByDevice({ series }: { series: Series }) {
         areaStyle: { opacity: 0.35 },
         lineStyle: { width: 2 },
         emphasis: { focus: "series" },
-        itemStyle: { color: deviceColor(line.key, index) },
+        itemStyle: { color: colors[index] },
         data: line.values,
       })),
     };

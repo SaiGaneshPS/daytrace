@@ -71,7 +71,7 @@
     "label": "Best day",
     "value": "2026-09-21",
     "unit": "date",
-    "explain": "The day with the most focused minutes: 390.83.",
+    "explain": "The day in the range with the most focused time.",
     "estimated": false
    },
    {
@@ -87,7 +87,7 @@
     "label": "Toughest day",
     "value": "2026-09-14",
     "unit": "date",
-    "explain": "The day with the most screen time after 11 pm: 124 minutes that night.",
+    "explain": "The day in the range with the most screen time after 11 pm, that night.",
     "estimated": false
    },
    {
@@ -128,6 +128,7 @@
       "name": "Desk PC (demo)",
       "key": "seed-windows",
       "category": null,
+      "device_type": "windows",
       "values": [
        368.03,
        294.63,
@@ -149,6 +150,7 @@
       "name": "Galaxy phone (demo)",
       "key": "seed-android",
       "category": null,
+      "device_type": "android",
       "values": [
        97.52,
        154.57,
@@ -170,6 +172,7 @@
       "name": "MacBook (demo)",
       "key": "seed-mac",
       "category": null,
+      "device_type": "macos",
       "values": [
        61.23,
        65.38,
@@ -191,6 +194,7 @@
       "name": "iPhone (demo)",
       "key": "seed-iphone",
       "category": null,
+      "device_type": "ios",
       "values": [
        30.05,
        19.02,
@@ -331,6 +335,7 @@
       "name": "Focus score",
       "key": null,
       "category": null,
+      "device_type": null,
       "values": [
        67.0,
        43.0,
@@ -950,6 +955,7 @@
       "name": "Phone",
       "key": "phone",
       "category": "comms",
+      "device_type": null,
       "values": [
        127.57,
        173.58,
@@ -971,6 +977,7 @@
       "name": "Computer",
       "key": "computer",
       "category": "work",
+      "device_type": null,
       "values": [
        429.27,
        360.02,
@@ -1085,7 +1092,7 @@
     "label": "Best day",
     "value": "2026-09-21",
     "unit": "date",
-    "explain": "The day with the most focused minutes: 390.83.",
+    "explain": "The day in the range with the most focused time.",
     "estimated": false
    },
    {
@@ -1101,7 +1108,7 @@
     "label": "Toughest day",
     "value": "2026-09-21",
     "unit": "date",
-    "explain": "The day with the most screen time after 11 pm: 123 minutes that night.",
+    "explain": "The day in the range with the most screen time after 11 pm, that night.",
     "estimated": false
    },
    {
@@ -1135,6 +1142,7 @@
       "name": "Desk PC (demo)",
       "key": "seed-windows",
       "category": null,
+      "device_type": "windows",
       "values": [
        406.0,
        356.15,
@@ -1149,6 +1157,7 @@
       "name": "MacBook (demo)",
       "key": "seed-mac",
       "category": null,
+      "device_type": "macos",
       "values": [
        63.43,
        49.23,
@@ -1163,6 +1172,7 @@
       "name": "Galaxy phone (demo)",
       "key": "seed-android",
       "category": null,
+      "device_type": "android",
       "values": [
        58.33,
        60.97,
@@ -1177,6 +1187,7 @@
       "name": "iPhone (demo)",
       "key": "seed-iphone",
       "category": null,
+      "device_type": "ios",
       "values": [
        36.02,
        38.1,
@@ -1303,6 +1314,7 @@
       "name": "Focus score",
       "key": null,
       "category": null,
+      "device_type": null,
       "values": [
        68.0,
        71.0,
@@ -1858,6 +1870,7 @@
       "name": "Phone",
       "key": "phone",
       "category": "comms",
+      "device_type": null,
       "values": [
        94.35,
        99.07,
@@ -1872,6 +1885,7 @@
       "name": "Computer",
       "key": "computer",
       "category": "work",
+      "device_type": null,
       "values": [
        469.43,
        405.38,
@@ -2052,7 +2066,7 @@
     "label": "Best day",
     "value": "2026-09-25",
     "unit": "date",
-    "explain": "The day with the most focused minutes: 384.62.",
+    "explain": "The day in the range with the most focused time.",
     "estimated": false
    },
    {
@@ -2096,6 +2110,7 @@
       "name": "Desk PC (demo)",
       "key": "seed-windows",
       "category": null,
+      "device_type": "windows",
       "values": [
        368.33
       ]
@@ -2104,6 +2119,7 @@
       "name": "MacBook (demo)",
       "key": "seed-mac",
       "category": null,
+      "device_type": "macos",
       "values": [
        98.93
       ]
@@ -2112,6 +2128,7 @@
       "name": "Galaxy phone (demo)",
       "key": "seed-android",
       "category": null,
+      "device_type": "android",
       "values": [
        30.12
       ]
@@ -2120,6 +2137,7 @@
       "name": "iPhone (demo)",
       "key": "seed-iphone",
       "category": null,
+      "device_type": "ios",
       "values": [
        7.07
       ]
@@ -2226,6 +2244,7 @@
       "name": "Focus score",
       "key": null,
       "category": null,
+      "device_type": null,
       "values": [
        82.0
       ]
@@ -2369,6 +2388,7 @@
       "name": "Phone",
       "key": "phone",
       "category": "comms",
+      "device_type": null,
       "values": [
        37.18
       ]
@@ -2377,6 +2397,7 @@
       "name": "Computer",
       "key": "computer",
       "category": "work",
+      "device_type": null,
       "values": [
        467.27
       ]

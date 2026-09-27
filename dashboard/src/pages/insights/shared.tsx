@@ -1,8 +1,9 @@
 // DT-34: what every Insights tab shares: the hub's answer for a tab and range, the range's words, and the
 // week-over-week chips. Every number is the hub's (GET /insights/{tab}); nothing is added up here.
-import { useApi } from "../../api/client";
+import { useEffect, useRef } from "react";
+import { useApi, usePolling } from "../../api/client";
 import type { components } from "../../api/schema";
-import { shiftDay } from "../../components/DayPicker";
+import { dayMonth, daysBetween, isRealDay, shiftDay } from "../../components/DayPicker";
 import { formatMinutes } from "../../components/StatCard";
 
 export type InsightsData = components["schemas"]["InsightsTab"];
@@ -17,10 +18,12 @@ export const PRESETS = [
   { id: "7d", label: "7 days" },
   { id: "30d", label: "30 days" },
 ] as const;
-export const MAX_DAYS = 92; // the hub's limit
+export const MAX_DAYS = 92; // the hub's limits
+export const EARLIEST = "1970-01-01";
 const CUSTOM = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/;
+const REFRESH_MS = 60_000; // a range with today in it: the hub works it out again at most once a minute
 
-/** The first and last day a range stands for, from today (the hub works the same days out in the same zone). */
+/** The first and last day a range stands for, from today (for the custom range's fields). */
 export function spanOf(range: string, today: string): { first: string; last: string } | null {
   if (range === "today") return { first: today, last: today };
   const counted = /^(\d{1,3})d$/.exec(range);
@@ -29,34 +32,22 @@ export function spanOf(range: string, today: string): { first: string; last: str
   return custom ? { first: custom[1], last: custom[2] } : null;
 }
 
-/** Days from `first` to `last`, both included. */
-export function daysBetween(first: string, last: string): number {
-  const [a, b] = [first, last].map((day) => {
-    const [year, month, date] = day.split("-").map(Number);
-    return Date.UTC(year, month - 1, date);
-  });
-  return Math.round((b - a) / 86_400_000) + 1;
+/** Why a custom range can't be asked for, or null when it can: real days, in order, 1 to 92 of them, by today. */
+export function rangeProblem(first: string, last: string, today: string): string | null {
+  if (!first || !last) return "Pick both days.";
+  if (!isRealDay(first) || !isRealDay(last)) return "Pick days that exist.";
+  if (last < first) return "The last day is before the first.";
+  if (last > today) return "The range can't go past today.";
+  if (first < EARLIEST) return "The range can't start before 1970.";
+  if (daysBetween(first, last) > MAX_DAYS) return `Up to ${MAX_DAYS} days at a time.`;
+  return null;
 }
 
-/** Whether a range is one the hub accepts: a preset, or a custom span of 1 to 92 days ending by today. */
+/** Whether a range is one the hub accepts: a preset, or a custom span with no problem. */
 export function validRange(range: string, today: string): boolean {
   if (PRESETS.some((preset) => preset.id === range)) return true;
-  const span = spanOf(range, today);
-  if (!span || !CUSTOM.test(range)) return false;
-  const days = daysBetween(span.first, span.last);
-  return days >= 1 && days <= MAX_DAYS && span.last <= today;
-}
-
-/** "Sat 19" for an x-axis label. */
-export function shortDay(day: string): string {
-  const [year, month, date] = day.split("-").map(Number);
-  return new Date(year, month - 1, date).toLocaleDateString([], { weekday: "short", day: "numeric" });
-}
-
-/** "19 Sep" for a range's ends. */
-export function dayMonth(day: string): string {
-  const [year, month, date] = day.split("-").map(Number);
-  return new Date(year, month - 1, date).toLocaleDateString([], { day: "numeric", month: "short" });
+  const custom = CUSTOM.exec(range);
+  return !!custom && rangeProblem(custom[1], custom[2], today) === null;
 }
 
 /** What a range covers, in words: "Last 7 days, so far" or "1 Sep to 10 Sep". */
@@ -78,13 +69,29 @@ export function valueOf(data: InsightsData | undefined, id: string): number | nu
   return typeof found.value === "number" ? found.value : null;
 }
 
-/** The hub's answer for one tab and range, shown only once it is the answer for that range (a slower answer for
- * the range picked before never shows under the new one). */
+/** The hub's answer for one tab and range, shown only once it answers this tab and range (a slower answer for the
+ * range picked before never shows under the new one). The hub works out which days a range is, so a new day asks
+ * again ("7d" moves at midnight), and so does a minute passing while the range has today in it. */
 export function useInsights(tab: HubTab, range: string, tz: string, today: string) {
   const loaded = useApi("/api/v1/insights/{tab}", { path: { tab }, query: { range, tz }, quiet: true });
-  const span = spanOf(range, today);
-  const data = loaded.data && span && loaded.data.range.first === span.first && loaded.data.range.last === span.last ? loaded.data : undefined;
-  return { data, error: data ? undefined : loaded.error, reload: loaded.reload };
+  const { reload } = loaded;
+  const data = loaded.current ? loaded.data : undefined;
+  const day = useRef(today);
+  useEffect(() => {
+    if (day.current === today) return;
+    day.current = today;
+    reload();
+  }, [today, reload]);
+  usePolling(data?.in_progress ? REFRESH_MS : null, reload);
+  return { data, error: data ? undefined : loaded.error, reload };
+}
+
+/** An amount in a change's unit: "9h 25m", "64", "5 pickups". */
+function measure(unit: string, value: number): string {
+  if (unit === "minutes") return formatMinutes(value);
+  if (unit === "score") return String(Math.round(value));
+  const shown = value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return `${shown} ${shown === "1" ? unit.replace(/s$/, "") : unit}`;
 }
 
 function Arrow({ up }: { up: boolean }) {
@@ -95,20 +102,23 @@ function Arrow({ up }: { up: boolean }) {
   );
 }
 
-/** A change against the days just before the range: an arrow and how much, green when it went the good way. */
+/** A change against the days just before the range: an arrow and how much, green when it went the good way. Its
+ * title has both averages ("Screen time a day: 9h 12m against 9h 25m in the 7 days before"). */
 export function ChangeChip({ change, days }: { change: Change | undefined; days: number }) {
   if (!change) return null;
+  const size = Math.abs(change.delta);
+  const points = Math.round(size); // rounded as it is shown (never -0.5 to "0 points")
   const amount =
     change.unit === "score"
-      ? `${Math.abs(Math.round(change.delta))} ${Math.abs(Math.round(change.delta)) === 1 ? "point" : "points"}`
+      ? `${points} ${points === 1 ? "point" : "points"}`
       : change.change_pct !== null
         ? `${Math.abs(change.change_pct)}%`
-        : formatMinutes(Math.abs(change.delta));
-  const then = change.unit === "score" ? String(Math.round(change.before)) : change.unit === "minutes" ? formatMinutes(change.before) : String(change.before);
+        : measure(change.unit, size);
   const against = `the ${days === 1 ? "day" : `${days} days`} before`;
+  const then = measure(change.unit, change.before);
   if (change.direction === "same") {
     return (
-      <span className="change change-same" title={`About the same as ${against} (${then})`}>
+      <span className="change change-same" title={`${change.label}: about the same as ${against} (${then})`}>
         <span aria-hidden="true">=</span> about the same as {against}
       </span>
     );
@@ -116,7 +126,7 @@ export function ChangeChip({ change, days }: { change: Change | undefined; days:
   const up = change.direction === "up";
   const good = change.direction === change.better;
   return (
-    <span className={`change ${good ? "change-good" : "change-bad"}`} title={`${then} in ${against}`}>
+    <span className={`change ${good ? "change-good" : "change-bad"}`} title={`${change.label}: ${measure(change.unit, change.now)} against ${then} in ${against}`}>
       <Arrow up={up} />
       <span>
         {up ? "up" : "down"} {amount}
