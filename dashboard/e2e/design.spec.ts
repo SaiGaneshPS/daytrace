@@ -17,10 +17,18 @@ const PAGES = [
 ];
 
 test.beforeEach(async ({ page }) => {
+  // Anything these tests don't mock answers at once (the pages' own tests mock their data), so no page waits on a hub.
+  await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked in this test" } } }));
   await page.route("**/api/v1/health", (route) => route.fulfill({ json: HEALTH }));
 });
 
 async function expectNoAxeViolations(page: Page) {
+  // Wait for fades and slides to finish, so axe measures colors as they end up (not halfway through a fade).
+  await page.evaluate(() =>
+    Promise.all(
+      document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(results.violations.map((v) => `${v.id} (${v.nodes.length}): ${v.help}`)).toEqual([]);
 }
@@ -135,6 +143,7 @@ test("a page that fails to load says so, and the menus keep working", async ({ p
 
 for (const scheme of ["light", "dark"] as const) {
   test(`accessibility (axe) in ${scheme}`, async ({ page }) => {
+    test.slow(); // three pages, each scanned in full: past 30 s when the whole suite runs at once
     await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" });
     for (const path of ["/styleguide", "/", "/devices"]) {
       await page.goto(path);

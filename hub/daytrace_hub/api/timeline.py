@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from ..auth import Reader, get_database
 from ..categories import Categorizer
 from ..db import Database
-from ..sessions import Session, StoredEvent, build_sessions, load_events, snap, with_categories
+from ..sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
 from . import API_PREFIX, ApiError
 
 LANE_ORDER = {"windows": 0, "macos": 1, "android": 2, "ios": 3, "browser": 4, "viewer": 5}
@@ -50,6 +50,7 @@ class Lane(BaseModel):
     device_type: str
     name: str
     counted: bool = Field(description="False for browser-extension lanes, whose time is inside the desktop lane.")
+    last_seen: datetime | None = Field(default=None, description="When the device last sent anything (for live dots).")
     seconds: int
     minutes: float
     sessions: list[TimelineSession]
@@ -173,7 +174,7 @@ def build_timeline(database: Database, day: date, tz: tzinfo, tz_name: str) -> T
     until = min(end, current_time())  # nothing that has not happened yet
     with database.connect() as conn:
         events = load_events(conn, start, end)
-        devices = {row["device_id"]: row for row in conn.execute("SELECT device_id, name, device_type FROM devices")}
+        devices = {row["device_id"]: row for row in conn.execute("SELECT device_id, name, device_type, last_seen FROM devices")}
         categorizer = Categorizer.from_db(conn)
     sessions = with_categories(build_sessions(events, start, until), categorizer) if until > start else []
 
@@ -231,6 +232,7 @@ def _lane(device_id: str, sessions: list[Session], device: object, tz: tzinfo) -
         device_type=device_type,
         name=device["name"] if device else device_id,  # type: ignore[index]
         counted=device_type not in DETAIL_ONLY_TYPES,
+        last_seen=parse_utc(device["last_seen"]) if device and device["last_seen"] else None,  # type: ignore[index]
         seconds=seconds,
         minutes=minutes(seconds),
         sessions=shown,

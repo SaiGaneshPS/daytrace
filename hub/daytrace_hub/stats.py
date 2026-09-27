@@ -432,6 +432,37 @@ class Stats:
             cursor = stop
         return parts
 
+    def top_apps(self, day: date, limit: int = 10) -> list[dict[str, Any]]:
+        """The apps and sites with the most time on `day`, most first (as totals(group_by="app") orders them), each
+        with the category holding most of its time."""
+        items = self.totals(day, group_by="app")["items"]
+        by_category: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for piece in self.day(day).pieces:
+            for key, seconds in self._keys(piece, "app", day):
+                by_category[key][piece.category or "other"] += seconds
+        return [
+            {"app": item["key"], "minutes": item["minutes"],
+             "category": max(by_category[item["key"]].items(), key=lambda kv: (kv[1], kv[0]))[0] if by_category[item["key"]] else "other"}
+            for item in items[:limit] if item["seconds"] > 0
+        ]
+
+    def steps(self, day: date) -> int | None:
+        """The day's steps: per device, the step counts that started on `day` added up (each span once); the largest
+        device total wins, since two phones syncing one health account send the same steps twice. None without any."""
+        window = self.day(day)
+        by_device: dict[str, int] = defaultdict(int)
+        seen: set[tuple[str, datetime, datetime | None]] = set()
+        for event in window.events:
+            if event.kind != "steps" or not window.start <= event.start < window.end:
+                continue
+            key = (event.device_id, event.start, event.end)
+            count = event.data.get("count")
+            if key in seen or not isinstance(count, int) or count < 0:
+                continue
+            seen.add(key)
+            by_device[event.device_id] += count
+        return max(by_device.values()) if by_device else None
+
     # --- focus -----------------------------------------------------------------------------------------------
 
     def _focus(self, window: Window) -> tuple[int, list[dict[str, Any]]]:

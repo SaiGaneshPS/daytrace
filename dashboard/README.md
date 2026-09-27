@@ -32,7 +32,8 @@ npm run test:e2e   # Playwright tests of the build (run npm run build first); us
   palette is mirrored in `android/app/src/main/res/values/colors.xml`, and a test checks the two match.
 - **Tests:** `e2e/` holds Playwright tests of the build on a 1440 px desktop and a 360 px touch phone, with the hub's
   API mocked: layout, touch targets, accessibility (axe, light and dark), tabs, charts, motion, a page failing to
-  load. `npm run test:e2e` type-checks them first (tsconfig.e2e.json). On Windows they use the installed Microsoft Edge
+  load, and the Today page. `npm run test:e2e` type-checks them first (tsconfig.e2e.json). `e2e/live-hub.spec.ts` runs
+  against a real demo or shared-dev hub when `DAYTRACE_E2E_HUB` is set (it refuses the personal hub). On Windows they use the installed Microsoft Edge
   (no browser download); on macOS or Linux, run `npx playwright install chromium` once. CI uses Playwright's Chromium.
 - **Icons:** `public/icons` holds the app icon (192 and 512 px, a maskable 512 px, the Apple touch icon, and an SVG
   favicon).
