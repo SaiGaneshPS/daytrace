@@ -32,7 +32,7 @@ from typing import Any, Literal
 from .api.events import store_events
 from .config import Settings
 from .db import Database, transaction, utc_text
-from .models import Event
+from .models import Event, Nudge
 
 SOURCE = "seed"
 MAX_DAYS = 90
@@ -416,3 +416,67 @@ def _replace(conn: sqlite3.Connection, by_device: dict[str, list[Event]]) -> Non
                      (goal_id, json.dumps(target), paired_at))
     # Badges were earned from the history just replaced: they are worked out again from the new one (DT-53).
     conn.execute("DELETE FROM achievements")
+
+
+# --- DT-48: what the phone would send now, for the demo ---------------------------------------------------------
+
+DEMO_PHONE = "seed-android"
+DemoScenario = Literal["live", "nudge"]
+
+
+class DemoResult:
+    """What was sent (in words) as the demo phone, and the nudge the hub answered with, if any."""
+
+    def __init__(self, sent: str, nudge: Nudge | None) -> None:
+        self.sent = sent
+        self.nudge = nudge
+
+
+def demo_events(settings: Settings, scenario: DemoScenario, now: datetime | None = None, again: bool = False) -> DemoResult:
+    """Send, as the seeded Android phone and through the same ingest path as a real one, what it would send right now:
+    `live`, a few minutes of apps ending now (they show on Today at once); `nudge`, a study block from the phone's
+    calendar around now and TikTok opened in it, which the hub answers with a focus nudge (DT-43). For the demo when
+    the phone can't take part, and for rehearsals. `again` lets a nudge speak now even if one went out in the last
+    minutes (it forgets the ones logged in the last 20). Refuses profiles with real data, like seed()."""
+    from .api.events import ingest
+    from .auth import AuthenticatedDevice
+    from .nudges import COOLDOWN
+
+    if not settings.profile.seedable:
+        raise SeedRefused(f"the {settings.profile.name} profile holds your real data; demo events go to demo or shared-dev")
+    now = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    database = Database(settings.database_path)
+    database.initialize()
+    device_type, name = DEVICES[DEMO_PHONE]
+    with database.connect() as conn:
+        if conn.execute("SELECT 1 FROM devices WHERE device_id = ? AND revoked_at IS NULL", (DEMO_PHONE,)).fetchone() is None:
+            raise SeedRefused(f"the {settings.profile.name} profile has no demo phone yet: seed it first")
+        with transaction(conn):
+            # A phone's contact is what lights its live dot on Today, as a real one's request does (auth).
+            conn.execute("UPDATE devices SET last_seen = ? WHERE device_id = ?", (utc_text(now), DEMO_PHONE))
+            if again:
+                conn.execute("DELETE FROM nudge_log WHERE created_at > ?", (utc_text(now - COOLDOWN),))
+    mark = now.strftime("%Y%m%dT%H%M%S")
+
+    def at(minutes: float) -> str:
+        return (now + timedelta(minutes=minutes)).isoformat()
+
+    def app(label: str, package: str, start: float, end: float) -> dict[str, Any]:
+        return {"external_id": f"demo:{mark}:{package}", "kind": "app_session", "source": SOURCE, "start": at(start),
+                "end": at(end), "app": label, "app_id": package}
+
+    if scenario == "live":
+        events = [app("Instagram", "com.instagram.android", -5, -2), app("YouTube", "com.google.android.youtube", -2, 0)]
+        sent = "Instagram for 3 minutes, then YouTube for 2, ending now"
+    else:
+        start, end = now - timedelta(minutes=15), now + timedelta(minutes=45)
+        study = {"external_id": f"demo:{mark}:study", "kind": "calendar_event", "source": SOURCE, "start": start.isoformat(),
+                 "end": end.isoformat(), "title": "Study: statistics"}
+        events = [study, app("TikTok", "com.zhiliaoapp.musically", -1, 0)]
+        sent = '"Study: statistics" on its calendar around now, then TikTok opened in it'
+    batch = {"events": [{"device_id": DEMO_PHONE, **event} for event in events]}
+    result = ingest(database, AuthenticatedDevice(DEMO_PHONE, name, device_type), batch)
+    if result.rejected:
+        raise RuntimeError(f"the demo events were refused: {result.rejected[0].reason}")
+    return DemoResult(f"Sent as {name}: {sent}.", result.nudge)
+

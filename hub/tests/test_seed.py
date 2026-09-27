@@ -17,7 +17,7 @@ from daytrace_hub.api.timeline import build_timeline, day_window
 from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database
 from daytrace_hub.models import Event
-from daytrace_hub.seed import DEVICES, SOURCE, SeedRefused, generate, plan_days, seed
+from daytrace_hub.seed import DEMO_PHONE, DEVICES, SOURCE, SeedRefused, demo_events, generate, plan_days, seed
 from daytrace_hub.sessions import Session, sessions_for
 
 TZ = ZoneInfo("America/Toronto")
@@ -317,3 +317,82 @@ def test_the_sample_scripts_keep_the_token_off_command_lines_and_fail_on_rejecti
         assert "rejected" in text  # a non-zero exit when the hub refuses the events
     sh = (SCRIPTS / "send-sample-events.sh").read_text(encoding="utf-8")
     assert "-H @-" in sh and "--fail-with-body" not in sh and "python3" not in sh
+
+
+# --- DT-48: what the demo phone sends now ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def seeded_now(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Settings, datetime]:
+    """A demo profile seeded up to a Friday afternoon, with the hub's clock and zone there too."""
+    from daytrace_hub import nudges
+    from daytrace_hub.api import timeline as timeline_api
+
+    now = datetime(2026, 9, 25, 14, 30, tzinfo=TZ)
+    settings = demo_settings(tmp_path)
+    seed(settings, 3, TZ, now - timedelta(hours=1))
+    monkeypatch.setattr(timeline_api, "current_time", lambda: now.astimezone(UTC))
+    monkeypatch.setattr(nudges, "hub_zone", lambda: (TZ, "America/Toronto"))
+    return settings, now
+
+
+def test_live_demo_events_arrive_as_the_demo_phone_ending_now(seeded_now: tuple[Settings, datetime]) -> None:
+    settings, now = seeded_now
+    result = demo_events(settings, "live", now=now)
+    assert result.sent == "Sent as Galaxy phone (demo): Instagram for 3 minutes, then YouTube for 2, ending now."
+    day = build_timeline(Database(settings.database_path), now.date(), TZ, "America/Toronto")
+    lane = next(lane for lane in day.lanes if lane.device_id == DEMO_PHONE)
+    latest = max(lane.sessions, key=lambda block: block.end)
+    assert latest.app == "YouTube" and latest.end == now.astimezone(UTC)  # on Today at once, ending now
+    assert lane.last_seen == now.astimezone(UTC)  # and its live dot lit, as a real phone's contact does
+    with Database(settings.database_path).connect() as conn:
+        sources = {row[0] for row in conn.execute("SELECT source FROM events WHERE external_id LIKE 'demo:%'")}
+    assert sources == {SOURCE}  # demo data like the rest: seeding again clears it
+
+
+def test_the_nudge_demo_gets_the_focus_nudge_once_and_again_on_request(seeded_now: tuple[Settings, datetime]) -> None:
+    settings, now = seeded_now
+    first = demo_events(settings, "nudge", now=now)
+    assert first.nudge is not None and first.nudge.rule == "focus_block"
+    assert first.nudge.body == 'TikTok during "Study: statistics", which runs until 15:15.'
+    assert demo_events(settings, "nudge", now=now + timedelta(minutes=1)).nudge is None  # one at a time
+    again = demo_events(settings, "nudge", now=now + timedelta(minutes=2), again=True)
+    assert again.nudge is not None and again.nudge.rule == "focus_block"
+
+
+def test_demo_events_never_touch_real_data_and_need_a_seeded_profile(tmp_path: Path) -> None:
+    with pytest.raises(SeedRefused, match="real data"):
+        demo_events(Settings(profile=get_profile("personal"), data_dir=tmp_path), "live")
+    with pytest.raises(SeedRefused, match="seed it first"):
+        demo_events(demo_settings(tmp_path), "live")
+
+
+def test_the_demo_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
+    from daytrace_hub import notify
+
+    monkeypatch.setenv("DAYTRACE_DATA_DIR", str(tmp_path))
+    assert cli.main(["demo", "live"]) == 2  # nothing seeded yet
+    assert "seed it first" in capsys.readouterr().err
+    seed(demo_settings(tmp_path), 2, TZ)
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(notify, "show", lambda title, body, wait=False: shown.append((title, body)) or True)
+    assert cli.main(["demo", "nudge"]) == 0  # a fresh profile: nothing is resting
+    out = capsys.readouterr().out
+    assert out.startswith('Sent as Galaxy phone (demo): "Study: statistics" on its calendar around now')
+    assert 'Nudge: Time to focus. TikTok during "Study: statistics"' in out
+    assert [title for title, _ in shown] == ["Time to focus"]  # shown on this computer too
+    assert cli.main(["demo", "nudge", "--no-toast"]) == 1  # one at a time
+    assert "Run it again with --again" in capsys.readouterr().out and len(shown) == 1
+    assert cli.main(["demo", "live", "--profile", "personal"]) == 2
+    assert "real data" in capsys.readouterr().err
+
+
+def test_the_demo_start_script_gets_the_demo_ready_and_leaves_other_profiles_alone() -> None:
+    ps1 = (SCRIPTS / "dev-hub.ps1").read_bytes()
+    assert ps1.startswith(b"\xef\xbb\xbf")  # Windows PowerShell 5.1 needs the BOM
+    for name in ("dev-hub.ps1", "dev-hub.sh"):
+        text = (SCRIPTS / name).read_text(encoding="utf-8-sig")
+        for step in ("seed --profile demo", "/api/v1/health", "/api/v1/ai/status", "/api/v1/story", "/api/v1/wrapped"):
+            assert step in text, (name, step)
+        assert "seed --profile personal" not in text and "seed --profile $" not in text  # only ever the demo profile
+

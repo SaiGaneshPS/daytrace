@@ -1,6 +1,7 @@
 """Daytrace hub command line.
 
-`run` starts a profile (DT-10), `seed` fills a demo profile (DT-15), `tracker` runs only the desktop tracker (DT-16).
+`run` starts a profile (DT-10), `seed` fills a demo profile (DT-15), `tracker` runs only the desktop tracker (DT-16),
+`demo` sends what the demo phone would send now (DT-48).
 """
 from __future__ import annotations
 
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     tracker = sub.add_parser("tracker", help="run only the desktop activity tracker (DT-16)")
     tracker.add_argument("--profile", choices=PROFILES, default="personal")
+
+    demo = sub.add_parser("demo", help="send what the demo phone would send now: live apps, or a nudge (DT-48)")
+    demo.add_argument("scenario", choices=("live", "nudge"), help="live: apps ending now; nudge: TikTok during a study block")
+    demo.add_argument("--profile", choices=PROFILES, default="demo")
+    demo.add_argument("--again", action="store_true", help="let a nudge speak now even if one went out in the last minutes")
+    demo.add_argument("--no-toast", action="store_true", help="don't show the nudge as a desktop notification too")
     return parser
 
 
@@ -44,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         return seed(args.profile, args.days, args.tz)
     if args.command == "tracker":
         return tracker(args.profile)
+    if args.command == "demo":
+        return demo(args.profile, args.scenario, args.again, not args.no_toast)
     print(f"'{args.command}' is not implemented yet. See its ticket.", file=sys.stderr)
     return 2
 
@@ -115,6 +124,36 @@ def seed(profile_name: str, days: int, tz_name: str | None) -> int:
         print(f"  {device_id}: {count}")
     print(f"  Database: {settings.database_path}")
     return 0
+
+
+def demo(profile_name: str, scenario: str, again: bool, toast: bool) -> int:
+    """What the demo phone would send now (DT-48), with the nudge the hub answered, shown on this computer too."""
+    import sqlite3
+
+    from . import notify
+    from .seed import demo_events
+
+    try:
+        settings = load_settings(profile_name)
+        result = demo_events(settings, "nudge" if scenario == "nudge" else "live", again=again)
+    except (ValueError, RuntimeError) as error:  # SeedRefused is a ValueError
+        return _not_sent(str(error))
+    except sqlite3.OperationalError as error:
+        return _not_sent(f"the {profile_name} database is busy or unreadable ({error})")
+    print(result.sent)
+    if scenario == "nudge":
+        if result.nudge is None:
+            print("No nudge: one went out in the last few minutes (the hub sends one at a time). Run it again with --again.")
+            return 1
+        print(f"Nudge: {result.nudge.title}. {result.nudge.body}")
+        if toast and not notify.show(result.nudge.title, result.nudge.body, wait=True):
+            print("(The desktop notification couldn't be shown here.)")
+    return 0
+
+
+def _not_sent(message: str) -> int:
+    print(f"Not sent: {message}", file=sys.stderr)
+    return 2
 
 
 def _not_seeded(message: str) -> int:
