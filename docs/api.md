@@ -443,20 +443,80 @@ engine, so the dashboard never works one out itself:
 - `in_progress` is true only for a day that has begun and not yet ended (today): every number is the day so far.
   A future day is false, with no data.
 
-The rest of the insights API (DT-41) is planned as:
-
-`GET /insights/{tab}?range=7d&tz=...` where `tab` is `overview`, `apps`, `devices`, `focus`, `sleep`, `food`
-or `calendar`, and `range` is `today`, `7d`, `30d` or `YYYY-MM-DD..YYYY-MM-DD`:
+`GET /insights/{tab}?range=7d&tz=America/Toronto` (DT-41, viewer) gives an Insights tab its metrics and its
+chart-ready series. `tab` is `overview`, `apps`, `devices`, `focus`, `sleep`, `food` or `calendar`. `range` is
+`today`, a number of days ending today such as `7d` or `30d` (1 to 92), or `YYYY-MM-DD..YYYY-MM-DD` (up to 92
+days); anything else is `400`.
 
 ```json
-{ "tab": "overview",
-  "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "..." }, "source": "seed", "estimated": false },
-  "metrics": [ { "id": "screen_time", "label": "Screen time", "value": 3120, "unit": "minutes",
-    "explain": "All app and window time across devices, AFK removed.", "estimated": false } ],
-  "series": { "trend": { "type": "stacked_area", "x": ["2026-09-19", "..."], "stacks": { "windows-1": [301, "..."] } } } }
+{ "tab": "overview", "tz": "America/Toronto", "in_progress": true, "cached": false,
+  "range": { "first": "2026-09-19", "last": "2026-09-25", "days": 7, "label": "Last 7 days" },
+  "metrics": [ { "id": "screen_time", "label": "Screen time", "value": 3120.5, "unit": "minutes",
+    "explain": "All app and site time across devices, each device counted, away time removed.", "estimated": false } ],
+  "series": {
+    "screen_by_device": { "kind": "stacked", "title": "Screen time by device", "unit": "minutes", "explain": "...",
+      "estimated": false, "x": ["2026-09-19", "..."], "lines": [ { "name": "Desk PC", "key": "windows-1", "values": [301.5, null, "..."] } ] },
+    "categories": { "kind": "donut", "items": [ { "name": "Work", "key": "work", "category": "work", "value": 1450.0 } ], "...": "..." },
+    "hours": { "kind": "heatmap", "x": ["00", "...", "23"], "y": ["Mon", "...", "Sun"], "cells": [ { "x": 9, "y": 0, "value": 42.0 } ] } },
+  "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "..." }, "source": "seed", "estimated": false } }
 ```
 
-`GET /wrapped?week=2026-W39` returns `{ "week": "...", "stats": [...], "streaks": [...], "lines": ["...", "...", "..."], "meta": {...} }`.
+- Every metric has a unit and a line saying what it means (`explain`), and `value` is null when there is no data
+  for it in the range (missing, not zero). Counts that need no screen (meals, calendar events, nights) are 0 only
+  on days the hub could have heard about: a device sent something for the day, or one was paired then. Before
+  recording began, and on days still to come, they are null.
+- A series has a `kind` and what that kind needs:
+  - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
+    device, also where that device sent nothing that day).
+  - `bars`: `x` and one line, or `items` by name.
+  - `donut`: `items`. `treemap`: `items` with `children`.
+  - `heatmap`: `x`, `y` and `cells` (indexes into them).
+  - `sankey`: `nodes` and `links`. Node names are unique: a device name two devices share, or one that is also a
+    category's, gets the device id, as in `Galaxy phone (android-3)`. Lines and heatmap rows use the same names.
+  - `scatter`: `points`, with `stats` (rho, p, n) and a `note` for a correlation.
+  - `gauge`: `value` and `max`.
+- The tabs and their series:
+  - **overview:** screen time by device and day, categories, the focus score by day, weekday by hour.
+  - **apps:** top apps and sites, categories with their apps (treemap), categories by day, app switches an hour.
+  - **devices:** each device's share, by day, by hour, and device to category (Sankey).
+  - **focus:** the average score (gauge); focused, other work or study, and distracted time by day; switches by hour;
+    late nights against the next day's focus (scatter, with Spearman's rho and "correlation, not cause").
+  - **sleep:** each night, measured or estimated; bedtime and wake time (minutes after 18:00 the evening before);
+    after 11 pm.
+  - **food:** meals by day and type, when you ate, the most logged foods.
+  - **calendar:** planned time by day and where it went (on plan, off plan, other screen time, no screen); the
+    longest events with their on-plan share; weekday by hour.
+- Every series is cut from the same pieces as the stats engine's totals (`Stats.crosstab`), so a tab's charts add up
+  to its totals and agree with Today and each other.
+- Answers are cached per range and time zone until the data changes (`cached: true`). The database keeps a change
+  counter (migration `0005`): its triggers count events added, replaced or deleted, category choices, and devices
+  paired, renamed or revoked, whichever process makes the change, so a seed run from the command line counts too.
+  A range that is not over (today in it, or days still to come) is also worked out again after a minute.
+- On 14 seeded days every tab answers in about 0.3 s.
+
+`GET /wrapped?week=2026-W38&tz=America/Toronto` (DT-41, viewer) is the week in review, Monday to Sunday. Without
+`week`, it is last week (the last whole one).
+
+```json
+{ "week": "2026-W38", "first": "2026-09-14", "last": "2026-09-20", "tz": "America/Toronto", "in_progress": false,
+  "metrics": [ "the overview's metrics for the week" ], "top_apps": [ { "app": "Code", "category": "work", "minutes": 1494.0 } ],
+  "lines": [ "You spent 3942 minutes on screens this week.", "...", "..." ],
+  "facts_used": [ { "label": "screen time this week", "value": 3942, "unit": "minutes" } ],
+  "model": "google/gemma-4-e4b", "cached": false, "fallback": false, "reason": null, "streaks": [], "meta": { "...": "..." } }
+```
+
+- `lines` are always three: highlight lines by the local model from the week's facts. Every number in them is
+  checked like the story's (DT-39); lines that fail are retried once, then replaced by three plain lines from the
+  same facts (`fallback: true`, `model: null`, `reason` says why).
+- `in_progress` is true only while the week is going: a week still to come says false, as `/insights` does.
+- The facts compare the week with the one before only a day for a day (average screen time a day), over whole days,
+  and only when both weeks have at least 4 whole days with data. A week that only began being recorded, or this week
+  on a Monday morning, would make any change look huge.
+- The lines are cached per week and time zone like the story: until the facts or what wrote them change, and for a
+  week not over yet at most every 15 minutes.
+- `streaks` is empty until DT-53 adds them.
+- The first answer takes as long as the model writes (about 15 s with Gemma 4 E4B on this PC); cached answers are
+  instant.
 
 ### Streaks, goals and achievements
 

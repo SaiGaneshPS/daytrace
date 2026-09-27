@@ -73,6 +73,11 @@ CAVEAT = (
 Interval = tuple[datetime, datetime]
 
 
+def json_key(items: Sequence[str], text: str | None) -> str:
+    """One meal's contents as a comparable key (the same meal from two devices matches)."""
+    return "|".join(item.strip().lower() for item in items) + "#" + (text or "").strip().lower()
+
+
 def merge(intervals: Iterable[Interval], join: timedelta = timedelta(0)) -> list[Interval]:
     """Sorted, non-overlapping intervals; ones closer than `join` become one (the gap included)."""
     merged: list[Interval] = []
@@ -275,6 +280,15 @@ class Stats:
         paired = {d for d, device in self._devices.items() if device.expected(window.start, window.until)}
         return {d for d in paired | window.counted_devices_with_data if self._device_types.get(d) in types}
 
+    def observed(self, day: date) -> bool:
+        """Whether the hub could have heard about `day` at all: it has begun, and something was sent for it or a
+        phone or computer was paired then. Counts that need no screen (meals, calendar events) are 0 only on such
+        a day; before recording began, or on a day still to come, they are missing."""
+        window = self.day(day)
+        if window.until <= window.start:
+            return False
+        return any(window.overlaps(event, window.start, window.until) for event in window.events) or bool(self._expected(window))
+
     def _meta(self, start: datetime, end: datetime, windows: Sequence[Window], estimated: bool,
               unit: str = "minutes") -> dict[str, Any]:
         sources = {e.source for w in windows for e in w.events if w.overlaps(e, w.start, w.until)}
@@ -285,6 +299,11 @@ class Stats:
             "source": "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real",
             "estimated": estimated,
         }
+
+    def meta(self, first: date, last: date, estimated: bool, unit: str = "minutes") -> dict[str, Any]:
+        """The `meta` (unit, range, source, estimated) for the local days `first` to `last`."""
+        windows = [self.day(day) for day in self._days(first, last)]
+        return self._meta(windows[0].start, windows[-1].end, windows, estimated, unit)
 
     def _days(self, first: date, last: date) -> list[date]:
         if last < first:
@@ -417,6 +436,10 @@ class Stats:
             return [(day.isoformat(), piece.seconds)]
         return self._by_hour(piece.start, piece.end)
 
+    def split_by_hour(self, start: datetime, end: datetime) -> list[tuple[str, int]]:
+        """Seconds of [start, end) per local hour of the day ("00" to "23"), as the hour grouping splits them."""
+        return self._by_hour(start, end)
+
     def _by_hour(self, start: datetime, end: datetime) -> list[tuple[str, int]]:
         """Seconds per local hour of the day. Hour boundaries follow the local clock (Newfoundland's are at :30
         UTC, and a DST change repeats or skips an hour), so the pieces stay whole seconds and add up exactly."""
@@ -432,19 +455,74 @@ class Stats:
             cursor = stop
         return parts
 
-    def top_apps(self, day: date, limit: int = 10) -> list[dict[str, Any]]:
-        """The apps and sites with the most time on `day`, most first (as totals(group_by="app") orders them), each
-        with the category holding most of its time."""
-        items = self.totals(day, group_by="app")["items"]
-        by_category: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        for piece in self.day(day).pieces:
-            for key, seconds in self._keys(piece, "app", day):
-                by_category[key][piece.category or "other"] += seconds
+    def top_apps(self, first: date, last: date | None = None, limit: int = 10) -> list[dict[str, Any]]:
+        """The apps and sites with the most time from `first` to `last` (one day when `last` is None), most first
+        (as totals(group_by="app") orders them), each with the category holding most of its time."""
+        items = self.totals(first, last, group_by="app")["items"]
+        by_category = self.crosstab(first, last, "app", "category")["cells"]
         return [
             {"app": item["key"], "minutes": item["minutes"],
-             "category": max(by_category[item["key"]].items(), key=lambda kv: (kv[1], kv[0]))[0] if by_category[item["key"]] else "other"}
+             "category": max(by_category[item["key"]].items(), key=lambda kv: (kv[1], kv[0]))[0] if by_category.get(item["key"]) else "other"}
             for item in items[:limit] if item["seconds"] > 0
         ]
+
+    def crosstab(self, first: date, last: date | None, row: GroupBy, column: GroupBy) -> dict[str, Any]:
+        """Screen time split two ways at once (device by category, app by category, day by hour, ...), from the same
+        pieces totals() splits, so the cells add up to the same total and every chart agrees with the others.
+        `cells[row][column]` is seconds. Days without screen data are left out and listed in `missing_days`."""
+        if row == column or row not in GROUPINGS or column not in GROUPINGS:
+            raise ValueError(f"row and column must be two different ones of {', '.join(GROUPINGS)}")
+        days = self._days(first, last or first)
+        cells: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        missing_days: list[str] = []
+        windows: list[Window] = []
+        total, estimated = 0, False
+        for day in days:
+            window = self.day(day)
+            windows.append(window)
+            if window.until <= window.start:  # not begun
+                continue
+            if not window.counted_devices_with_data:
+                missing_days.append(day.isoformat())
+                continue
+            for piece in window.pieces:
+                total += piece.seconds
+                estimated = estimated or piece.estimated
+                # Only the hour splits a piece (a piece never crosses midnight): the other side is one key.
+                parts = self._keys(piece, "hour", day) if "hour" in (row, column) else [("", piece.seconds)]
+                for hour, seconds in parts:
+                    across = hour if row == "hour" else self._keys(piece, row, day)[0][0]
+                    down = hour if column == "hour" else self._keys(piece, column, day)[0][0]
+                    cells[across][down] += seconds
+        return {
+            "row": row, "column": column, "cells": {key: dict(value) for key, value in cells.items()},
+            "total_seconds": total, "missing_days": missing_days,
+            **self._meta(windows[0].start, windows[-1].end, windows, estimated),
+        }
+
+    def meals(self, first: date, last: date | None = None) -> list[dict[str, Any]]:
+        """The meals logged from `first` to `last`, in order: local time, day, type, items and text. The same meal
+        sent twice (two phones on one health account) is listed once."""
+        found: list[dict[str, Any]] = []
+        seen: set[tuple[datetime, str]] = set()
+        for day in self._days(first, last or first):
+            window = self.day(day)
+            for event in sorted(window.events, key=lambda e: e.start):
+                if event.kind != "meal" or not window.start <= event.start < window.end or event.start > self.now:
+                    continue
+                items = event.data.get("items")
+                items = [str(item) for item in items] if isinstance(items, list) else []
+                text = event.data.get("text") if isinstance(event.data.get("text"), str) else None
+                key = (event.start, json_key(items, text))
+                if key in seen:
+                    continue
+                seen.add(key)
+                meal_type = event.data.get("meal_type")
+                found.append({
+                    "time": self._local(event.start), "day": day.isoformat(), "items": items, "text": text,
+                    "meal_type": meal_type if isinstance(meal_type, str) else None, "device_id": event.device_id,
+                })
+        return found
 
     def steps(self, day: date) -> int | None:
         """The day's steps: per device, the step counts that started on `day` added up (each span once); the largest
