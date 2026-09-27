@@ -571,6 +571,17 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .pattern-stats { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; font-family: var(--font-numbers); }
 .pattern-note { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 
+/* --- insights: food and calendar (DT-57) ----------------------------------------------------------------------- */
+
+.top-foods, .event-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.top-foods li, .event-list li {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 var(--space-3); padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.top-foods li:last-child, .event-list li:last-child { border-bottom: 0; }
+.top-foods li span, .event-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.event-list { margin-top: var(--space-3); font-size: var(--text-sm); }
+
 /* --- insights: apps and devices (DT-55) ------------------------------------------------------------------------ */
 
 .chart-card-wide { grid-column: 1 / -1; }

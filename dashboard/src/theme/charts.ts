@@ -18,6 +18,7 @@ import {
   DataZoomSliderComponent,
   GridComponent,
   LegendComponent,
+  MarkAreaComponent,
   MarkLineComponent,
   TooltipComponent,
   VisualMapComponent,
@@ -30,7 +31,7 @@ import { useMediaQuery, useReducedMotionPreference } from "./motion";
 echarts.use([
   BarChart, CustomChart, GaugeChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart,
   AriaComponent, DatasetComponent, DataZoomInsideComponent, DataZoomSliderComponent, GridComponent, LegendComponent,
-  MarkLineComponent, TooltipComponent, VisualMapComponent,
+  MarkAreaComponent, MarkLineComponent, TooltipComponent, VisualMapComponent,
   CanvasRenderer,
 ]);
 

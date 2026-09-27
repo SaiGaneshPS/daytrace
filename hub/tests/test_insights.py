@@ -106,7 +106,7 @@ def test_every_tab_answers_with_its_metrics_and_series(hub: TestClient) -> None:
                   "switches_by_day": "trend", "distraction_hours": "heatmap"},
         "sleep": {"sleep_by_night": "stacked", "schedule": "trend", "late_night": "bars"},
         "food": {"meals_by_day": "stacked", "meal_times": "scatter", "top_items": "bars"},
-        "calendar": {"plan_by_day": "stacked", "blocks": "bars", "hours": "heatmap"},
+        "calendar": {"plan_by_day": "stacked", "blocks": "bars", "hours": "heatmap", "meetings_by_day": "bars"},
     }
     for name, expected in kinds.items():
         body = tab(hub, name)
@@ -586,7 +586,7 @@ DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" /
 
 def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
     """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34), the Apps and Devices tab with
-    one app's detail (DT-55), and the Focus and Sleep tab (DT-56), for 14 seeded days."""
+    one app's detail (DT-55), the Focus and Sleep tab (DT-56) and the Food and Calendar tab (DT-57), for 14 seeded days."""
     def fresh(body: dict[str, Any]) -> dict[str, Any]:
         return {**body, "cached": False}
 
@@ -602,6 +602,10 @@ def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
         "insights-focus-sleep.json": {
             "focus": {span: fresh(tab(client, "focus", span)) for span in ("14d", "7d")},
             "sleep": {span: fresh(tab(client, "sleep", span)) for span in ("14d", "7d")},
+        },
+        "insights-food-calendar.json": {
+            "food": {span: fresh(tab(client, "food", span)) for span in ("14d", "7d")},
+            "calendar": {span: fresh(tab(client, "calendar", span)) for span in ("14d", "7d")},
         },
     }
 
@@ -889,3 +893,61 @@ def test_the_late_night_pattern_has_its_line_size_and_caveat(hub: TestClient) ->
     assert scatter["note"].startswith("Correlation, not cause")
     explain = body["series"]["score"]["explain"]
     assert "100 × focused time ÷ (work or study time + distracted time)" in explain  # the formula, for the gauge's tooltip
+
+
+# --- DT-57: the Food and Calendar tab ----------------------------------------------------------------------------
+
+
+def add_meal(settings: Settings, when: datetime, items: list[str], meal_type: str) -> None:
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute(
+            "INSERT INTO events (device_id, dedup_key, seq, kind, source, start_utc, end_utc, utc_offset_min, data, received_at)"
+            " VALUES ('seed-android', ?, NULL, 'meal', 'seed', ?, NULL, -240, ?, ?)",
+            (f"content:meal-{when.isoformat()}", utc(when), json.dumps({"items": items, "meal_type": meal_type, "text": None}),
+             "2026-09-25T20:00:00.000000Z"),
+        )
+
+
+def test_each_meal_is_a_point_of_its_type_as_logged(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    body = tab(hub, "food", "14d")
+    points = body["series"]["meal_times"]["points"]
+    meals = stats_of().meals(FIRST, TODAY)
+    assert len(points) == len(meals) == metric(body, "meals")
+    assert [point["group"] for point in points] == [meal["meal_type"] or "other" for meal in meals]
+    assert [point["label"] for point in points] == [", ".join(meal["items"]) or meal["text"] for meal in meals]  # the items, as logged
+    assert metric(body, "late_meals") == 0  # the seed eats before 22:00
+
+
+def test_late_night_eating_is_from_22_to_4(hub: TestClient, demo: Settings) -> None:
+    for clock_time, items in (((21, 59), ["tea"]), ((22, 0), ["chips"]), ((23, 30), ["noodles"])):
+        add_meal(demo, datetime(2026, 9, 20, *clock_time, tzinfo=TZ), items, "snack")
+    add_meal(demo, datetime(2026, 9, 21, 3, 59, tzinfo=TZ), ["toast"], "snack")  # still the night before's
+    add_meal(demo, datetime(2026, 9, 21, 4, 0, tzinfo=TZ), ["cereal"], "breakfast")  # an early breakfast
+    assert metric(tab(hub, "food", "14d"), "late_meals") == 3
+
+
+def test_each_event_splits_into_what_its_time_went_to(hub: TestClient) -> None:
+    blocks = tab(hub, "calendar", "14d")["series"]["blocks"]["items"]
+    assert blocks
+    for block in blocks:
+        parts = block["children"]
+        assert [part["key"] for part in parts] == ["on_plan", "off_plan", "other", "idle"]
+        assert close(block["value"], [part["value"] for part in parts], 4), block["name"]  # they add up to the event's length
+        assert block["share"] == round(100 * parts[0]["value"] / block["value"])
+
+
+def test_an_event_on_a_day_nobody_saw_has_no_split(hub: TestClient, demo: Settings) -> None:
+    add_event(demo, datetime(2026, 9, 1, 10, 0, tzinfo=TZ), minutes=90, kind="calendar_event", app=None, category=None, title="Planning")
+    block = tab(hub, "calendar", "2026-09-01..2026-09-02")["series"]["blocks"]["items"][0]
+    assert (block["name"], block["value"], block["children"], block["share"]) == ("Planning", 90, None, None)  # unknown, not 0 on plan
+
+
+def test_meetings_count_once_across_devices(hub: TestClient, demo: Settings) -> None:
+    span = "2026-09-01..2026-09-02"  # before the seed: only what is added here
+    at = datetime(2026, 9, 1, 10, 0, tzinfo=TZ)
+    add_event(demo, at, minutes=30, device="seed-windows", app="Zoom", category="comms")
+    add_event(demo, at + timedelta(minutes=15), minutes=30, device="seed-android", app="Zoom", category="comms")  # joined from the phone too
+    add_event(demo, at + timedelta(hours=2), minutes=20, device="seed-windows", app="Slack", category="comms")  # not a meeting app
+    body = tab(hub, "calendar", span)
+    assert body["series"]["meetings_by_day"]["lines"][0]["values"] == [45, None]  # 10:00 to 10:45; nothing sent on the 2nd
+    assert metric(body, "meetings") == 45

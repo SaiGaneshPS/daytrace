@@ -1525,6 +1525,11 @@ export interface components {
             y: number;
             /** Label */
             label: string;
+            /**
+             * Group
+             * @description The point's group: a meal's type (breakfast, lunch, dinner, snack, other).
+             */
+            group?: string | null;
         };
         /** Progress */
         Progress: {

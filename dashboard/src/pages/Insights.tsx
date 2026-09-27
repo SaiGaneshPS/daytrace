@@ -4,11 +4,11 @@
 // the same view, and switching tabs keeps the range.
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import ChartCard from "../components/ChartCard";
 import { useToday } from "../components/DayPicker";
 import Tabs from "../components/Tabs";
 import AppsDevicesTab from "./insights/AppsDevicesTab";
 import FocusSleepTab from "./insights/FocusSleepTab";
+import FoodCalendarTab from "./insights/FoodCalendarTab";
 import OverviewTab from "./insights/OverviewTab";
 import { EARLIEST, PRESETS, localZone, rangeProblem, spanOf, validRange } from "./insights/shared";
 
@@ -98,14 +98,6 @@ function RangePicker({ range, today, onChange }: { range: string; today: string;
   );
 }
 
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <ChartCard title={label}>
-      <p className="muted">These charts are on their way: this tab fills in with the next update. The Overview has the range&apos;s numbers now.</p>
-    </ChartCard>
-  );
-}
-
 export default function Insights() {
   const [params, setParams] = useSearchParams();
   const today = useToday();
@@ -148,7 +140,7 @@ export default function Insights() {
             ) : item.id === "focus" ? (
               <FocusSleepTab range={range} tz={tz} today={today} />
             ) : (
-              <ComingSoon label={item.label} />
+              <FoodCalendarTab range={range} tz={tz} today={today} />
             ),
         }))}
       />
