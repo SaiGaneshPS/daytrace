@@ -30,14 +30,18 @@ desktop notification. The focus nudge rests 20 minutes after it fires, and no nu
 retry in that time stays quiet and says why; `--again` lets it speak now. The start script's re-seeding clears the
 rehearsal's nudges, so the real demo starts rested.
 
+**Until the phone is ready,** steps 2 and 3 always use these two commands: the Android app can't pair until PR #16
+merges, and showing nudges on the phone is DT-24. The checklist's pairing and phone items wait for those too.
+
 ## Before the demo (checklist)
 
 - [ ] **Network.** The PC and the phone are on the same network. Home routers that keep Wi-Fi devices apart (client
       isolation, as the Bell Home Hub does) need the PC on Ethernet or the phone on the PC's Mobile hotspot.
       Check: Devices shows the phone's last contact as "just now".
-- [ ] **Pairing.** The phone is paired to the demo hub (Devices, pairing code or QR), and its lane shows on Today.
-- [ ] **Phone battery.** Above 50%, charger nearby. Daytrace is in Samsung's "Never sleeping apps", battery
-      Unrestricted, and live mode is on (DT-24).
+- [ ] **Pairing** (once PR #16 is in). The phone is paired to the demo hub (Devices, pairing code or QR), and its lane
+      shows on Today.
+- [ ] **Phone battery** (once DT-24 is in). Above 50%, charger nearby. Daytrace is in Samsung's "Never sleeping
+      apps", battery Unrestricted, and live mode is on.
 - [ ] **Model loaded.** LM Studio is running with the model loaded; the start script said "The model ... answers".
       A question on Ask answers in under 20 seconds.
 - [ ] **Screen scaling.** The browser zoom is 100% (Ctrl+0), and the display scaling is what the room's screen needs.
@@ -53,9 +57,10 @@ rehearsal's nudges, so the real demo starts rested.
 
 ## 1. Hook (20 s)
 
-- **Say:** "Where did my day go? Your phone knows part of it, your laptop another part. Nothing puts it together,
-  and the apps that try send it all to someone's cloud. Daytrace keeps it on your own network."
-- **Do:** Today. Point at the timeline: one lane per device (Windows, Mac, Android, iPhone), the calendar, sleep.
+- **Say:** "Where did my day go? Your phone knows part of it, your laptop another part, and they rarely meet. Many
+  of the apps that try send it all to their own cloud. Daytrace keeps it on your own network."
+- **Do:** Today. Point at the timeline: one lane for each device that has sent data today, the calendar, sleep and
+  meals. Which devices show depends on the day: seeded Mac and iPhone use doesn't happen every day.
 - **See:** the day so far, colored by category, with totals above it.
 - **Fallback:** if Today is slow, it is the hub starting: wait for the stat cards. If it can't reach the hub, run the
   start script again (`-NoSeed`).
@@ -63,7 +68,8 @@ rehearsal's nudges, so the real demo starts rested.
 ## 2. Live: phone to PC (30 s)
 
 - **Say:** "Watch: I open Instagram on my phone..."
-- **Do:** open Instagram on the paired phone for a few seconds, then YouTube, then lock it.
+- **Do:** open Instagram on the paired phone for a few seconds, then YouTube, then lock it. Until the phone can pair
+  (PR #16), use the fallback.
 - **See:** within a few seconds the Android lane on Today grows up to now, with its live dot.
 - **Fallback:** no phone, or it doesn't sync: run `daytrace_hub demo live` on the PC. The same thing lands on the
   Android lane at once (Today refreshes by itself).
@@ -73,7 +79,8 @@ rehearsal's nudges, so the real demo starts rested.
 - **Say:** "Tracking alone rarely changes anything, so Daytrace nudges at the right moment. I'm meant to be
   studying..."
 - **Do:** during a calendar block called "Study ...", open TikTok on the phone.
-- **See:** the phone shows "Time to focus: TikTok during "Study ...", which runs until ...".
+- **See:** the phone shows "Time to focus: TikTok during "Study ...", which runs until ..." (once DT-24 is in;
+  until then use the fallback, whose nudge shows as a desktop notification).
 - **Fallback:** `daytrace_hub demo nudge` on the PC. It puts a study block on the phone's calendar and opens TikTok in
   it, and the same nudge shows as a desktop notification. If it prints "No nudge", run it with `--again`.
 

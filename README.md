@@ -8,6 +8,11 @@ cloud server, the AI runs on your own machine, and the hub shows you that it mad
 
 ![A tour of the dashboard with demo data: the Today timeline, the day's story, Ask, Insights, Streaks, the weekly Wrapped card and the Privacy page](docs/img/tour.png)
 
+**Watch it run:** [a recording of the demo](docs/img/demo.webm) (about 2 minutes, captioned, no sound). It's a
+10 MB WebM file: GitHub shows its file page, and "View raw" downloads it. It plays in Chrome, Edge, Firefox and VLC.
+
+**The pitch:** [docs/pitch.md](docs/pitch.md), the problem, the gap and what's next, with sources.
+
 ## What it does
 
 - **One timeline for every device.** Each phone and computer gets its own lane, colored by what you were doing
@@ -94,9 +99,10 @@ The script seeds the data, starts the hub, wakes the model up by writing yesterd
 ahead of time, and opens `http://localhost:8767`. Ctrl+C stops the hub. Run it again whenever you like: it only
 ever replaces demo data.
 
-- **The 3-minute demo:** [docs/demo-script.md](docs/demo-script.md), with a fallback for every step. Without a
-  phone, `hub\.venv\Scripts\python -m daytrace_hub demo live` (or `demo nudge`) sends what the demo phone would.
-  On macOS or Linux the Python is `hub/.venv/bin/python`.
+- **The 3-minute demo:** [docs/demo-script.md](docs/demo-script.md), with a fallback for every step, and a
+  [recording](docs/img/demo.webm) to play if the live demo fails. Without a phone,
+  `hub\.venv\Scripts\python -m daytrace_hub demo live` (or `demo nudge`) sends what the demo phone would. On macOS
+  or Linux the Python is `hub/.venv/bin/python`.
 - **Your own data:** `hub\.venv\Scripts\python -m daytrace_hub run --profile personal` starts the personal hub on
   port 8765. On Windows it records this computer's foreground app, window title and away time. A phone's browser
   pairs with it from the Devices page.
@@ -131,7 +137,8 @@ collectors exist.
 - **A local AI only.** The model runs on your machine or your LAN (the test profiles may also use your tailnet),
   and the hub refuses any other address for it.
 - **Sensitive titles are never stored.** Banking, health portals, password managers and private browser windows
-  become `[redacted]`, plus any words you add. The time still counts; only the words are gone.
+  become `[redacted]`. Words you add hide new events at once, and stored ones when you confirm. The time still
+  counts; only the words are gone.
 - **Every device is paired.** A phone joins with a one-time code from the hub's own screen, gets its own token (the
   hub keeps only a hash of it), and can be revoked at any time.
 - **Yours to take or delete.** Export everything as JSON, or delete everything after typing a confirmation phrase.
