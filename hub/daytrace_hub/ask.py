@@ -25,6 +25,7 @@ import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from time import monotonic
 from typing import Any
 
 from .api.timeline import EARLIEST, LATEST, day_window
@@ -43,6 +44,9 @@ MAX_ANSWER_CHARS = 1000
 MAX_SENTENCES = 6  # the model is asked for 1 to 4
 MAX_TOKENS = 2048  # room for a reasoning model to think before it answers
 MAX_ITEMS = 10  # apps, categories or devices listed by name (hours and days are all listed)
+# No new model call starts after this; the facts found so far answer instead. One call can still take up to 4
+# minutes (llm.TIMEOUT plus a retry), so a question ends within about 8, and the dashboard waits 10.
+BUDGET_SECONDS = 240
 MAX_SESSIONS = 25
 SESSION_JOIN = timedelta(seconds=60)  # pieces of the same app this close are one session in a list
 OFF_TOPIC = "OFF_TOPIC"
@@ -631,10 +635,14 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
     def fallback(reason: str) -> AskResult:
         return AskResult(facts_answer(_unique(facts)), _unique(facts), called, chart, None, True, False, reason)
 
+    started = monotonic()
     with database.connect() as conn:
         stats = Stats(conn, tz, tz_name, now)
         while True:
             offer_tools = len(called) < MAX_TOOL_CALLS
+            if called and monotonic() - started > BUDGET_SECONDS:
+                return fallback(f"{model} took more than {BUDGET_SECONDS // 60} minutes, so the answer is the facts "
+                                "found so far")
             try:
                 choice = llm.complete(messages, tools=TOOL_SCHEMAS if offer_tools else None, temperature=0.2,
                                       max_tokens=MAX_TOKENS, model=model)

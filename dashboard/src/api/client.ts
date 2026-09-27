@@ -20,8 +20,10 @@ const TOKEN_KEY = "daytrace.token";
 const RETRIES = 2;
 const RETRY_STATUSES = new Set([502, 503, 504]);
 const TIMEOUT_MS = 15_000; // a hub that went to sleep never answers: give up and say so
-/** For the local AI (a story, an answer): each model call may take up to 2 minutes, and a question makes several. */
-export const AI_TIMEOUT_MS = 300_000;
+/** For the local AI (a story, an answer). One model call may take up to 4 minutes (2 minutes, tried twice); the hub
+ * starts no new call for a question after 4 minutes (ask.BUDGET_SECONDS) and makes at most 2 for a story, so both
+ * end within about 8. */
+export const AI_TIMEOUT_MS = 600_000;
 
 // --- types from the schema -----------------------------------------------------------------------------------
 

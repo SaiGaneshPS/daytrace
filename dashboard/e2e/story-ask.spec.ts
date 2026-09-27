@@ -103,8 +103,9 @@ test("the story types itself out, names the model on this device, and lists its 
   const text = page.locator(".story-text");
   await expect(text).toHaveAttribute("data-typing", "true"); // still typing
   await expect(text.locator(".visually-hidden")).toHaveText(STORY_TEXT); // screen readers get it whole at once
-  await expect(text.locator("[aria-hidden=true]")).toHaveText(STORY_TEXT, { timeout: 5_000 });
-  await expect(text).not.toHaveAttribute("data-typing");
+  await expect(text).not.toHaveAttribute("data-typing", { timeout: 5_000 });
+  await expect(text).toHaveText(STORY_TEXT); // typed out, and there once (copying or finding it sees one copy)
+  await expect(text.locator("[aria-hidden=true], .visually-hidden")).toHaveCount(0);
 
   const card = page.getByRole("region", { name: "Story" });
   await expect(card.locator(".badge-local")).toHaveText("Generated on this device");
@@ -174,7 +175,7 @@ test("a story that takes longer than other requests keeps waiting, and shows how
   });
   await page.goto("/story");
   const card = page.getByRole("region", { name: "Story" });
-  await expect(card).toContainText(/Writing the story on this device \(\d+ s\)/, { timeout: 8_000 });
+  await expect(card).toContainText(/Writing the story on this device\.\s*\d+ s/, { timeout: 8_000 });
   await expect(card.locator(".story-text")).toContainText("07:18", { timeout: 30_000 });
   expect(seen.story).toEqual([DAY]); // one request: not cut off and sent again
 });
@@ -218,7 +219,7 @@ test("an example question is answered with the model, the tools, a chart and the
   await page.getByRole("button", { name: "How much YouTube did I watch last week?" }).click();
   const log = page.getByRole("list", { name: "Questions and answers" });
   await expect(log.locator(".bubble-question")).toHaveText("How much YouTube did I watch last week?");
-  await expect(log.locator(".answer-text [aria-hidden=true]")).toHaveText(ANSWER.answer, { timeout: 5_000 });
+  await expect(log.locator(".answer-text")).toHaveText(ANSWER.answer, { timeout: 5_000 });
   expect(seen.asked).toEqual([{ question: "How much YouTube did I watch last week?", tz: "America/Toronto" }]);
   const answer = log.locator(".bubble-answer");
   await expect(answer.locator(".badge-local")).toHaveText("Generated on this device");
@@ -286,13 +287,21 @@ test("with the AI offline, Ask says why, offers no questions, and recovers by it
   await expect(page.getByRole("textbox", { name: "Ask about your day" })).toBeEnabled();
 });
 
-test("a model that can't call tools is named, and questions wait for one that can", async ({ page }) => {
+test("a model that can't call tools is named, questions wait for one that can, and it is checked again", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await mockHub(page, { status: () => ({ ...STATUS, tool_calling: false }) });
+  await page.clock.install({ time: new Date("2026-09-25T14:00:00-04:00") });
+  const state = { tools: false };
+  await mockHub(page, { status: () => ({ ...STATUS, tool_calling: state.tools }) });
   await page.goto("/ask");
   await expect(page.locator(".ai-offline")).toContainText("This model can't look things up");
   await expect(page.locator(".ai-offline")).toContainText(`${MODEL} doesn't call tools`);
-  await expect(page.getByRole("textbox", { name: "Ask about your day" })).toBeDisabled();
+  const input = page.getByRole("textbox", { name: "Ask about your day" });
+  await expect(input).toBeDisabled();
+  await expect(input).toHaveAttribute("placeholder", "Questions wait until the AI can answer"); // not "offline": it answers
+  state.tools = true; // a model that calls tools is loaded
+  await page.clock.runFor(31_000);
+  await expect(page.locator(".ai-offline")).toHaveCount(0);
+  await expect(input).toBeEnabled();
 });
 
 test("when the model stops answering mid-question, the answer says so and can be asked again", async ({ page }) => {
@@ -343,6 +352,188 @@ test("the conversation stays when you leave the page and come back, until it is 
   await page.getByRole("button", { name: "Clear the conversation" }).click();
   await expect(page.locator(".turn")).toHaveCount(0);
   await expect(page.getByText("Ask anything about your days.")).toBeVisible();
+});
+
+// --- from the bug review -----------------------------------------------------------------------------------------
+
+test("the mini charts aren't redrawn while the story is being written", async ({ page, isMobile }) => {
+  test.skip(isMobile, "once is enough");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  // Count the text the charts draw: a chart drawn again (the same picture, but all the work) draws its labels again.
+  await page.addInitScript(() => {
+    const draw = CanvasRenderingContext2D.prototype.fillText;
+    (window as unknown as { texts: number }).texts = 0;
+    CanvasRenderingContext2D.prototype.fillText = function (...args: Parameters<typeof draw>) {
+      (window as unknown as { texts: number }).texts += 1;
+      return draw.apply(this, args);
+    };
+  });
+  await mockHub(page, {
+    story: async (date) => {
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+      return story(date);
+    },
+  });
+  await page.goto("/story");
+  await expect(page.getByRole("region", { name: "Top apps" }).locator("canvas")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Focus and distraction" }).locator("canvas")).toBeVisible();
+  await page.waitForTimeout(1_000); // both charts drawn
+  const texts = () => page.evaluate(() => (window as unknown as { texts: number }).texts);
+  const before = await texts();
+  expect(before).toBeGreaterThan(0);
+  await expect(page.locator(".waiting-seconds")).toHaveText(/[3-9] s/, { timeout: 8_000 }); // the page re-renders every second
+  await page.waitForTimeout(2_500);
+  expect(await texts()).toBe(before);
+});
+
+test("the seconds count only for the eye, and start again for another day", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page, {
+    story: async (date) => {
+      await new Promise((resolve) => setTimeout(resolve, 20_000));
+      return story(date);
+    },
+  });
+  await page.goto("/story");
+  const card = page.getByRole("region", { name: "Story" });
+  await expect(card.locator(".waiting-seconds")).toHaveText(/\d+ s/, { timeout: 8_000 });
+  await expect(card.locator(".story-writing").getByRole("status")).toHaveText("Writing the story on this device."); // read out once, no seconds
+  await page.getByRole("button", { name: "Previous day" }).click();
+  await expect(card.locator(".waiting-seconds")).toHaveCount(0); // a new request: from 0 again
+});
+
+test("trying a failed story again shows it being written, not the old error", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const state = { fail: true };
+  await mockHub(page);
+  await page.route("**/api/v1/story?**", async (route) => {
+    if (state.fail) return route.fulfill({ status: 504, json: { error: { code: "timeout", message: "the model took too long" } } });
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    return route.fulfill({ json: story() });
+  });
+  await page.goto("/story");
+  const card = page.getByRole("region", { name: "Story" });
+  await expect(card).toContainText("The story couldn't load: the model took too long", { timeout: 15_000 });
+  state.fail = false;
+  await card.getByRole("button", { name: "Try again" }).click();
+  await expect(card).toContainText("Writing the story on this device");
+  await expect(card).not.toContainText("couldn't load");
+  await expect(card.locator(".story-text")).toContainText("07:18", { timeout: 10_000 });
+});
+
+test("stepping through days asks for the last day's story only", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const seen = await mockHub(page);
+  await page.goto("/story");
+  await expect(page.locator(".story-text")).toContainText("07:18");
+  const previous = page.getByRole("button", { name: "Previous day" });
+  for (let i = 0; i < 3; i++) await previous.click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Tuesday, September 22");
+  await expect(page.locator(".story-text")).toBeVisible();
+  expect(seen.story).toEqual([DAY, "2026-09-22"]); // not the 24th and 23rd on the way
+});
+
+test("a failed check for a newer story says so, and the story stays", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const state = { fail: false };
+  await mockHub(page);
+  await page.route("**/api/v1/story?**", (route) =>
+    state.fail
+      ? route.fulfill({ status: 400, json: { error: { code: "bad_request", message: "the hub is busy" } } })
+      : route.fulfill({ json: story() }),
+  );
+  await page.goto("/story");
+  const card = page.getByRole("region", { name: "Story" });
+  await expect(card.locator(".story-text")).toContainText("07:18");
+  state.fail = true;
+  await card.getByRole("button", { name: "Check for a newer story" }).click();
+  await expect(card).toContainText("Couldn't check for a newer story: the hub is busy");
+  await expect(card.locator(".story-text")).toContainText("07:18");
+});
+
+test("a chip or Ask again leaves what you were typing alone", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page);
+  await page.goto("/ask");
+  const input = page.getByRole("textbox", { name: "Ask about your day" });
+  await input.fill("How many hours did I spend in");
+  await page.getByRole("button", { name: "How much YouTube did I watch last week?" }).click();
+  await expect(page.locator(".answer-text")).toContainText("1 hour 50 minutes");
+  await expect(input).toHaveValue("How many hours did I spend in");
+});
+
+test("after a typed question the box has the focus again, except on a touch screen", async ({ page, isMobile }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page);
+  await page.goto("/ask");
+  const input = page.getByRole("textbox", { name: "Ask about your day" });
+  await page.getByRole("button", { name: "How did I sleep last night?" }).click();
+  await expect(page.locator(".answer-text")).toHaveCount(1);
+  await expect(input).not.toBeFocused(); // a chip never brings the keyboard up
+  await input.fill("How much YouTube last week?");
+  await input.press("Enter");
+  await expect(page.locator(".answer-text")).toHaveCount(2);
+  if (isMobile) await expect(input).not.toBeFocused(); // the keyboard closed, so it doesn't cover the answer
+  else await expect(input).toBeFocused(); // ready for the next question
+});
+
+test("Ask again waits while another question is being answered", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const state = { calls: 0 };
+  await mockHub(page, {
+    ask: async () => {
+      state.calls += 1;
+      if (state.calls === 1) return { status: 503, json: { error: { code: "ai_unavailable", message: "The model server stopped answering." } } };
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      return { json: ANSWER };
+    },
+  });
+  await page.goto("/ask");
+  await page.getByRole("button", { name: "How did I sleep last night?" }).click();
+  const again = page.locator(".bubble-failed").getByRole("button", { name: "Ask again" });
+  await expect(again).toBeEnabled();
+  await page.getByRole("button", { name: "Where did my afternoon go?" }).click();
+  await expect(page.locator(".thinking")).toBeVisible();
+  await expect(again).toBeDisabled();
+  await expect(page.locator(".thinking").getByRole("status")).toHaveText("Looking at your data on this device.");
+  await expect(page.locator(".answer-text")).toContainText("1 hour 50 minutes", { timeout: 10_000 });
+  await expect(again).toBeEnabled();
+});
+
+test("answers brought back from earlier are shown as they were, not typed out again", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/ask");
+  await page.getByRole("button", { name: "How much YouTube did I watch last week?" }).click();
+  await expect(page.locator(".answer-text")).toHaveText(ANSWER.answer, { timeout: 5_000 });
+  await page.goto("/story");
+  await expect(page.locator(".story-text")).toBeVisible();
+  await page.goto("/ask");
+  await expect(page.locator(".answer-text")).toBeVisible();
+  expect(await page.locator(".answer-text[data-typing]").count()).toBe(0);
+  await expect(page.locator(".answer-text")).toHaveText(ANSWER.answer);
+});
+
+test("phone: every control on Story and Ask can be tapped (44 px or more)", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "touch targets");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page);
+  const small = async () =>
+    page.locator("main button, main summary, main input, main textarea, .bottom-nav a, .bottom-nav button").evaluateAll((elements) =>
+      elements
+        .filter((element) => (element as HTMLElement).offsetParent !== null)
+        .map((element) => ({ name: element.textContent?.trim() || element.getAttribute("aria-label"), ...element.getBoundingClientRect().toJSON() }))
+        .filter((box) => box.width < 44 || box.height < 44)
+        .map((box) => `${box.name}: ${Math.round(box.width)}x${Math.round(box.height)}`),
+    );
+  await page.goto("/story");
+  await expect(page.locator(".story-text")).toContainText("07:18");
+  await page.getByText("Facts used").click();
+  expect(await small()).toEqual([]);
+  await page.goto("/ask");
+  await page.getByRole("button", { name: "How much YouTube did I watch last week?" }).click();
+  await expect(page.locator(".answer-text")).toContainText("1 hour 50 minutes");
+  await page.locator(".bubble-answer").getByText("Facts used").click();
+  expect(await small()).toEqual([]);
 });
 
 // --- both ------------------------------------------------------------------------------------------------------

@@ -4,11 +4,11 @@
 //
 // The hub checks every number in the story against its facts before sending it. When the AI is offline the page
 // says so; the story comes from the template and the charts keep working, since they never needed the model.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AI_TIMEOUT_MS, useApi } from "../api/client";
 import type { components } from "../api/schema";
 import ChartCard from "../components/ChartCard";
-import { AiOffline, FactsList, ModelBadge, TypedText, useAiStatus, useElapsed } from "../components/ChatBox";
+import { AiOffline, FactsList, ModelBadge, TypedText, useAiStatus, useElapsed, Waiting } from "../components/ChatBox";
 import DayPicker, { longDay, useToday } from "../components/DayPicker";
 import { SkeletonText } from "../components/Skeleton";
 import { formatMinutes } from "../components/StatCard";
@@ -17,9 +17,21 @@ import { type ChartOption, categoryStyle, useEChart } from "../theme/charts";
 type Summary = components["schemas"]["DaySummary"];
 
 const MINI_APPS = 5;
+const SETTLE_MS = 500; // a day must stay picked this long before its story is asked for
+
+/** `value`, once it has stayed the same for `ms`. Stepping through days asks the hub for the last day's story only:
+ * a story the browser gave up on is still written by the model, and would hold up the one wanted. */
+function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
 
 function TopApps({ summary }: { summary: Summary }) {
-  const apps = summary.top_apps.slice(0, MINI_APPS);
+  const apps = useMemo(() => summary.top_apps.slice(0, MINI_APPS), [summary.top_apps]);
   const option = useMemo<ChartOption>(
     () => ({
       grid: { left: 8, right: 56, top: 4, bottom: 4, containLabel: true },
@@ -99,13 +111,16 @@ export default function Story() {
   const query = { date: day, tz };
 
   const ai = useAiStatus();
-  const story = useApi("/api/v1/story", { query, quiet: true, timeout: AI_TIMEOUT_MS });
+  const storyDay = useSettled(day, SETTLE_MS);
+  const story = useApi("/api/v1/story", { query: { date: storyDay, tz }, quiet: true, timeout: AI_TIMEOUT_MS, enabled: storyDay === day });
   const summary = useApi("/api/v1/insights/day", { query, quiet: true });
   // Another day's story or numbers (still on screen while this day loads) must not show under this day's heading.
   const told = story.data?.date === day ? story.data : undefined;
   const numbers = summary.data?.date === day ? summary.data : undefined;
-  const writing = !told && !story.error;
-  const seconds = useElapsed(writing);
+  // Writing while a request is on its way (a retry too) or about to be sent; a failure shows only once it is over.
+  const writing = !told && (story.loading || storyDay !== day || !story.error);
+  const failed = !told && !writing ? story.error : undefined;
+  const seconds = useElapsed(writing, day);
   const summaryError = !numbers && summary.error ? summary.error.message : undefined;
 
   return (
@@ -142,14 +157,21 @@ export default function Story() {
                 )}
                 <FactsList facts={told.facts_used} />
                 {told.in_progress && (
-                  <button type="button" className="button button-ghost" onClick={story.reload} disabled={story.loading}>
-                    Check for a newer story
-                  </button>
+                  <div className="row">
+                    <button type="button" className="button button-ghost" onClick={story.reload} disabled={story.loading}>
+                      {story.loading ? "Checking..." : "Check for a newer story"}
+                    </button>
+                    {!story.loading && story.error && (
+                      <p className="muted" role="status">
+                        Couldn&apos;t check for a newer story: {story.error.message}
+                      </p>
+                    )}
+                  </div>
                 )}
               </>
-            ) : story.error ? (
+            ) : failed ? (
               <div className="story-failed">
-                <p className="muted">The story couldn&apos;t load: {story.error.message}</p>
+                <p className="muted">The story couldn&apos;t load: {failed.message}</p>
                 <button type="button" className="button button-ghost" onClick={story.reload}>
                   Try again
                 </button>
@@ -157,10 +179,7 @@ export default function Story() {
             ) : (
               <div className="story-writing">
                 <SkeletonText lines={4} />
-                <p className="muted" role="status">
-                  Writing the story on this device{seconds >= 3 ? ` (${seconds} s)` : ""}
-                  {seconds >= 20 ? ". A small model can take a minute." : "."}
-                </p>
+                <Waiting what="Writing the story on this device" seconds={seconds} className="muted" />
               </div>
             )}
           </div>

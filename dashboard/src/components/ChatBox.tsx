@@ -11,7 +11,7 @@ import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useId, u
 import { AI_TIMEOUT_MS, ApiError, api, useApi } from "../api/client";
 import type { components } from "../api/schema";
 import { type ChartOption, useEChart } from "../theme/charts";
-import { useReducedMotionPreference } from "../theme/motion";
+import { useMediaQuery, useReducedMotionPreference } from "../theme/motion";
 import { formatMinutes } from "./StatCard";
 
 type Answer = components["schemas"]["Answer"];
@@ -19,7 +19,7 @@ type Fact = components["schemas"]["FactOut"];
 type Chart = components["schemas"]["Chart"];
 
 const STORE_KEY = "daytrace.ask";
-const RECHECK_MS = 30_000; // how often an offline AI is checked again
+const RECHECK_MS = 30_000; // how often an AI that can't answer yet is checked again
 const KEEP_TURNS = 20;
 const MAX_QUESTION = 500; // the hub reads at most this much
 export const EXAMPLES = [
@@ -40,19 +40,25 @@ const TOOL_NAMES: Record<string, string> = {
 
 // --- shared pieces ---------------------------------------------------------------------------------------------
 
-/** The local AI's state (GET /ai/status), checked again every 30 s while it is offline so the page recovers by
- * itself once the model server is started. `offline` says why it can't be used; null when it can (or unknown). */
+/** The local AI's state (GET /ai/status). `offline` says why no model can be used, and `noTools` why the model
+ * can't look anything up (it never calls a tool); each is null when that is fine (or not known yet). Until the
+ * model is usable with tools, it is checked again every 30 s, so a page recovers by itself once it is. */
 export function useAiStatus() {
   const status = useApi("/api/v1/ai/status", { quiet: true });
   const data = status.data;
   const offline = data && (!data.reachable || !data.model) ? (data.error ?? "The model server isn't answering.") : null;
+  const noTools =
+    data && !offline && data.tool_calling === false
+      ? `${data.model} doesn't call tools, so it can't look up your data. Load a model that supports tool calling (function calling) in your model server.`
+      : null;
+  const settled = data !== undefined && !offline && data.tool_calling === true;
   const { reload } = status;
   useEffect(() => {
-    if (!offline) return;
+    if (data === undefined || settled) return;
     const timer = window.setInterval(reload, RECHECK_MS);
     return () => window.clearInterval(timer);
-  }, [offline, reload]);
-  return { data, offline, reload };
+  }, [data, settled, reload]);
+  return { data, offline, noTools, reload };
 }
 
 /** What is wrong with the local AI and what still works without it. */
@@ -76,9 +82,10 @@ export function AiOffline({ title = "The local AI is offline", reason, children,
   );
 }
 
-/** Seconds since `running` became true (0 while it is false), ticking once a second. Measured on the monotonic
- * clock, so setting the device's clock never makes it jump. */
-export function useElapsed(running: boolean): number {
+/** Seconds since `running` became true (0 while it is false), ticking once a second, and starting again from 0
+ * when `what` changes (a new request). Measured on the monotonic clock, so setting the device's clock never makes
+ * it jump. */
+export function useElapsed(running: boolean, what?: unknown): number {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
     setSeconds(0);
@@ -86,17 +93,39 @@ export function useElapsed(running: boolean): number {
     const started = performance.now();
     const timer = window.setInterval(() => setSeconds(Math.floor((performance.now() - started) / 1000)), 1000);
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [running, what]);
   return seconds;
 }
 
-/** Text that types itself out (at once when reduced motion is asked for). Screen readers get the whole text at
- * once, not letter by letter. */
-export function TypedText({ text, className }: { text: string; className?: string }) {
+/** "Still working" text for a long wait: the words go to screen readers once, the ticking seconds only to the eye
+ * (a status that changed every second would be read out every second). */
+export function Waiting({ what, seconds, className }: { what: string; seconds: number; className?: string }) {
+  return (
+    <span className={className}>
+      <span role="status">
+        {what}
+        {seconds >= 20 ? ". A small model can take a minute." : "."}
+      </span>
+      {seconds >= 3 && (
+        <span className="waiting-seconds" aria-hidden="true">
+          {" "}
+          {seconds} s
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Text that types itself out (at once when reduced motion is asked for, or `animate` is false: a restored answer).
+ * While it types, screen readers get the whole text at once from a hidden copy and the eye gets the typed part;
+ * then the hidden copy simply shows (no new text, so nothing is read out twice) and the typed one goes, so copying
+ * or finding the text sees it once. */
+export function TypedText({ text, className, animate = true }: { text: string; className?: string; animate?: boolean }) {
   const reduced = useReducedMotionPreference();
-  const [shown, setShown] = useState(reduced ? text.length : 0);
+  const instant = reduced || !animate;
+  const [shown, setShown] = useState(instant ? text.length : 0);
   useEffect(() => {
-    if (reduced) {
+    if (instant) {
       setShown(text.length);
       return;
     }
@@ -104,20 +133,23 @@ export function TypedText({ text, className }: { text: string; className?: strin
     const duration = Math.min(Math.max(text.length * 14, 600), 2600); // short answers still read as typed
     const started = performance.now();
     let frame = requestAnimationFrame(function step(now) {
-      const count = Math.min(text.length, Math.ceil(((now - started) / duration) * text.length));
+      // The first frame's time can be a little before `started`: never less than nothing typed.
+      const count = Math.min(text.length, Math.max(0, Math.ceil(((now - started) / duration) * text.length)));
       setShown(count);
       if (count < text.length) frame = requestAnimationFrame(step);
     });
     return () => cancelAnimationFrame(frame);
-  }, [text, reduced]);
+  }, [text, instant]);
   const typing = shown < text.length;
   return (
     <p className={className} data-typing={typing || undefined}>
-      <span className="visually-hidden">{text}</span>
-      <span aria-hidden="true">
-        {text.slice(0, shown)}
-        {typing && <span className="caret" />}
-      </span>
+      <span className={typing ? "visually-hidden" : undefined}>{text}</span>
+      {typing && (
+        <span aria-hidden="true">
+          {text.slice(0, shown)}
+          <span className="caret" />
+        </span>
+      )}
     </p>
   );
 }
@@ -248,12 +280,14 @@ type Turn = {
   state: "asking" | "answered" | "failed";
   answer?: Answer;
   error?: Failure;
+  /** Brought back from earlier (sessionStorage): shown as it was, not typed out again. */
+  restored?: boolean;
 };
 
 function loadTurns(): Turn[] {
   try {
     const saved = JSON.parse(sessionStorage.getItem(STORE_KEY) ?? "[]") as Turn[];
-    return Array.isArray(saved) ? saved.filter((turn) => turn.state !== "asking") : [];
+    return Array.isArray(saved) ? saved.filter((turn) => turn.state !== "asking").map((turn) => ({ ...turn, restored: true })) : [];
   } catch {
     return []; // storage off (a private window) or unreadable: start fresh
   }
@@ -270,24 +304,21 @@ function saveTurns(turns: Turn[]): void {
 function Thinking() {
   const seconds = useElapsed(true);
   return (
-    <div className="bubble bubble-answer thinking" role="status">
+    <div className="bubble bubble-answer thinking">
       <span className="dots" aria-hidden="true">
         <span />
         <span />
         <span />
       </span>
-      <span>
-        Looking at your data on this device{seconds >= 3 ? ` (${seconds} s)` : ""}
-        {seconds >= 20 ? ". A small model can take a minute." : "."}
-      </span>
+      <Waiting what="Looking at your data on this device" seconds={seconds} />
     </div>
   );
 }
 
-function AnswerView({ answer }: { answer: Answer }) {
+function AnswerView({ answer, animate }: { answer: Answer; animate: boolean }) {
   return (
     <div className="bubble bubble-answer">
-      <TypedText text={answer.answer} className="answer-text" />
+      <TypedText text={answer.answer} className="answer-text" animate={animate} />
       {answer.declined ? (
         <p className="model-line">
           <span className="badge">Not about your day</span>
@@ -310,7 +341,7 @@ function AnswerView({ answer }: { answer: Answer }) {
   );
 }
 
-function FailureView({ error, onRetry }: { error: Failure; onRetry: () => void }) {
+function FailureView({ error, onRetry, disabled }: { error: Failure; onRetry: () => void; disabled: boolean }) {
   const offline = error.code === "ai_unavailable";
   return (
     <div className="bubble bubble-answer bubble-failed">
@@ -321,7 +352,7 @@ function FailureView({ error, onRetry }: { error: Failure; onRetry: () => void }
             ? `The local AI is offline: ${error.message}`
             : `That couldn't be answered: ${error.message}`}
       </p>
-      <button type="button" className="button button-ghost" onClick={onRetry}>
+      <button type="button" className="button button-ghost" onClick={onRetry} disabled={disabled}>
         Ask again
       </button>
     </div>
@@ -330,17 +361,19 @@ function FailureView({ error, onRetry }: { error: Failure; onRetry: () => void }
 
 type Props = {
   tz: string;
-  /** Why the local AI can't answer right now (from /ai/status), or null when it can. */
-  offline: string | null;
+  /** Why questions can't be answered right now (the AI offline, or a model without tools), or null when they can. */
+  blocked: string | null;
 };
 
-export default function ChatBox({ tz, offline }: Props) {
+export default function ChatBox({ tz, blocked: blockedBy }: Props) {
   const [turns, setTurns] = useState<Turn[]>(loadTurns);
+  const nextId = useRef(Math.max(0, ...turns.map((turn) => turn.id)) + 1); // ids never repeat, whatever the clock says
   const [draft, setDraft] = useState("");
   const running = useRef<AbortController | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const reduced = useReducedMotionPreference();
+  const touch = useMediaQuery("(pointer: coarse)");
   const inputId = useId();
   const asking = turns.some((turn) => turn.state === "asking");
 
@@ -353,12 +386,15 @@ export default function ChatBox({ tz, offline }: Props) {
   const update = (id: number, change: Partial<Turn>) =>
     setTurns((list) => list.map((turn) => (turn.id === id ? { ...turn, ...change } : turn)));
 
-  async function ask(question: string, replacing?: number) {
+  /** `typed`: the question came from the box (so it is emptied, and focus goes back to it afterwards); a chip or
+   * "Ask again" leaves whatever is being typed alone. */
+  async function ask(question: string, { typed = false, replacing }: { typed?: boolean; replacing?: number } = {}) {
     const text = question.trim().slice(0, MAX_QUESTION);
     if (!text || running.current) return;
-    const id = Date.now();
+    const id = nextId.current++;
     setTurns((list) => [...list.filter((turn) => turn.id !== replacing), { id, question: text, state: "asking" }]);
-    setDraft("");
+    if (typed) setDraft("");
+    if (typed && touch) input.current?.blur(); // close the keyboard, so the answer can be seen as it arrives
     const controller = new AbortController();
     running.current = controller;
     try {
@@ -373,21 +409,22 @@ export default function ChatBox({ tz, offline }: Props) {
       update(id, { state: "failed", error: failure });
     } finally {
       if (running.current === controller) running.current = null;
-      input.current?.focus({ preventScroll: true });
+      // Back to the box for the next question, but not on a touch screen: its keyboard would cover the answer.
+      if (typed && !touch) input.current?.focus({ preventScroll: true });
     }
   }
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void ask(draft);
+    void ask(draft, { typed: true });
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      void ask(draft);
+      void ask(draft, { typed: true });
     }
   };
-  const blocked = offline !== null;
+  const blocked = blockedBy !== null;
 
   return (
     <div className="chat">
@@ -405,9 +442,13 @@ export default function ChatBox({ tz, offline }: Props) {
             <li key={turn.id} className="turn">
               <p className="bubble bubble-question">{turn.question}</p>
               {turn.state === "asking" && <Thinking />}
-              {turn.state === "answered" && turn.answer && <AnswerView answer={turn.answer} />}
+              {turn.state === "answered" && turn.answer && <AnswerView answer={turn.answer} animate={!turn.restored} />}
               {turn.state === "failed" && turn.error && (
-                <FailureView error={turn.error} onRetry={() => void ask(turn.question, turn.id)} />
+                <FailureView
+                  error={turn.error}
+                  disabled={asking || blocked}
+                  onRetry={() => void ask(turn.question, { replacing: turn.id })}
+                />
               )}
             </li>
           ))}
@@ -435,7 +476,7 @@ export default function ChatBox({ tz, offline }: Props) {
           className="chat-input"
           rows={1}
           maxLength={MAX_QUESTION}
-          placeholder={blocked ? "The local AI is offline" : "Ask about your day"}
+          placeholder={blocked ? "Questions wait until the AI can answer" : "Ask about your day"}
           value={draft}
           disabled={blocked}
           onChange={(event) => setDraft(event.target.value)}

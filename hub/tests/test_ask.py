@@ -489,3 +489,17 @@ def test_an_answer_may_repeat_the_dates_the_prompt_gave(week: Database, fake_llm
     result = asked(week, fake_llm)
     assert (result.fallback, result.answer) == (
         False, "I couldn't look that up for last week (2026-09-21 to 2026-09-27): that category doesn't exist.")
+
+
+def test_no_new_model_call_starts_after_the_time_budget(week: Database, fake_llm: FakeModelServer,
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    # The first tool round takes longer than the budget (the clock jumps while it runs): the facts it found answer.
+    clock = iter([0.0, ask_module.BUDGET_SECONDS + 1.0])
+    monkeypatch.setattr(ask_module, "monotonic", lambda: next(clock))
+    fake_llm.reply_tool_call("get_totals", YOUTUBE_AFTER_11)
+    fake_llm.reply_text(GOOD)  # never asked for
+    result = asked(week, fake_llm)
+    assert result.fallback is True and result.model is None
+    assert result.reason is not None and "took more than 4 minutes" in result.reason
+    assert result.answer.startswith("Here is what I found:") and result.facts
+    assert len(fake_llm.chats()) == 1
