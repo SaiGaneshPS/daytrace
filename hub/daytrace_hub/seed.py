@@ -414,3 +414,5 @@ def _replace(conn: sqlite3.Connection, by_device: dict[str, list[Event]]) -> Non
     for goal_id, target in DEMO_GOALS.items():
         conn.execute("INSERT INTO goals (goal_id, target, updated_at) VALUES (?, ?, ?) ON CONFLICT (goal_id) DO NOTHING",
                      (goal_id, json.dumps(target), paired_at))
+    # Badges were earned from the history just replaced: they are worked out again from the new one (DT-53).
+    conn.execute("DELETE FROM achievements")

@@ -53,7 +53,7 @@
       "unit": "minutes",
       "target": 15,
       "rule": "{target} minutes or less on the phone after 11 pm the night before",
-      "needs": "a phone's data for the night before"
+      "needs": "a phone's data that evening and on the day"
     },
     {
       "id": "logged_it",
@@ -63,7 +63,7 @@
       "unit": "meals",
       "target": 1,
       "rule": "at least {target} meal logged in a day",
-      "needs": "a device paired or sending that day"
+      "needs": "a phone's data for the day"
     },
     {
       "id": "balanced",
@@ -87,6 +87,6 @@
     {"id": "streak_7", "name": "One week strong", "kind": "streak_days", "amount": 7, "rule": "Any streak reached 7 days."},
     {"id": "streak_30", "name": "Thirty days", "kind": "streak_days", "amount": 30, "rule": "Any streak reached 30 days."},
     {"id": "focus_1000", "name": "1,000 focused minutes", "kind": "focused_total", "amount": 1000, "rule": "1,000 focused minutes in all."},
-    {"id": "perfect_week", "name": "Perfect week", "kind": "perfect_week", "rule": "A whole week, Monday to Sunday, with every goal met every day."}
+    {"id": "perfect_week", "name": "Perfect week", "kind": "perfect_week", "rule": "A whole week, Monday to Sunday, with no goal missed and every goal met on at least 5 days (a day without data for a goal doesn't count against it)."}
   ]
 }

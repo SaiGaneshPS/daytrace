@@ -787,5 +787,5 @@ def wrapped(
         metrics=overview, top_apps=[AppMinutes(**app) for app in top], lines=written.lines,
         facts_used=[FactOut(**fact.as_dict()) for fact in written.facts], model=written.model, cached=written.cached,
         fallback=written.fallback, reason=written.reason, meta=Meta(**meta),
-        streaks=week_streak_highlights(database, first, last, tz, now),
+        streaks=week_streak_highlights(database, zone, zone_name, now, first, last),
     )

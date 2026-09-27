@@ -542,9 +542,12 @@ counted.
   phone after 11 pm the night before), **Logged it** (a meal logged), **Balanced** (the social cap) and **Synced**
   (every paired phone and computer sent data that day).
 - Each day is `met`, `missed` or `no_data`. No data means what the rule needs (`needs`) sent nothing for that day,
-  such as no computer on a Sunday for Focus flame. Such a day neither extends nor breaks a streak.
-- `today` is `met` as soon as today qualifies. A limit (Screens down, Balanced) qualifies only once its day or night
-  is over. Until then today is `at_risk`, and `remaining` says what is left: the minutes still to go, or the room
+  such as no computer on a Sunday for Focus flame, a phone that sent nothing all day for Logged it, or for Screens down
+  a night the phone didn't show up both that evening (from 18:00) and on the day. Such a day neither extends nor
+  breaks a streak.
+- `today` is `met` as soon as today qualifies. A limit (Screens down, Balanced, the bedtime) qualifies only once what
+  it measures is over: the day, the night (03:00), or the sleep window (12:00, or as soon as the health app sends the
+  night). Until then today is `at_risk`, and `remaining` says what is left: the minutes still to go, or the room
   left under the limit. `current` counts the days up to yesterday while today is at risk. Once today can no longer
   qualify (the limit passed), it is `missed` and `current` is 0.
 - `best` is the longest run in the hub's history, up to a year back (`since` is the first day judged: the first day
@@ -565,7 +568,8 @@ goal is `404`.
 
 - `focus_target` (focused minutes, at least; 10 to 720, default 120), `social_cap` (social minutes, at most; 5 to
   600, default 60) and `bedtime` (asleep by, the night before; 20:00 to 03:00, default 23:30).
-- `progress` is 0 to 100: toward a target, or how much of a limit is used. A bedtime is 100 when met, 0 when missed.
+- `progress` is 0 to 100: toward a target, or how much of a limit is used. A bedtime is 100 when met, 0 when missed,
+  and null while the night can still change. The bedtime is read by the wall clock, DST nights included.
 - The demo profile's seed sets the focus target to 240 minutes, the goal its 5-day focus streak is built around.
 
 `GET /achievements?tz=` (viewer):
@@ -578,11 +582,15 @@ goal is `404`.
 ```
 
 - The badges: first sync, a full set (a Windows PC, a Mac, an Android phone and an iPhone all sent data), 7-day and
-  30-day streaks, 1,000 focused minutes, and a perfect week (Monday to Sunday with every goal met every day).
+  30-day streaks, 1,000 focused minutes, and a perfect week (Monday to Sunday with no goal missed and every goal met
+  on at least 5 days; a day without data for a goal doesn't count against it).
 - A badge, once earned, is kept with the day it was earned and when the hub first saw it (the `achievements`
-  table, migration `0006`): later data never takes it back. Locked badges show their `progress`.
-- Streaks, goals and badges are worked out together and reused for the rest of the minute unless the data or a goal
-  changes. 90 seeded days take about 0.15 s to work out on this PC.
+  table, migration `0006`): later data never takes it back, and its `progress` shows complete. Locked badges show
+  how far along they are. Re-running the seed clears them, since it replaces the history they came from.
+- Streaks, goals and badges are worked out together, once for requests that arrive together, and reused for the
+  rest of the minute unless the data or a goal changes. A day's readings that can't change any more are kept until
+  new data arrives, so a new minute only reads today (and last night until 03:00). 90 seeded days take about
+  0.15 s to work out from nothing on this PC.
 
 ### Privacy
 

@@ -7,6 +7,7 @@ a goal needs the dashboard (a viewer token, or the dashboard on the hub computer
 from __future__ import annotations
 
 import datetime as dt
+from datetime import tzinfo
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Path, Query
@@ -163,8 +164,8 @@ def _goal(rule: GoalRule, track: Track) -> Goal:
     value = rule.show(today.value) if today.value is not None else None
     if today.value is None or track.target is None:
         progress = None
-    elif rule.unit == "time":
-        progress = 100 if today.status == "met" else 0
+    elif rule.unit == "time":  # a bedtime is met or missed; while the night can still change, no progress yet
+        progress = {"met": 100, "missed": 0}.get(today.status)
     else:
         progress = min(100, round(100 * today.value / track.target)) if track.target else 100
     return Goal(id=rule.id, label=rule.label, rule=track.rule, explain=rule.explain, kind=rule.kind, unit=rule.unit,
@@ -217,9 +218,7 @@ def get_achievements(_: Reader, database: Annotated[Database, Depends(get_databa
     return AchievementList(tz=zone_name, unlocked=sum(item.unlocked for item in items), achievements=items)
 
 
-def week_streak_highlights(database: Database, first: dt.date, last: dt.date, tz: str | None, now: dt.datetime) -> list[WeekStreakOut]:
+def week_streak_highlights(database: Database, zone: tzinfo, zone_name: str, now: dt.datetime, first: dt.date, last: dt.date) -> list[WeekStreakOut]:
     """Wrapped's streaks: each streak's days met in the week."""
-    zone, zone_name = resolve_tz(tz)
-    found = evaluation(database, zone, zone_name, now)
     return [WeekStreakOut(id=item.id, name=item.name, rule=item.rule, met=item.met, days_with_data=item.days_with_data,
-                          longest=item.longest, dates=item.dates) for item in week_streaks(found, first, last)]
+                          longest=item.longest, dates=item.dates) for item in week_streaks(database, zone, zone_name, now, first, last)]

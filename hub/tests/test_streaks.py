@@ -8,6 +8,8 @@ rules they drive; badges are earned once and kept; every streak and badge says i
 from __future__ import annotations
 
 import json
+import sqlite3
+import threading
 import time as clock
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, time, timedelta
@@ -159,7 +161,10 @@ def test_just_after_midnight(demo: Settings) -> None:
     flame = track(evaluation, "focus_flame")
     assert flame.today.status == "no_data" and len(flame.current) == 3  # no computer yet today: the run stands
     down = track(evaluation, "screens_down")
-    assert down.today.status == "at_risk" and down.today.remaining == 15  # tonight's late hours are still going
+    assert down.today.status == "no_data" and len(down.current) == 3  # the phone hasn't said anything about tonight yet
+    add(demo, "seed-android", "app_session", datetime(2026, 9, 26, 0, 1, tzinfo=TZ), 3, "Instagram", "social")
+    down = track(found(demo, datetime(2026, 9, 26, 0, 5, tzinfo=TZ)), "screens_down")
+    assert down.today.status == "at_risk" and down.today.remaining == 12  # on the phone after midnight: 12 of 15 left
     balanced = track(evaluation, "balanced")
     assert statuses(balanced)[date(2026, 9, 25)] == "met"  # yesterday ended under the cap: now it counts
 
@@ -322,13 +327,202 @@ def test_a_perfect_week(empty: Settings) -> None:
     assert badges["full_set"].earned is None and badges["full_set"].progress.value == 2  # no Mac, no iPhone
 
 
-def test_the_streaks_answer_quickly_and_are_reused(hub: TestClient) -> None:
+def test_the_streaks_answer_quickly_and_are_reused(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     started = clock.perf_counter()
     hub.get("/api/v1/streaks", params={"tz": TZ_NAME})
     first = clock.perf_counter() - started
-    started = clock.perf_counter()
+    assert first < 3.0, f"{first:.2f} s"  # well under a second on a desktop; a slow CI runner gets room
+    calls = []
+    real = streaks.evaluate
+    monkeypatch.setattr(streaks, "evaluate", lambda *args, **kwargs: calls.append(1) or real(*args, **kwargs))
     for path in ("/api/v1/goals", "/api/v1/achievements", "/api/v1/streaks"):
         assert hub.get(path, params={"tz": TZ_NAME}).status_code == 200
-    reused = clock.perf_counter() - started
-    assert first < 3.0, f"{first:.2f} s"  # well under a second on a desktop; a slow CI runner gets room
-    assert reused < first + 0.5  # the three reuse one evaluation
+    assert calls == []  # all three reuse the first evaluation
+
+
+# --- the bug review's cases --------------------------------------------------------------------------------------
+
+
+def add_windows(settings: Settings) -> None:
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO devices (device_id, name, device_type, paired_at) VALUES ('windows-1', 'PC', 'windows', ?)",
+                     (utc(datetime(2026, 1, 1, tzinfo=UTC)),))
+
+
+def goal(evaluation: streaks.Evaluation, goal_id: str) -> streaks.Track:
+    return evaluation.goals[goal_id]
+
+
+def test_a_bedtime_estimate_is_not_met_while_the_night_can_change(empty: Settings) -> None:
+    evening = datetime(2026, 9, 22, 21, 0, tzinfo=TZ)
+    for start, minutes in ((evening, 20), (evening + timedelta(minutes=50), 120), (evening + timedelta(hours=3, minutes=10), 45)):
+        add(empty, "android-1", "app_session", start, minutes, "Instagram", "social")  # on the phone until 00:55
+    one_am = goal(found(empty, datetime(2026, 9, 23, 1, 0, tzinfo=TZ)), "bedtime").today
+    assert one_am.status == "at_risk"  # the 21:20 quiet stretch is the longest so far, but the night isn't over
+    add(empty, "android-1", "app_session", datetime(2026, 9, 23, 8, 0, tzinfo=TZ), 10, "Maps", "other")
+    noon = goal(found(empty, datetime(2026, 9, 23, 12, 30, tzinfo=TZ)), "bedtime").today
+    assert (noon.status, streaks.clock_text(noon.value)) == ("missed", "00:55")  # asleep after the last use
+
+
+def test_a_bedtime_is_read_by_the_wall_clock_on_a_dst_night(empty: Settings) -> None:
+    """Toronto falls back at 02:00 on 1 November 2026: sleep from 01:30 EST is 01:30, not an hour later."""
+    start = datetime(2026, 11, 1, 1, 30, tzinfo=TZ, fold=1)  # the second 01:30, after the clocks went back
+    add(empty, "android-1", "app_session", datetime(2026, 10, 31, 20, 0, tzinfo=TZ), 30, "Maps", "other")
+    add(empty, "android-1", "sleep", start, 420, data={"stage": "asleep", "measured": True})
+    with Database(empty.database_path).connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO goals (goal_id, target, updated_at) VALUES ('bedtime', ?, ?)", (json.dumps("02:00"), utc(NOW)))
+    bedtime = goal(found(empty, datetime(2026, 11, 1, 9, 0, tzinfo=TZ)), "bedtime").today
+    assert streaks.clock_text(bedtime.value) == "01:30" and bedtime.status == "met"  # health data: final at once
+
+
+def test_a_day_the_phone_sent_nothing_is_no_data_for_logged_it(empty: Settings) -> None:
+    for day in (21, 23):  # the phone's battery died on the 22nd
+        add(empty, "android-1", "app_session", datetime(2026, 9, day, 12, 0, tzinfo=TZ), 20, "Maps", "other")
+        add(empty, "android-1", "meal", datetime(2026, 9, day, 13, 0, tzinfo=TZ), data={"items": ["rice"]})
+    logged = track(found(empty, datetime(2026, 9, 23, 18, 0, tzinfo=TZ)), "logged_it")
+    assert statuses(logged)[date(2026, 9, 22)] == "no_data"
+    assert logged.current == [date(2026, 9, 21), date(2026, 9, 23)]  # not broken by a day nobody saw
+
+
+def test_screens_down_needs_the_phone_that_evening_and_on_the_day(empty: Settings) -> None:
+    add(empty, "android-1", "app_session", datetime(2026, 9, 21, 10, 0, tzinfo=TZ), 20, "Maps", "other")  # silent after
+    add(empty, "android-1", "app_session", datetime(2026, 9, 22, 10, 0, tzinfo=TZ), 20, "Maps", "other")
+    add(empty, "android-1", "app_session", datetime(2026, 9, 22, 20, 0, tzinfo=TZ), 20, "Maps", "other")  # used that evening
+    add(empty, "android-1", "app_session", datetime(2026, 9, 23, 9, 0, tzinfo=TZ), 20, "Maps", "other")
+    days = statuses(track(found(empty, datetime(2026, 9, 23, 18, 0, tzinfo=TZ)), "screens_down"))
+    assert days[date(2026, 9, 22)] == "no_data"  # nothing from the phone since 10:00 the day before
+    assert days[date(2026, 9, 23)] == "met"  # used at 20:00 and again in the morning, nothing in between: a real 0
+
+
+def test_a_busy_database_keeps_the_stored_badges(hub: TestClient, demo: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = {item["id"]: item for item in hub.get("/api/v1/achievements", params={"tz": TZ_NAME}).json()["achievements"]}
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        conn.execute("DELETE FROM achievements WHERE achievement_id = 'focus_1000'")  # earned, but not recorded yet
+        conn.execute("DELETE FROM events WHERE kind = 'meal'")  # the data behind the logged-meals run is gone
+    calls = []
+
+    def busy(conn: Any) -> Any:
+        calls.append(conn)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(streaks, "transaction", busy)
+    again = {item["id"]: item for item in hub.get("/api/v1/achievements", params={"tz": TZ_NAME}).json()["achievements"]}
+    assert len(calls) == 1  # only to record the one not stored, which fails
+    assert again["streak_7"] == first["streak_7"]  # the stored ones as they were
+    assert again["focus_1000"]["unlocked"] and again["focus_1000"]["earned_on"] == "2026-09-15"  # shown, recorded later
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        conn.execute("DELETE FROM events")  # nothing left to earn any badge from
+    kept = {item["id"]: item for item in hub.get("/api/v1/achievements", params={"tz": TZ_NAME}).json()["achievements"]}
+    assert kept["streak_7"] == first["streak_7"] and kept["full_set"] == first["full_set"]  # only the stored rows say so
+
+
+def test_reading_badges_takes_no_write_lock_once_they_are_stored(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    hub.get("/api/v1/achievements", params={"tz": TZ_NAME})
+
+    def refused(conn: Any) -> Any:
+        raise AssertionError("no write needed")
+
+    monkeypatch.setattr(streaks, "transaction", refused)
+    assert hub.get("/api/v1/achievements", params={"tz": TZ_NAME}).json()["unlocked"] == 4
+
+
+def test_re_seeding_clears_the_badges_it_replaced(hub: TestClient, demo: Settings) -> None:
+    hub.get("/api/v1/achievements", params={"tz": TZ_NAME})
+    seed(demo, 14, TZ, NOW + timedelta(days=30))
+    with Database(demo.database_path).connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM achievements").fetchone()[0] == 0
+
+
+def test_a_perfect_week_with_the_laptop_off_on_sunday(empty: Settings) -> None:
+    add_windows(empty)
+    for offset in range(8):
+        day = date(2026, 9, 14) + timedelta(days=offset)
+        if day.weekday() != 6:
+            add(empty, "windows-1", "window", datetime.combine(day, time(9), tzinfo=TZ), 150, "Code", "work")
+        add(empty, "android-1", "app_session", datetime.combine(day, time(13), tzinfo=TZ), 10, "Instagram", "social")
+        add(empty, "android-1", "sleep", datetime.combine(day - timedelta(days=1), time(22, 45), tzinfo=TZ), 480,
+            data={"stage": "asleep", "measured": True})
+    evaluation = found(empty, datetime(2026, 9, 21, 21, 0, tzinfo=TZ))
+    assert goal(evaluation, "focus_target").days[6].status == "no_data"  # Sunday: no computer
+    badge = next(item for item in streaks.achievements(Database(empty.database_path), evaluation, NOW) if item.rule.id == "perfect_week")
+    assert badge.earned is not None and badge.earned.earned_on == date(2026, 9, 20)
+
+
+def test_wrapped_streaks_for_a_week_older_than_the_history(empty: Settings) -> None:
+    add(empty, "android-1", "app_session", datetime(2025, 3, 5, 12, 0, tzinfo=TZ), 20, "Maps", "other")
+    add(empty, "android-1", "meal", datetime(2025, 3, 5, 13, 0, tzinfo=TZ), data={"items": ["soup"]})
+    add(empty, "android-1", "app_session", datetime(2026, 9, 20, 12, 0, tzinfo=TZ), 20, "Maps", "other")
+    moment = datetime(2026, 9, 25, 21, 0, tzinfo=TZ)
+    assert found(empty, moment).first == date(2025, 9, 25)  # 366 days, today included
+    week = {item.id: item for item in streaks.week_streaks(Database(empty.database_path), TZ, TZ_NAME, moment, date(2025, 3, 3), date(2025, 3, 9))}
+    assert (week["logged_it"].met, week["logged_it"].dates) == (1, [date(2025, 3, 5)])
+    assert week["logged_it"].days_with_data == 1  # the phone sent data that day only
+
+
+def test_rules_with_a_typo_are_refused() -> None:
+    raw = json.loads(streaks.resources.files("daytrace_hub").joinpath("data", "streak_rules.json").read_text(encoding="utf-8"))
+
+    def broken(change: Any) -> str:
+        copy = json.loads(json.dumps(raw))
+        change(copy)
+        with pytest.raises(ValueError, match="streak_rules.json") as error:
+            streaks.parse_rules(copy)
+        return str(error.value)
+
+    assert "unknown kind" in broken(lambda r: r["streaks"][1].update(kind="at_mots"))
+    assert "no target" in broken(lambda r: r["streaks"][1].pop("target"))
+    assert "unknown goal" in broken(lambda r: r["streaks"][0].update(goal="focus_tagret"))
+    assert "twice" in broken(lambda r: r["streaks"].append(dict(r["streaks"][0])))
+    assert "unknown measure" in broken(lambda r: r["goals"][0].update(measure="focus"))
+    assert "unknown kind" in broken(lambda r: r["achievements"][0].update(kind="first"))
+
+
+def test_a_new_minute_reads_only_the_days_that_can_still_change(demo: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    read: list[date] = []
+    for name, measure in list(streaks.MEASURES.items()):
+        monkeypatch.setitem(streaks.MEASURES, name, lambda stats, day, measure=measure: read.append(day) or measure(stats, day))
+    found(demo)
+    assert len(set(read)) == 14
+    read.clear()
+    found(demo, NOW + timedelta(minutes=1))  # no new data: the past days' readings are final and kept
+    assert set(read) == {NOW.date()}
+    read.clear()
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        conn.execute("UPDATE goals SET target = '300' WHERE goal_id = 'focus_target'")
+    assert track(found(demo, NOW + timedelta(minutes=1)), "focus_flame").rule.startswith("300")
+    assert set(read) <= {NOW.date()}  # a new target judges again without reading again
+
+
+def test_a_long_history_is_read_a_month_at_a_time(empty: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    for offset in range(0, 70, 7):
+        add(empty, "android-1", "app_session", datetime(2026, 7, 1, 12, 0, tzinfo=TZ) + timedelta(days=offset), 20, "Maps", "other")
+    made = []
+
+    class Counted(streaks.Stats):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            made.append(self)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(streaks, "Stats", Counted)
+    evaluation = found(empty, datetime(2026, 9, 10, 12, 0, tzinfo=TZ))
+    assert len(evaluation.streaks[0].days) == 72 and len(made) == 3  # 31 + 31 + 10 days, each with its own Stats
+
+
+def test_requests_together_share_one_evaluation(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    real = streaks.evaluate
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        clock.sleep(0.2)  # slow enough that the others arrive while it works
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(streaks, "evaluate", counted)
+    codes: list[int] = []
+    threads = [threading.Thread(target=lambda path=path: codes.append(hub.get(path, params={"tz": TZ_NAME}).status_code))
+               for path in ("/api/v1/streaks", "/api/v1/goals", "/api/v1/achievements")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert codes == [200, 200, 200] and len(calls) == 1
