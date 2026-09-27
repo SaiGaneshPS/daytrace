@@ -67,6 +67,7 @@ const INSIGHTS = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", 
 const FOOD_CALENDAR = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-food-calendar.json"), "utf-8")) as Record<string, Record<string, object>>;
 const FOCUS_SLEEP = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-focus-sleep.json"), "utf-8")) as Record<string, Record<string, object>>;
 const APPS_DEVICES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-apps-devices.json"), "utf-8")) as Record<string, Record<string, object>>;
+const STREAKS_WRAPPED = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "streaks-wrapped.json"), "utf-8")) as Record<string, object>;
 
 async function mockHub(page: Page, local: boolean) {
   await page.clock.setFixedTime(new Date("2026-09-25T14:00:00-04:00"));
@@ -86,6 +87,9 @@ async function mockHub(page: Page, local: boolean) {
     });
   }
   await page.route("**/api/v1/insights/apps/detail?**", (route) => route.fulfill({ json: APPS_DEVICES.detail["7d"] }));
+  for (const name of ["streaks", "goals", "achievements", "wrapped"]) {
+    await page.route(`**/api/v1/${name}?**`, (route) => route.fulfill({ json: STREAKS_WRAPPED[name] }));
+  }
   await page.route("**/api/v1/ai/status", (route) => route.fulfill({ json: { base_url: "http://127.0.0.1:1234/v1", model: ANSWER.model, reachable: true, tool_calling: true, models: [ANSWER.model], error: null } }));
   await page.route("**/api/v1/story?**", (route) => route.fulfill({ json: STORY }));
   await page.route("**/api/v1/ask", (route) => route.fulfill({ json: ANSWER }));
@@ -253,6 +257,22 @@ test("one app's detail fits every screen and text size", async ({ page }) => {
   await mockHub(page, true);
   await page.goto("/insights?tab=apps&range=7d&app=Visual%20Studio%20Code");
   await sweep(page, () => expect(page.getByRole("dialog").getByRole("region", { name: "When in the day" }).locator(".chart canvas").first()).toBeVisible());
+});
+
+test("Streaks, with a streak and a goal open, fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/streaks");
+  await page.locator(".streak-head").first().click();
+  await page.getByRole("region", { name: "Bedtime" }).getByRole("button", { name: "Change the limit" }).click();
+  await sweep(page, () => expect(page.locator(".streak-detail")).toBeVisible());
+});
+
+test("Wrapped fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/wrapped");
+  await sweep(page, () => expect(page.getByRole("button", { name: "Save as image" })).toBeEnabled());
 });
 
 test("the style guide fits every screen and text size", async ({ page }) => {

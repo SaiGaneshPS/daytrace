@@ -51,6 +51,7 @@ class Streak(BaseModel):
     name: str
     rule: str = Field(description="The rule in words, with the current target.")
     needs: str = Field(description="What must send data for a day to count; without it the day is no_data.")
+    kind: Literal["at_least", "at_most"] = Field(description="at_least: a target to reach (remaining is still to go); at_most: a limit (remaining is the room left).")
     unit: str
     target: float | None = Field(description="The target on the rule's scale; null when it changes by day (Synced).")
     current: int = Field(description="Met days in a row, up to today (up to yesterday while today is at_risk).")
@@ -165,7 +166,7 @@ def _streak(track: Track, history: int) -> Streak:
     behind = {*track.current, *track.best}  # the days behind current and best, listed or not
     estimated = any(day.estimated for day in listed) or any(day.estimated for day in track.days if day.day in behind)
     return Streak(
-        id=track.id, name=track.name, rule=track.rule, needs=track.needs, unit=track.unit, target=track.target,
+        id=track.id, name=track.name, rule=track.rule, needs=track.needs, kind=track.kind, unit=track.unit, target=track.target,
         current=len(track.current), best=len(track.best), today=today.status, value=today.value,
         remaining=Amount(value=today.remaining, unit=track.unit) if today.remaining is not None else None,
         counted=track.current, best_dates=track.best,

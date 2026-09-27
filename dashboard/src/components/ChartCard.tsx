@@ -25,6 +25,16 @@ type Props = {
 };
 
 const ESTIMATED = "Some of this is estimated, for example an app whose closing time was never recorded.";
+
+/** Said wherever a number was partly inferred (the hub's `estimated`). */
+export function EstimatedBadge() {
+  return (
+    <span className="badge badge-estimated" title={ESTIMATED}>
+      Estimated
+      <span className="visually-hidden">: {ESTIMATED}</span>
+    </span>
+  );
+}
 const SOURCES = { real: "From your devices", seed: "From demo data", mixed: "From your devices and demo data" } as const;
 
 function InfoButton({ title, info }: { title: string; info: ReactNode }) {
@@ -91,12 +101,7 @@ export default function ChartCard({ title, range, unit, info, estimated, source,
           {source && <p className={`chart-card-source${source === "real" ? "" : " source-demo"}`}>{SOURCES[source]}</p>}
         </div>
         <div className="chart-card-tools">
-          {estimated && (
-            <span className="badge badge-estimated" title={ESTIMATED}>
-              Estimated
-              <span className="visually-hidden">: {ESTIMATED}</span>
-            </span>
-          )}
+          {estimated && <EstimatedBadge />}
           {info && <InfoButton title={title} info={info} />}
           {actions}
         </div>

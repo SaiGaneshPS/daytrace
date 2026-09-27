@@ -10,6 +10,9 @@ const env = (globalThis as unknown as { process?: { env: Record<string, string |
 const hub = env.DAYTRACE_HUB ?? "http://localhost:8765";
 const fromThisComputer = (address: string | undefined) =>
   address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+// The hub's Content-Security-Policy (hub/daytrace_hub/app.py DASHBOARD_CSP; a hub test keeps them the same). `vite
+// preview`, which the e2e tests run against, sends it too, so they catch anything the hub's pages would refuse.
+const HUB_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
 export default defineConfig({
   plugins: [
@@ -48,6 +51,7 @@ export default defineConfig({
   ],
   // ECharts alone is about 600 kB; it is split out and loaded only by pages with charts.
   build: { chunkSizeWarningLimit: 700 },
+  preview: { headers: { "Content-Security-Policy": HUB_CSP } },
   server: {
     host: "localhost",
     proxy: {

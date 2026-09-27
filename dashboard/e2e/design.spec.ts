@@ -11,6 +11,7 @@ const PAGES = [
   { label: "Story", path: "/story", title: "Story - Daytrace" },
   { label: "Ask", path: "/ask", title: "Ask - Daytrace" },
   { label: "Insights", path: "/insights", title: "Insights - Daytrace" },
+  { label: "Streaks", path: "/streaks", title: "Streaks - Daytrace" },
   { label: "Wrapped", path: "/wrapped", title: "Wrapped - Daytrace" },
   { label: "Devices", path: "/devices", title: "Devices - Daytrace" },
   { label: "Privacy", path: "/privacy", title: "Privacy - Daytrace" },
@@ -85,7 +86,7 @@ test("phone: the bottom nav leads to every page, the rest through More", async (
   await nav.getByRole("button", { name: "More" }).tap();
   const sheet = page.getByRole("dialog", { name: "More pages" });
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByRole("link", { name: "Wrapped" })).toBeFocused();
+  await expect(sheet.getByRole("link", { name: "Streaks" })).toBeFocused();
   await sheet.getByRole("link", { name: "Devices" }).tap();
   await expect(page).toHaveURL("/devices");
   await expect(sheet).toBeHidden();
@@ -98,9 +99,9 @@ test("phone: the More sheet keeps focus and makes the page behind inert", async 
   const more = page.locator(".bottom-nav").getByRole("button", { name: "More" });
   await more.tap();
   const sheet = page.getByRole("dialog", { name: "More pages" });
-  await expect(sheet.getByRole("link", { name: "Wrapped" })).toBeFocused();
+  await expect(sheet.getByRole("link", { name: "Streaks" })).toBeFocused();
   await expect(page.locator(".main-column")).toHaveAttribute("inert", "");
-  for (const name of ["Devices", "Privacy", "Wrapped"]) {
+  for (const name of ["Wrapped", "Devices", "Privacy", "Streaks"]) {
     await page.keyboard.press("Tab"); // round and round inside the sheet
     await expect(sheet.getByRole("link", { name })).toBeFocused();
   }

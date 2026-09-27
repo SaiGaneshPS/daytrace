@@ -22,6 +22,7 @@ from conftest import FakeModelServer
 from fastapi.testclient import TestClient
 
 from daytrace_hub.api import insights as insights_api
+from daytrace_hub.api import streaks as streaks_api
 from daytrace_hub.api import timeline as timeline_api
 from daytrace_hub.api.insights import RangeInfo
 from daytrace_hub.app import create_app
@@ -60,6 +61,7 @@ def demo(tmp_path: Path) -> Settings:
 def hub(demo: Settings, fake_llm: FakeModelServer, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setattr(insights_api, "current_time", lambda: NOW.astimezone(UTC))
     monkeypatch.setattr(timeline_api, "current_time", lambda: NOW.astimezone(UTC))
+    monkeypatch.setattr(streaks_api, "current_time", lambda: NOW.astimezone(UTC))
     insights_api._cache.clear()
     with TestClient(create_app(demo, llm=fake_llm.llm()), client=LOCAL, base_url="http://localhost:8767") as client:
         yield client
@@ -586,7 +588,8 @@ DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" /
 
 def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
     """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34), the Apps and Devices tab with
-    one app's detail (DT-55), the Focus and Sleep tab (DT-56) and the Food and Calendar tab (DT-57), for 14 seeded days."""
+    one app's detail (DT-55), the Focus and Sleep tab (DT-56), the Food and Calendar tab (DT-57), and the streaks,
+    goals, badges and Wrapped (DT-54), for 14 seeded days."""
     def fresh(body: dict[str, Any]) -> dict[str, Any]:
         return {**body, "cached": False}
 
@@ -607,12 +610,27 @@ def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
             "food": {span: fresh(tab(client, "food", span)) for span in ("14d", "7d")},
             "calendar": {span: fresh(tab(client, "calendar", span)) for span in ("14d", "7d")},
         },
+        "streaks-wrapped.json": {
+            "streaks": client.get("/api/v1/streaks", params={"tz": TZ_NAME, "days": 30}).json(),
+            "goals": client.get("/api/v1/goals", params={"tz": TZ_NAME}).json(),
+            "achievements": client.get("/api/v1/achievements", params={"tz": TZ_NAME}).json(),
+            "wrapped": fresh(client.get("/api/v1/wrapped", params={"tz": TZ_NAME}).json()),
+        },
     }
 
 
-def test_the_dashboards_fixtures_are_the_hubs_answers(hub: TestClient) -> None:
+# Wrapped's three lines as a local model would write them for the seeded week (the hub checks every number).
+SEEDED_WEEK_LINES = (
+    "65 hours 30 minutes on screens this week, about 9 hours 21 minutes a day.",
+    "Visual Studio Code led the way at 24 hours 21 minutes.",
+    "You focused for 35 hours 59 minutes, best on Friday with a score of 75.",
+)
+
+
+def test_the_dashboards_fixtures_are_the_hubs_answers(hub: TestClient, fake_llm: FakeModelServer) -> None:
     """The dashboard's e2e tests mock the hub with these files, so they must be what the hub answers now. After
     changing a tab, write them again with DAYTRACE_WRITE_FIXTURES=1."""
+    fake_llm.reply_text("\n".join(SEEDED_WEEK_LINES))
     for name, answers in fixture_answers(hub).items():
         path = DASHBOARD_FIXTURES / name
         if os.environ.get("DAYTRACE_WRITE_FIXTURES") == "1":

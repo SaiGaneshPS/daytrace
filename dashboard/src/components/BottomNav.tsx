@@ -7,7 +7,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router";
 import { EASE, useMediaQuery } from "../theme/motion";
 
-export type IconName = "today" | "story" | "ask" | "insights" | "wrapped" | "devices" | "privacy" | "more";
+export type IconName = "today" | "story" | "ask" | "insights" | "streaks" | "wrapped" | "devices" | "privacy" | "more";
 export type NavItem = { path: string; label: string; icon: IconName };
 
 const PATHS: Record<IconName, ReactNode> = {
@@ -25,6 +25,7 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   ask: <path d="M20.5 12a8.5 8.5 0 0 1-12.4 7.6L3.5 20.5l1-4.4A8.5 8.5 0 1 1 20.5 12zM8.5 12h.01M12 12h.01M15.5 12h.01" />,
   insights: <path d="M4 20h16M6.5 16.5v-5M11.5 16.5V5.5M16.5 16.5v-8" />,
+  streaks: <path d="M12 3c1 3.6 6 6.2 6 11.2a6 6 0 0 1-12 0c0-2.6 1.3-4.4 2.6-5.6.2 2 1 3.1 2 3.6-.5-3.4.2-6.4 1.4-9.2z" />,
   wrapped: (
     <>
       <path d="M11 3.5l1.8 4.9 4.9 1.8-4.9 1.8L11 16.9l-1.8-4.9-4.9-1.8 4.9-1.8z" />

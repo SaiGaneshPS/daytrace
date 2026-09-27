@@ -61,7 +61,7 @@ export function useToday(): string {
   return today;
 }
 
-function Chevron({ direction }: { direction: "left" | "right" }) {
+export function Chevron({ direction }: { direction: "left" | "right" }) {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
       <path d={direction === "left" ? "M15 5l-7 7 7 7" : "M9 5l7 7-7 7"} />

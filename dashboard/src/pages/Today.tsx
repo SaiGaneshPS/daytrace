@@ -8,13 +8,17 @@
 // apps, sleep, steps). Nothing is added up or estimated here. A refresh never cuts off a request still on its way,
 // and a failed load says so where its numbers would be.
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useApi, usePolling } from "../api/client";
+import { Link } from "react-router";
+import { useApi, useDaily, usePolling } from "../api/client";
 import type { components } from "../api/schema";
 import ChartCard from "../components/ChartCard";
 import DayPicker, { longDay, useToday } from "../components/DayPicker";
 import StatCard, { formatMinutes, spokenMinutes } from "../components/StatCard";
 import Tabs from "../components/Tabs";
+import StreakFlame from "../components/StreakFlame";
+import { dayCount, flameState, todayWords } from "../components/streakText";
 import Timeline from "../components/Timeline";
+
 import { type ChartOption, categoryStyle, useEChart } from "../theme/charts";
 import { deviceColors } from "../theme/devices";
 
@@ -152,6 +156,37 @@ function Health({ summary }: { summary: Summary }) {
   );
 }
 
+/** DT-54: the streaks at a glance, each flame with its days and what today needs; the Streaks page has the rest. */
+function StreakStrip({ tz, today }: { tz: string; today: string }) {
+  const streaks = useApi("/api/v1/streaks", { query: { tz, days: 1 }, quiet: true });
+  useDaily(streaks.reload, today);
+  const list = streaks.data?.streaks ?? [];
+  if (!list.length) return null; // not loaded, or the hub can't say yet: Today stays as it was
+  return (
+    <section className="card streak-strip" aria-labelledby="streak-strip-title">
+      <div className="streak-strip-head">
+        <h2 id="streak-strip-title" className="chart-card-title">
+          Streaks
+        </h2>
+        <Link to="/streaks" className="link">
+          All streaks and goals
+        </Link>
+      </div>
+      <ul>
+        {list.map((streak) => (
+          <li key={streak.id} className={`streak-chip streak-${flameState(streak)}`}>
+            <StreakFlame days={streak.current} state={flameState(streak)} />
+            <span>
+              <strong>{streak.name}</strong> {dayCount(streak.current)}
+              <span className="muted">{todayWords(streak)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function Today() {
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const today = useToday();
@@ -235,6 +270,8 @@ export default function Today() {
           hint={numbers?.switches_per_hour !== null && numbers?.switches_per_hour !== undefined ? `${numbers.switches_per_hour} app switches per hour` : undefined}
         />
       </div>
+
+      {live && <StreakStrip tz={tz} today={today} />}
 
       <Tabs
         label="Today views"

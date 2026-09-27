@@ -175,3 +175,9 @@ def test_the_dashboard_folder_setting(tmp_path: Path) -> None:
     assert load_settings(env={"DAYTRACE_DASHBOARD_DIR": "~/dist"}).dashboard_dir == Path("~/dist").expanduser()
     with pytest.raises(ValueError, match="DAYTRACE_DASHBOARD_DIR must be an absolute path"):
         load_settings(env={"DAYTRACE_DASHBOARD_DIR": "dist"})
+
+
+def test_the_dashboards_preview_sends_the_hubs_csp() -> None:
+    # The dashboard's e2e tests run against `vite preview`: with the hub's policy, they fail on anything it refuses.
+    config = (Path(__file__).resolve().parents[2] / "dashboard" / "vite.config.ts").read_text(encoding="utf-8")
+    assert f'const HUB_CSP = "{DASHBOARD_CSP}";' in config

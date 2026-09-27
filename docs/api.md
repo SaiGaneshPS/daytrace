@@ -578,7 +578,7 @@ counted.
 ```json
 { "tz": "America/Toronto", "date": "2026-09-25", "since": "2026-09-12",
   "streaks": [ { "id": "focus_flame", "name": "Focus flame", "rule": "240 or more focused minutes in a day",
-    "needs": "a computer's data for the day", "unit": "minutes", "target": 240.0,
+    "needs": "a computer's data for the day", "kind": "at_least", "unit": "minutes", "target": 240.0,
     "current": 3, "best": 5, "today": "met", "value": 384.6, "remaining": null,
     "counted": ["2026-09-23", "2026-09-24", "2026-09-25"],
     "best_dates": ["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21"],
@@ -598,8 +598,8 @@ counted.
   breaks a streak.
 - `today` is `met` as soon as today qualifies. A limit (Screens down, Balanced, the bedtime) qualifies only once what
   it measures is over: the day, the night (03:00), or the sleep window (12:00, or as soon as the health app sends the
-  night). Until then today is `at_risk`, and `remaining` says what is left: the minutes still to go, or the room
-  left under the limit. `current` counts the days up to yesterday while today is at risk. Once today can no longer
+  night). Until then today is `at_risk`, and `remaining` says what is left: the minutes still to go (`kind`
+  `at_least`: a target to reach), or the room left under the limit (`kind` `at_most`). `current` counts the days up to yesterday while today is at risk. Once today can no longer
   qualify (the limit passed), it is `missed` and `current` is 0.
 - `best` is the longest run in the hub's history, up to a year back (`since` is the first day judged: the first day
   with screen data). `days` lists the last `days` days (1 to 366), oldest first.
