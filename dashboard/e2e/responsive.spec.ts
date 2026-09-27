@@ -64,6 +64,7 @@ const DEVICE = (device_id: string, name: string, device_type: string, has_token 
 const LAN = "http://192.168.100.200:8765";
 // The hub's own Overview answers for 14 seeded days (made by the hub's code: e2e/fixtures).
 const INSIGHTS = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-overview.json"), "utf-8")) as Record<string, object>;
+const APPS_DEVICES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-apps-devices.json"), "utf-8")) as Record<string, Record<string, object>>;
 
 async function mockHub(page: Page, local: boolean) {
   await page.clock.setFixedTime(new Date("2026-09-25T14:00:00-04:00"));
@@ -75,6 +76,13 @@ async function mockHub(page: Page, local: boolean) {
     const range = new URL(route.request().url()).searchParams.get("range") ?? "";
     return route.fulfill({ json: INSIGHTS[range] ?? INSIGHTS["7d"] });
   });
+  for (const tab of ["apps", "devices"]) {
+    await page.route(`**/api/v1/insights/${tab}?**`, (route) => {
+      const range = new URL(route.request().url()).searchParams.get("range") ?? "";
+      return route.fulfill({ json: APPS_DEVICES[tab][range] ?? APPS_DEVICES[tab]["7d"] });
+    });
+  }
+  await page.route("**/api/v1/insights/apps/detail?**", (route) => route.fulfill({ json: APPS_DEVICES.detail["7d"] }));
   await page.route("**/api/v1/ai/status", (route) => route.fulfill({ json: { base_url: "http://127.0.0.1:1234/v1", model: ANSWER.model, reachable: true, tool_calling: true, models: [ANSWER.model], error: null } }));
   await page.route("**/api/v1/story?**", (route) => route.fulfill({ json: STORY }));
   await page.route("**/api/v1/ask", (route) => route.fulfill({ json: ANSWER }));
@@ -214,6 +222,20 @@ test("Insights, with a custom range open, fits every screen and text size", asyn
   await page.goto("/insights?range=7d");
   await page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "Custom" }).click();
   await sweep(page, () => expect(page.getByRole("region", { name: "When screens were on" }).locator(".chart canvas").first()).toBeVisible());
+});
+
+test("Insights, Apps and Devices, fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/insights?tab=apps&range=7d");
+  await sweep(page, () => expect(page.getByRole("region", { name: "Switching between devices" }).locator(".chart canvas").first()).toBeVisible());
+});
+
+test("one app's detail fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/insights?tab=apps&range=7d&app=Visual%20Studio%20Code");
+  await sweep(page, () => expect(page.getByRole("dialog").getByRole("region", { name: "When in the day" }).locator(".chart canvas").first()).toBeVisible());
 });
 
 test("the style guide fits every screen and text size", async ({ page }) => {

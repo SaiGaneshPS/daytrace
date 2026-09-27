@@ -100,8 +100,8 @@ def test_every_tab_answers_with_its_metrics_and_series(hub: TestClient) -> None:
     kinds = {
         "overview": {"screen_by_device": "stacked", "categories": "donut", "focus_by_day": "trend", "hours": "heatmap",
                      "phone_vs_computer": "stacked"},
-        "apps": {"top_apps": "bars", "treemap": "treemap", "by_category": "stacked", "switches": "trend"},
-        "devices": {"share": "donut", "by_day": "stacked", "hours": "heatmap", "flow": "sankey"},
+        "apps": {"top_apps": "bars", "treemap": "treemap", "by_category": "stacked", "switches": "trend", "leaderboard": "leaderboard"},
+        "devices": {"share": "donut", "by_day": "stacked", "hours": "heatmap", "flow": "sankey", "handoffs": "sankey", "sync": "strip"},
         "focus": {"score": "gauge", "focus_by_day": "stacked", "switches_by_hour": "bars", "late_vs_focus": "scatter"},
         "sleep": {"sleep_by_night": "stacked", "schedule": "trend", "late_night": "bars"},
         "food": {"meals_by_day": "stacked", "meal_times": "scatter", "top_items": "bars"},
@@ -574,20 +574,41 @@ def test_changes_compare_whole_days_with_the_days_before(hub: TestClient, stats_
     assert tab(hub, "apps")["changes"] == []  # only the overview compares
 
 
-DASHBOARD_FIXTURE = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" / "fixtures" / "insights-overview.json"
+def detail(client: TestClient, app: str, span: str = "7d") -> dict[str, Any]:
+    response = client.get("/api/v1/insights/apps/detail", params={"app": app, "range": span, "tz": TZ_NAME})
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
-def test_the_dashboards_overview_fixture_is_the_hubs_answer(hub: TestClient) -> None:
-    """The dashboard's e2e tests (DT-34) mock the hub with this file, so it must be what the hub answers now. After
-    changing the overview, write it again with DAYTRACE_WRITE_FIXTURES=1."""
-    answers = {}
-    for span in ("14d", "7d", "today"):
-        body = tab(hub, "overview", span)
-        body["cached"] = False
-        answers[span] = body
-    if os.environ.get("DAYTRACE_WRITE_FIXTURES") == "1":
-        DASHBOARD_FIXTURE.write_text(json.dumps(answers, indent=1) + "\n", encoding="utf-8", newline="\n")
-    assert json.loads(DASHBOARD_FIXTURE.read_text(encoding="utf-8")) == answers, "stale: run with DAYTRACE_WRITE_FIXTURES=1"
+DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" / "fixtures"
+
+
+def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
+    """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34) and the Apps and Devices tab
+    with one app's detail (DT-55), for 14 seeded days."""
+    def fresh(body: dict[str, Any]) -> dict[str, Any]:
+        return {**body, "cached": False}
+
+    apps = {span: fresh(tab(client, "apps", span)) for span in ("14d", "7d")}
+    leader = apps["7d"]["series"]["leaderboard"]["items"][0]["name"]
+    return {
+        "insights-overview.json": {span: fresh(tab(client, "overview", span)) for span in ("14d", "7d", "today")},
+        "insights-apps-devices.json": {
+            "apps": apps,
+            "devices": {span: fresh(tab(client, "devices", span)) for span in ("14d", "7d")},
+            "detail": {"7d": fresh(detail(client, leader))},
+        },
+    }
+
+
+def test_the_dashboards_fixtures_are_the_hubs_answers(hub: TestClient) -> None:
+    """The dashboard's e2e tests mock the hub with these files, so they must be what the hub answers now. After
+    changing a tab, write them again with DAYTRACE_WRITE_FIXTURES=1."""
+    for name, answers in fixture_answers(hub).items():
+        path = DASHBOARD_FIXTURES / name
+        if os.environ.get("DAYTRACE_WRITE_FIXTURES") == "1":
+            path.write_text(json.dumps(answers, indent=1) + "\n", encoding="utf-8", newline="\n")
+        assert json.loads(path.read_text(encoding="utf-8")) == answers, f"{name} is stale: run with DAYTRACE_WRITE_FIXTURES=1"
 
 
 def test_device_lines_say_what_kind_of_device_they_are(hub: TestClient) -> None:
@@ -631,3 +652,115 @@ def test_a_range_with_no_whole_day_skips_the_days_before(hub: TestClient, monkey
     monkeypatch.setattr(insights_api.TabBuilder, "__init__", counting)
     assert tab(hub, "overview", "today")["changes"] == []
     assert [span.first for span in built] == [TODAY]  # only today's: the day before was never worked out
+
+
+# --- DT-55: the Apps and Devices tab -----------------------------------------------------------------------------
+
+
+def test_the_treemap_adds_up_to_the_overview_total(hub: TestClient) -> None:
+    for span in ("7d", "14d", "today"):
+        treemap = tab(hub, "apps", span)["series"]["treemap"]["items"]
+        total = metric(tab(hub, "overview", span), "screen_time")
+        assert close(total, [item["value"] for item in treemap], len(treemap)), span
+        for category in treemap:  # and each category box is its apps (and its "Other apps")
+            assert close(category["value"], [child["value"] for child in category["children"]], len(category["children"]))
+
+
+def test_the_leaderboard_is_in_order_with_each_apps_week(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    board = tab(hub, "apps", "14d")["series"]["leaderboard"]
+    items = board["items"]
+    assert board["kind"] == "leaderboard" and len(items) == insights_api.LEADERS
+    assert [item["value"] for item in items] == sorted((item["value"] for item in items), reverse=True)
+    stats = stats_of()
+    top = stats.top_apps(FIRST, TODAY, limit=insights_api.LEADERS)
+    assert [(item["name"], item["value"], item["category"]) for item in items] == [(app["app"], app["minutes"], app["category"]) for app in top]
+    week = [TODAY - timedelta(days=6 - i) for i in range(7)]  # the 7 days up to the range's last day
+    assert board["x"] == [day.isoformat() for day in week]
+    for item in items[:3]:
+        expected = [stats.totals(day, group_by="app")["items"] for day in week]
+        assert item["spark"] == [next((row["minutes"] for row in rows if row["key"] == item["name"]), 0) for rows in expected]
+
+
+def test_a_leaders_change_is_its_day_average_against_the_days_before(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    items = tab(hub, "apps", "7d")["series"]["leaderboard"]["items"]  # 19 to 25; whole days 19 to 24, before 12 to 18
+    stats = stats_of()
+    now_days = [TODAY - timedelta(days=i) for i in range(1, 7)]
+    before_days = [TODAY - timedelta(days=i) for i in range(7, 14)]
+
+    def average(app: str, days: list[date]) -> float:
+        return sum(next((row["seconds"] for row in stats.totals(day, group_by="app")["items"] if row["key"] == app), 0) for day in days) / len(days) / 60
+
+    for item in items[:4]:
+        change = item["change"]
+        assert change["now"] == pytest.approx(average(item["name"], now_days), abs=0.01)
+        assert change["before"] == pytest.approx(average(item["name"], before_days), abs=0.01)
+        assert change["better"] == {"social": "down", "video": "down", "games": "down", "work": "up", "study": "up"}.get(item["category"], "neutral")
+    assert all(item["change"] is None for item in tab(hub, "apps", "today")["series"]["leaderboard"]["items"])
+
+
+def test_handoffs_add_up_over_the_range(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    body = tab(hub, "devices", "14d")
+    stats = stats_of()
+    days = [FIRST + timedelta(days=i) for i in range(14)]
+    assert metric(body, "handoffs") == sum(stats.handoffs(day)["value"] for day in days)
+    flow = body["series"]["handoffs"]
+    assert flow["kind"] == "sankey" and 0 < len(flow["links"]) <= insights_api.HANDOFF_LINKS
+    assert [link["value"] for link in flow["links"]] == sorted((link["value"] for link in flow["links"]), reverse=True)
+    assert {link["source"] for link in flow["links"]} | {link["target"] for link in flow["links"]} == set(flow["nodes"])
+    assert all(link["target"].startswith("then ") and not link["source"].startswith("then ") for link in flow["links"])  # no cycles
+
+
+def test_the_sync_strip_shows_gaps_as_no_data(hub: TestClient, demo: Settings) -> None:
+    # A spare phone paired on 1 September never sends anything: its row is all 0 (no data), and it has no line in
+    # the charts, never a 0 there. A seeded phone that sent nothing on the 20th has a 0 on the strip and a gap
+    # (null) in its line that day.
+    add_device(demo, "android-9", "Spare phone", "android")
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        day_start, day_end = datetime(2026, 9, 20, tzinfo=TZ), datetime(2026, 9, 21, tzinfo=TZ)
+        conn.execute("DELETE FROM events WHERE device_id = 'seed-iphone' AND start_utc < ? AND (end_utc > ? OR (end_utc IS NULL AND start_utc >= ?))",
+                     (utc(day_end), utc(day_start), utc(day_start)))  # its opens and closes have no end
+    insights_api._cache.clear()
+    body = tab(hub, "devices", "14d")
+    strip = body["series"]["sync"]
+    assert strip["kind"] == "strip" and strip["x"] == [(FIRST + timedelta(days=i)).isoformat() for i in range(14)]
+    rows = {name: {cell["x"]: cell["value"] for cell in strip["cells"] if cell["y"] == y} for y, name in enumerate(strip["y"])}
+    assert rows["Spare phone"] == dict.fromkeys(range(14), 0)
+    gap = strip["x"].index("2026-09-20")
+    assert rows["iPhone (demo)"][gap] == 0 and all(value == 1 for x, value in rows["iPhone (demo)"].items() if x != gap)
+    lines = {line["key"]: line["values"] for line in body["series"]["by_day"]["lines"]}
+    assert lines["seed-iphone"][gap] is None and "android-9" not in lines
+    seen = {item["id"]: item["value"] for item in body["metrics"] if item["id"].startswith("last_seen:")}
+    assert set(seen) == {f"last_seen:{device}" for device in ("seed-windows", "seed-mac", "seed-android", "seed-iphone", "android-9")}
+
+
+def test_one_apps_detail_agrees_with_the_tabs(hub: TestClient) -> None:
+    board = tab(hub, "apps", "7d")["series"]["leaderboard"]
+    leader = board["items"][0]
+    body = detail(hub, leader["name"])
+    assert (body["app"], body["category"]) == (leader["name"], leader["category"])
+    assert metric(body, "total") == pytest.approx(leader["value"], abs=0.01)
+    assert body["series"]["daily"]["lines"][0]["values"] == leader["spark"]  # the 7d range is the sparkline's week
+    parts = {name: body["series"][name] for name in ("hours", "devices")}
+    assert close(metric(body, "total"), parts["hours"]["lines"][0]["values"], 24)
+    assert close(metric(body, "total"), [item["value"] for item in parts["devices"]["items"]], len(parts["devices"]["items"]))
+    longest = body["longest"]
+    assert longest and 0 < longest["minutes"] <= max(value or 0 for value in leader["spark"])
+    assert metric(body, "longest") == longest["minutes"] and metric(body, "days_used") == sum(1 for value in leader["spark"] if value)
+
+
+def test_an_app_with_no_time_and_days_with_no_data(hub: TestClient) -> None:
+    body = detail(hub, "An app nobody uses")
+    assert metric(body, "total") == 0 and metric(body, "days_used") == 0 and body["longest"] is None
+    assert body["series"]["daily"]["lines"][0]["values"] == [0] * 7  # days with data: 0 for it
+    before = detail(hub, "An app nobody uses", "2026-09-01..2026-09-05")  # before recording began: unknown
+    assert before["series"]["daily"]["lines"][0]["values"] == [None] * 5 and metric(before, "total") is None
+    assert hub.get("/api/v1/insights/apps/detail", params={"app": "", "range": "7d"}).status_code == 422
+
+
+def test_an_apps_detail_is_cached_until_the_data_changes(hub: TestClient, demo: Settings) -> None:
+    span = f"{FIRST.isoformat()}..{(TODAY - timedelta(days=1)).isoformat()}"
+    first, second = detail(hub, "TikTok", span), detail(hub, "TikTok", span)
+    assert (first["cached"], second["cached"]) == (False, True)
+    add_event(demo, datetime(2026, 9, 22, 13, 0, tzinfo=TZ), minutes=30, app="TikTok")
+    third = detail(hub, "TikTok", span)
+    assert third["cached"] is False and metric(third, "total") > metric(first, "total")
