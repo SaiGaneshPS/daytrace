@@ -312,6 +312,92 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .stack { display: flex; flex-direction: column; gap: var(--space-4); }
 
+/* --- story and ask (DT-33) ------------------------------------------------------------------------------------ */
+
+.story-layout { display: grid; gap: var(--space-4); align-items: start; }
+@media (min-width: 1024px) { .story-layout { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+.story-side { display: flex; flex-direction: column; gap: var(--space-4); }
+.story-text { font-size: var(--text-lg); line-height: 1.65; max-width: 68ch; margin: 0 0 var(--space-3); }
+.story-writing, .story-failed { display: flex; flex-direction: column; gap: var(--space-3); align-items: flex-start; }
+.story-writing .skeleton-text { width: 100%; }
+.caret {
+  display: inline-block; width: 2px; height: 1.1em; margin-left: 1px; vertical-align: text-bottom;
+  background: currentColor; animation: blink 0.9s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.model-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+.model-name { font-weight: 700; color: var(--text); }
+.badge-local {
+  color: var(--cat-health-ink); background: color-mix(in srgb, var(--cat-health) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--cat-health) 40%, transparent);
+}
+.badge-template { color: var(--cat-video-ink); border-color: color-mix(in srgb, var(--cat-video) 40%, transparent); }
+
+.facts { margin: 0 0 var(--space-3); border-top: 1px solid var(--border); }
+.facts summary {
+  display: flex; align-items: center; gap: var(--space-2); min-height: var(--touch); cursor: pointer;
+  font-weight: 700; color: var(--accent-ink);
+}
+.facts ul { margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); }
+.facts li {
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3);
+  padding: var(--space-2) 0; border-bottom: 1px solid var(--border);
+}
+.fact-label::first-letter { text-transform: uppercase; }
+.fact-value { font-weight: 700; white-space: nowrap; }
+
+.ai-offline { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-3); border-color: var(--bad); }
+.ai-offline p { margin: 0 0 var(--space-1); }
+.ai-offline-title { font-weight: 700; }
+
+.chat { display: flex; flex-direction: column; gap: var(--space-4); }
+.chat-empty-title { font-size: var(--text-lg); font-weight: 700; margin: 0 0 var(--space-1); }
+.chat-empty p:last-child { margin: 0; max-width: 60ch; }
+.chat-log { display: flex; flex-direction: column; gap: var(--space-5); margin: 0; padding: 0; list-style: none; }
+.turn { display: flex; flex-direction: column; gap: var(--space-2); }
+.bubble { max-width: min(46rem, 100%); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); margin: 0; }
+.bubble-question {
+  align-self: flex-end; max-width: min(34rem, 88%); background: var(--accent); color: var(--on-accent);
+  border-bottom-right-radius: var(--radius-sm); font-weight: 600; overflow-wrap: anywhere;
+}
+.bubble-answer { align-self: flex-start; width: 100%; background: var(--surface-2); border-bottom-left-radius: var(--radius-sm); }
+.bubble-answer .facts { border-color: color-mix(in srgb, var(--border) 80%, var(--muted)); }
+.bubble-failed { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); border-left: 4px solid var(--bad); }
+.bubble-failed p { margin: 0; }
+.answer-text { margin: 0 0 var(--space-3); line-height: 1.6; }
+.thinking { display: flex; align-items: center; gap: var(--space-3); color: var(--muted); }
+.dots { display: inline-flex; gap: 4px; }
+.dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: bounce 1.2s var(--ease) infinite; }
+.dots span:nth-child(2) { animation-delay: 0.15s; }
+.dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-5px); opacity: 1; } }
+.tools { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3); padding: 0; list-style: none; }
+.answer-chart { margin: 0 0 var(--space-3); }
+.answer-chart figcaption { font-size: var(--text-sm); font-weight: 700; margin-bottom: var(--space-1); }
+.answer-chart figcaption::first-letter { text-transform: uppercase; }
+
+.examples { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.chip-button {
+  min-height: var(--touch); border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer;
+  font: inherit; font-size: var(--text-sm); font-weight: 600;
+  transition: border-color var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+}
+.chip-button:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+.chip-button:disabled { opacity: 0.55; cursor: not-allowed; }
+.chat-form { display: flex; align-items: flex-end; gap: var(--space-2); }
+.chat-input {
+  flex: 1; min-height: var(--touch); max-height: 9em; padding: var(--space-2) var(--space-4); resize: none;
+  field-sizing: content; font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.chat-input:disabled { background: var(--surface-2); }
+.chat-form .button:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; transform: none; }
+.link-button {
+  align-self: flex-start; min-height: var(--touch); padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--accent-ink); font: inherit; font-weight: 600;
+}
+
 /* --- reduced motion: nothing moves --------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -321,5 +407,5 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-  .skeleton, .live-dot.live::after { animation: none !important; }
+  .skeleton, .live-dot.live::after, .caret, .dots span { animation: none !important; }
 }

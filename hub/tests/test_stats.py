@@ -498,6 +498,10 @@ def test_the_day_summary_uses_the_same_numbers_as_everything_else(day: Database)
         assert summary.screen_minutes == engine.totals(DAY)["total_minutes"] == TOTAL / 60
         assert summary.focused_minutes == engine.focused_minutes(DAY)["value"]
         assert summary.focus_score == engine.focus_score(DAY)["value"]
+        score = engine.focus_score(DAY)
+        assert (summary.work_or_study_minutes, summary.distracted_minutes) == (
+            score["work_or_study_seconds"] / 60, score["distracted_seconds"] / 60)
+        assert summary.focused_minutes is not None and summary.work_or_study_minutes >= summary.focused_minutes
         assert summary.pickups == engine.pickups(DAY)["value"]
         assert summary.switches_per_hour == engine.switches_per_hour(DAY)["value"]
         by_app = {item["key"]: item["minutes"] for item in engine.totals(DAY, group_by="app")["items"]}
@@ -546,6 +550,7 @@ def test_a_day_without_screen_data_has_no_screen_numbers(day: Database) -> None:
         summary = insights_api.summarize(engine, date(2026, 9, 20), TORONTO)
     assert (summary.screen_minutes, summary.phone_minutes, summary.computer_minutes) == (None, None, None)
     assert summary.top_apps == [] and summary.focused_minutes is None and summary.pickups is None
+    assert (summary.work_or_study_minutes, summary.distracted_minutes) == (None, None)
 
 
 def test_the_day_summary_endpoint(day: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:

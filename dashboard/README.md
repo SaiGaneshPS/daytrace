@@ -32,9 +32,14 @@ npm run test:e2e   # Playwright tests of the build (run npm run build first); us
   palette is mirrored in `android/app/src/main/res/values/colors.xml`, and a test checks the two match.
 - **Tests:** `e2e/` holds Playwright tests of the build on a 1440 px desktop and a 360 px touch phone, with the hub's
   API mocked: layout, touch targets, accessibility (axe, light and dark), tabs, charts, motion, a page failing to
-  load, and the Today page. `npm run test:e2e` type-checks them first (tsconfig.e2e.json). `e2e/live-hub.spec.ts` runs
-  against a real demo or shared-dev hub when `DAYTRACE_E2E_HUB` is set (it refuses the personal hub). On Windows they use the installed Microsoft Edge
-  (no browser download); on macOS or Linux, run `npx playwright install chromium` once. CI uses Playwright's Chromium.
+  load, the Today page, and the Story and Ask pages (the AI online, offline and slow). `npm run test:e2e` type-checks
+  them first (tsconfig.e2e.json). `e2e/live-hub.spec.ts` runs against a real demo hub on this computer when
+  `DAYTRACE_E2E_HUB` is set (it refuses the personal hub), including the story and an answer from the hub's local
+  model when it has one. On Windows the tests use the installed Microsoft Edge (no browser download); on macOS or
+  Linux, run `npx playwright install chromium` once. CI uses Playwright's Chromium.
+- **On a real Android phone:** with USB debugging on, `adb reverse tcp:8767 tcp:8767` lets the phone's browser open
+  the demo hub at `http://localhost:8767` over the cable (no Wi-Fi needed), and `adb forward tcp:9222
+  localabstract:chrome_devtools_remote` lets Playwright drive that Chrome tab with `chromium.connectOverCDP`.
 - **Icons:** `public/icons` holds the app icon (192 and 512 px, a maskable 512 px, the Apple touch icon, and an SVG
   favicon).
 
@@ -44,7 +49,7 @@ npm run test:e2e   # Playwright tests of the build (run npm run build first); us
 | `src/theme/*`, `ChartCard`, `AnimatedNumber`, `Tabs`, `Skeleton`, `BottomNav`, `pages/Styleguide.tsx`, `e2e/`, `playwright.config.ts` | DT-52 |
 | `pages/Today.tsx`, `components/Timeline.tsx`, `components/StatCard.tsx` | DT-31 |
 | `pages/Devices.tsx`, `components/QrCode.tsx` | DT-32 |
-| `pages/Story.tsx`, `pages/Ask.tsx`, `components/ChatBox.tsx` | DT-33 |
+| `pages/Story.tsx`, `pages/Ask.tsx`, `components/ChatBox.tsx`, `components/DayPicker.tsx` (shared with Today) | DT-33 |
 | `pages/Insights.tsx`, `pages/Wrapped.tsx` | DT-34 |
 | `components/OfflineBanner.tsx` | DT-35 |
 | `pages/Privacy.tsx` | DT-36 |

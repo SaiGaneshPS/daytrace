@@ -15,7 +15,7 @@ from ..auth import Reader, get_database
 from ..db import Database
 from ..stats import DESK_TYPES, PHONE_TYPES, Stats
 from . import API_PREFIX, ApiError
-from .timeline import EARLIEST, LATEST, current_time, resolve_tz
+from .timeline import EARLIEST, LATEST, current_time, minutes, resolve_tz
 
 router = APIRouter(prefix=API_PREFIX, tags=["insights"])
 TOP_APPS = 10
@@ -37,6 +37,8 @@ class DaySummary(BaseModel):
     computer_minutes: float | None
     focused_minutes: float | None = Field(description="Work or study in blocks of 10+ minutes with no phone distraction.")
     focus_score: int | None = Field(description="0 to 100; null on a day with neither work nor distraction.")
+    work_or_study_minutes: float | None = Field(description="Time in work or study apps and sites, any device (overlaps once); focused time is part of it.")
+    distracted_minutes: float | None = Field(description="Time in social, video or game apps and sites, any device (overlaps once).")
     pickups: int | None
     switches_per_hour: float | None
     sleep_minutes: float | None = Field(description="Last night's sleep (the night ending this morning).")
@@ -66,6 +68,9 @@ def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
         computer_minutes=desks["total_minutes"] if has_screen else None,
         focused_minutes=focus["value"],
         focus_score=score["value"],
+        # The focus score's own parts, so a chart of focus against distraction shows the numbers behind the score.
+        work_or_study_minutes=minutes(score["work_or_study_seconds"]) if "work_or_study_seconds" in score else None,
+        distracted_minutes=minutes(score["distracted_seconds"]) if "distracted_seconds" in score else None,
         pickups=pickups["value"],
         switches_per_hour=switches["value"],
         sleep_minutes=sleep["value"],

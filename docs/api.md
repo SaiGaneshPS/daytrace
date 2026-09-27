@@ -415,7 +415,8 @@ engine, so the dashboard never works one out itself:
 ```json
 { "date": "2026-09-25", "tz": "America/Toronto", "in_progress": false,
   "screen_minutes": 157.5, "phone_minutes": 37.5, "computer_minutes": 120.0,
-  "focused_minutes": 45.0, "focus_score": 36, "pickups": 3, "switches_per_hour": 2.3,
+  "focused_minutes": 45.0, "focus_score": 36, "work_or_study_minutes": 60.0, "distracted_minutes": 65.0,
+  "pickups": 3, "switches_per_hour": 2.3,
   "sleep_minutes": 447.0, "sleep_estimated": true, "steps": 8412,
   "top_apps": [ { "app": "Minecraft", "category": "games", "minutes": 60.0 } ],
   "screen_estimated": false, "estimated": true }
@@ -423,6 +424,9 @@ engine, so the dashboard never works one out itself:
 
 - `screen_minutes` is the timeline's total (per device, added up); `phone_minutes` and `computer_minutes` add up to it.
   All three are null on a day without screen data (missing, not zero).
+- `work_or_study_minutes` and `distracted_minutes` are the focus score's parts (DT-33 charts them next to the story):
+  time in work or study apps and in social, video or game apps, on any device, overlaps counted once.
+  `focus_score = round(100 x focused / (work_or_study + distracted))`; focused time is part of work or study.
 - `top_apps`: up to 10 apps and sites, most time first, each with the category holding most of its time.
 - `sleep_minutes`: last night (the night ending this morning). `steps`: the day's steps; when two phones send
   steps, the larger total.
