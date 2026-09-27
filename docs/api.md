@@ -66,6 +66,8 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `GET /insights/{tab}`, `GET /wrapped` | viewer | DT-41 |
 | `GET /streaks`, `GET /goals`, `GET /achievements` | viewer | DT-53 |
 | `PUT /goals/{goal_id}` | dashboard (viewer token or the hub computer) | DT-53 |
+| `GET /privacy/redaction`, `POST /privacy/redaction/check` | viewer | DT-44 |
+| `PUT /privacy/redaction` | dashboard (viewer token or the hub computer) | DT-44 |
 | `GET /privacy/network` | viewer | DT-45 |
 | `GET /privacy/export`, `POST /privacy/delete` | local only | DT-46 |
 
@@ -593,6 +595,20 @@ goal is `404`.
   0.15 s to work out from nothing on this PC.
 
 ### Privacy
+
+Redaction (DT-44): a window, app or calendar title that matches a rule is stored as `[redacted]`, with the app name and
+the times kept (docs/privacy.md has the rules).
+
+- `GET /privacy/redaction` (viewer) lists the rules in force:
+  `{ "redacted": "[redacted]", "rules": [ { "id": "banking", "name": "Banking and payments", "description": "...", "builtin": true, "enabled": true, "words": [] }, ... ] }`.
+  Your own rules come last, as `custom-1`, `custom-2` and so on, with their words.
+- `PUT /privacy/redaction` (the dashboard) with `{ "disabled": ["health"], "custom": [ { "name": "Work client", "words": ["Acme", "Project Falcon"] } ] }`
+  replaces your choices. Built-in rules can be switched off by id, and you can have up to 20 rules of your own, each
+  with up to 50 words or phrases of 2 to 100 characters. They are matched whole and ignoring case, in titles and app
+  names, and are never regular expressions. Anything else is `400`, with the reason. The change applies to the next
+  event stored.
+- `POST /privacy/redaction/check` (viewer) with `{ "title": "Online Banking - TD Bank", "app": "Edge" }` says what
+  would be stored: `{ "redacted": true, "stored_as": "[redacted]", "rule": "banking", "rule_name": "Banking and payments" }`.
 
 - `GET /privacy/network` returns `{ "since": "...", "allowed": { "localhost": 120, "lan": 44, "tailscale": 0 }, "blocked": { "count": 0, "destinations": [] } }`.
 - `GET /privacy/export` (local only) streams all of the profile's data as JSON.

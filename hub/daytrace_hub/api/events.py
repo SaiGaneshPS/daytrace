@@ -27,6 +27,7 @@ from ..models import (
     RejectedEvent,
     parse_batch,
 )
+from ..redaction import REDACTED, redactor_for
 from . import API_PREFIX, ApiError
 
 # 500 events always fit: the models cap data at 16 KB and text fields at a few hundred characters.
@@ -88,8 +89,18 @@ def event_row(event: Event) -> tuple[Any, ...]:
     )
 
 
+def same_event(stored: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    """Whether two copies of an event say the same thing: every identity field equal, except that a title
+    redacted on either side (DT-44) matches any title, with the data that goes with it."""
+    redacted = REDACTED in (stored["title"], incoming["title"])
+    return all(stored[name] == incoming[name] for name in IDENTITY_FIELDS if not (redacted and name in ("title", "data")))
+
+
 def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[int, Event]]) -> StoreResult:
     """Store (index, event) pairs for one device. Must run inside `with transaction(conn):`.
+
+    Each event is redacted first (DT-44), with the rules in force now: a sensitive title is never stored, and
+    the key is worked out from the redacted event.
 
     - New key: stored (accepted).
     - Same key, same values: ignored (duplicates), whatever the key type.
@@ -103,7 +114,9 @@ def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[in
         raise RuntimeError("store_events must run inside a transaction (with transaction(conn): ...)")
     now = utc_text(datetime.now(UTC))
     result = StoreResult()
+    redactor = redactor_for(conn)
     for index, event in events:
+        event = redactor.event(event)
         key = event.dedup_key()
         row = event_row(event)
         if conn.execute(INSERT_SQL, (device_id, key, *row, now)).rowcount:
@@ -122,7 +135,7 @@ def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[in
                 conn.execute(UPDATE_SQL, (*row, now, device_id, key))
                 result.replaced += 1
                 result.replaced_events.append(event)
-        elif event.seq is not None and any(stored[name] != incoming[name] for name in IDENTITY_FIELDS):
+        elif event.seq is not None and not same_event(stored, incoming):
             result.rejected.append(
                 RejectedEvent(
                     index=index,
@@ -136,6 +149,10 @@ def store_events(conn: sqlite3.Connection, device_id: str, events: list[tuple[in
             )
         else:
             result.duplicates += 1
+            if incoming["title"] == REDACTED and stored["title"] != REDACTED:
+                # The same event, now under a rule: its stored words go too.
+                conn.execute("UPDATE events SET title = ?, data = ?, updated_at = ? WHERE device_id = ? AND dedup_key = ?",
+                             (REDACTED, incoming["data"], now, device_id, key))
     return result
 
 

@@ -38,6 +38,7 @@ from pydantic import ValidationError
 
 from ..db import Database, transaction, utc_text
 from ..models import Event
+from ..redaction import LiveRedactor
 
 logger = logging.getLogger("daytrace_hub.tracker")
 
@@ -411,13 +412,14 @@ class TrackerService:
     """The tracker as a background thread inside the hub (or in the foreground for `daytrace-hub tracker`)."""
 
     def __init__(self, database: Database, probe: Probe, device_type: str, name: str, lock_path: Path,
-                 redact: Redactor = no_redaction) -> None:
+                 redact: Redactor | None = None) -> None:
         self.database = database
         self.probe = probe
         self.device_type = device_type
         self.name = name
         self.lock_path = lock_path
-        self.redact = redact
+        # DT-44: the redaction rules in force (refreshed every few seconds), before a title is ever held.
+        self.redact = redact if redact is not None else LiveRedactor(database)
         self.device_id: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None

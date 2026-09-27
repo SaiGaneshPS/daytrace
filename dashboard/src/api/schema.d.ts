@@ -385,6 +385,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/privacy/redaction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The redaction rules in force */
+        get: operations["get_redaction_api_v1_privacy_redaction_get"];
+        /** Switch built-in rules off or on, and set your own */
+        put: operations["put_redaction_api_v1_privacy_redaction_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/privacy/redaction/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Try a title against the rules in force */
+        post: operations["check_title_api_v1_privacy_redaction_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -628,6 +663,16 @@ export interface components {
             device_id: string;
             /** Last Seq */
             last_seq: number | null;
+        };
+        /** CustomRule */
+        CustomRule: {
+            /** Name */
+            name: string;
+            /**
+             * Words
+             * @description Words or phrases, matched whole and ignoring case, in titles and app names.
+             */
+            words: string[];
         };
         /** DaySummary */
         DaySummary: {
@@ -1158,6 +1203,47 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** RedactionChoices */
+        RedactionChoices: {
+            /**
+             * Disabled
+             * @description Built-in rules to switch off, by id.
+             */
+            disabled?: string[];
+            /**
+             * Custom
+             * @description Your own rules, up to 20, each with up to 50 words or phrases.
+             */
+            custom?: components["schemas"]["CustomRule"][];
+        };
+        /** RedactionRule */
+        RedactionRule: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Builtin */
+            builtin: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Words
+             * @description Your own rule's words or phrases (empty for a built-in rule).
+             */
+            words: string[];
+        };
+        /** RedactionRules */
+        RedactionRules: {
+            /**
+             * Redacted
+             * @description What a matching title is stored as.
+             */
+            redacted: string;
+            /** Rules */
+            rules: components["schemas"]["RedactionRule"][];
+        };
         /**
          * RejectedEvent
          * @description One event the hub refused.
@@ -1491,6 +1577,32 @@ export interface components {
              * @description True when the end was inferred (an iPhone open with no close).
              */
             estimated: boolean;
+        };
+        /** TitleCheck */
+        TitleCheck: {
+            /** Title */
+            title: string;
+            /** App */
+            app?: string | null;
+            /** App Id */
+            app_id?: string | null;
+        };
+        /** TitleCheckResult */
+        TitleCheckResult: {
+            /** Redacted */
+            redacted: boolean;
+            /**
+             * Stored As
+             * @description The title as the hub would store it.
+             */
+            stored_as: string;
+            /**
+             * Rule
+             * @description The id of the rule that matched.
+             */
+            rule: string | null;
+            /** Rule Name */
+            rule_name: string | null;
         };
         /** Totals */
         Totals: {
@@ -2361,6 +2473,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AchievementList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_redaction_api_v1_privacy_redaction_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedactionRules"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_redaction_api_v1_privacy_redaction_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedactionChoices"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedactionRules"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_title_api_v1_privacy_redaction_check_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TitleCheck"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TitleCheckResult"];
                 };
             };
             /** @description Validation Error */
