@@ -71,6 +71,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `GET /privacy/redaction`, `POST /privacy/redaction/check`, `GET /privacy/redaction/stored` | viewer | DT-44 |
 | `PUT /privacy/redaction`, `POST /privacy/redaction/apply` | dashboard (viewer token or the hub computer) | DT-44 |
 | `GET /privacy/network` | viewer | DT-45 |
+| `GET /privacy/storage` | viewer (the folder only for the hub computer) | DT-36 |
 | `GET /privacy/export`, `POST /privacy/delete` | local only | DT-46 |
 
 ### GET /health
@@ -707,6 +708,12 @@ name or id, or a site (docs/privacy.md has the rules).
   is `400`. It works a batch at a time, so collectors keep writing meanwhile. An event from a stateless collector is
   keyed again from its redacted form, and two that then match in everything are kept once. Logged nudges whose words
   the rules would hide keep only their rule (DT-43).
+
+- `GET /privacy/storage` (viewer, DT-36) says where the data lives and how much there is, for the Privacy page:
+  `{ "profile": "demo", "folder": "D:\\Hackathon\\data", "file": "daytrace-demo.db", "size_bytes": 421888, "events": 632,
+  "first_event": "2026-09-14T01:55:00Z", "last_event": "2026-09-27T12:47:07Z", "devices": 11 }`. `folder` is null except
+  on the hub computer, since it names that computer's user folders; `size_bytes` counts the write-ahead log too, and
+  `devices` the ones paired now.
 
 - `GET /privacy/network` (viewer, DT-45) is the proof behind "no internet": every connection since the hub started,
   by the kind of network at the other end.

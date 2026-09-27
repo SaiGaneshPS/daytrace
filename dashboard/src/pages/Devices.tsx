@@ -21,6 +21,7 @@ import type { components } from "../api/schema";
 import ChartCard from "../components/ChartCard";
 import QrCode from "../components/QrCode";
 import Tabs from "../components/Tabs";
+import { DEVICE_TYPE_LABELS } from "../theme/devices";
 import { celebrate } from "../theme/motion";
 
 type Started = components["schemas"]["PairStarted"];
@@ -33,14 +34,6 @@ const LIVE_MS = 60_000;
 const REFRESH_MS = 15_000;
 const STATUS_MS = 2_000; // while a code is out: has it been used?
 const SHORTCUTS_GUIDE = "https://github.com/SaiGaneshPS/daytrace/blob/development/ios/shortcuts/SETUP.md";
-const TYPE_LABELS: Record<string, string> = {
-  windows: "Windows PC",
-  macos: "Mac",
-  android: "Android phone",
-  ios: "iPhone",
-  browser: "Browser extension",
-  viewer: "Dashboard viewer",
-};
 
 /** A name for this browser's device, from what it says about itself ("Android phone (Chrome)"). */
 function guessName(): string {
@@ -698,7 +691,7 @@ function DeviceCard({ device, now, local, onRevoke }: { device: Device; now: num
           {live && <span className="visually-hidden">, synced in the last minute</span>}
         </p>
         <p className="muted">
-          {TYPE_LABELS[device.device_type] ?? device.device_type} <span aria-hidden="true">/</span> <code>{device.device_id}</code>
+          {DEVICE_TYPE_LABELS[device.device_type] ?? device.device_type} <span aria-hidden="true">/</span> <code>{device.device_id}</code>
         </p>
         <p className="muted">{contact(device, now)}</p>
       </div>

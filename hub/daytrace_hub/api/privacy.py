@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from ..auth import Editor, Reader, get_database, require_local
+from ..auth import Editor, Reader, get_database, is_trusted_local, require_local
 from ..config import LEDGER
 from ..db import Database, current_version, transaction
 from ..redaction import (
@@ -182,6 +182,39 @@ class NetworkStatus(BaseModel):
     listening: list[str] = Field(description="The addresses the hub listens on right now (empty in tests).")
     guarded: bool = Field(description="Whether the socket guard is on: nothing in the hub process can connect to the "
                                       "internet, whatever code asks (a real hub always; not in tests).")
+
+
+class Storage(BaseModel):
+    """DT-36: where the profile's data lives and how much there is."""
+
+    profile: str
+    folder: str | None = Field(description="The folder that holds the database, on the hub computer only (it names that "
+                                            "computer's folders); null anywhere else.")
+    file: str = Field(description="The database file's name.")
+    size_bytes: int = Field(description="The database file with its write-ahead log.")
+    events: int
+    first_event: datetime | None = Field(description="When the earliest stored event started (UTC).")
+    last_event: datetime | None = Field(description="When the latest stored event started (UTC).")
+    devices: int = Field(description="Devices paired now (not revoked).")
+
+
+def storage_of(database: Database, profile: str, local: bool) -> Storage:
+    path = database.path
+    size = sum(part.stat().st_size for part in (path, path.with_name(path.name + "-wal")) if part.exists())
+    with database.connect() as conn:
+        events, first, last = conn.execute("SELECT COUNT(*), MIN(start_utc), MAX(start_utc) FROM events").fetchone()
+        devices = conn.execute("SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL").fetchone()[0]
+    return Storage(
+        profile=profile, folder=str(path.parent) if local else None, file=path.name, size_bytes=size, events=events,
+        first_event=datetime.fromisoformat(first) if first else None, last_event=datetime.fromisoformat(last) if last else None,
+        devices=devices,
+    )
+
+
+@router.get("/privacy/storage", response_model=Storage, summary="Where the data lives and how much there is")
+async def storage(request: Request, _: Reader, database: Annotated[Database, Depends(get_database)]) -> Storage:
+    profile = request.app.state.settings.profile.name
+    return await run_in_threadpool(storage_of, database, profile, is_trusted_local(request))
 
 
 @router.get("/privacy/network", response_model=NetworkStatus, summary="Every connection since the hub started, by network")

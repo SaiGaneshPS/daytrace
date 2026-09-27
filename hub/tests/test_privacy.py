@@ -668,3 +668,40 @@ def test_the_routes_describe_their_answers() -> None:
     export = paths["/api/v1/privacy/export"]["get"]["responses"]
     assert "application/json" in export["200"]["content"] and "403" in export
     assert {"400", "403"} <= set(paths["/api/v1/privacy/delete"]["post"]["responses"])
+
+
+# --- where the data lives (DT-36) ------------------------------------------------------------------------------
+
+
+def test_storage_says_where_the_data_lives_and_how_much_there_is(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    body = client.get("/api/v1/privacy/storage").json()
+    path = settings.database_path
+    wal = path.with_name(path.name + "-wal")
+    size = path.stat().st_size + (wal.stat().st_size if wal.exists() else 0)
+    with Database(path).connect() as conn:
+        events, first, last = conn.execute("SELECT COUNT(*), MIN(start_utc), MAX(start_utc) FROM events").fetchone()
+        devices = conn.execute("SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL").fetchone()[0]
+    assert (body["profile"], body["folder"], body["file"]) == ("demo", str(path.parent), path.name)
+    assert body["size_bytes"] == size and size > 0
+    assert (body["events"], body["devices"]) == (events, devices) and events > 0
+    assert datetime.fromisoformat(body["first_event"]) == datetime.fromisoformat(first)
+    assert datetime.fromisoformat(body["last_event"]) == datetime.fromisoformat(last)
+
+
+def test_storage_names_the_folder_only_on_the_hub_computer(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        viewer = register_device(conn, device_id="viewer-6", name="Phone browser", device_type="viewer")
+    here = client.get("/api/v1/privacy/storage").json()
+    with TestClient(client.app, client=LAN) as phone:
+        there = phone.get("/api/v1/privacy/storage", headers={"Authorization": f"Bearer {viewer}"}).json()
+        assert phone.get("/api/v1/privacy/storage").status_code == 401  # unpaired
+    assert there["folder"] is None  # the folder names this computer's user
+    assert {**there, "folder": here["folder"], "size_bytes": 0} == {**here, "size_bytes": 0}
+
+
+def test_storage_of_an_empty_profile(demo: TestClient) -> None:
+    body = demo.get("/api/v1/privacy/storage").json()
+    assert (body["events"], body["devices"], body["first_event"], body["last_event"]) == (0, 0, None, None)
+

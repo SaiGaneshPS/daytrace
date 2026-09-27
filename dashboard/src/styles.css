@@ -500,7 +500,7 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .dialog h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); }
 .dialog p { margin: 0 0 var(--space-4); }
 .dialog-actions { justify-content: flex-end; }
-.button-danger { background: var(--bad); color: #fff; }
+.button-danger { background: var(--bad); color: var(--on-bad); }
 .install-help h3 { margin: 0 0 var(--space-2); font-size: var(--text-base); }
 
 /* --- reduced motion: nothing moves --------------------------------------------------------------------------- */
@@ -691,6 +691,56 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .wrapped-actions { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); flex: 1 1 14rem; min-width: 0; }
 .wrapped-actions .field-note { text-align: left; }
 .wrapped-reason { margin: 0; font-size: var(--text-sm); }
+
+/* --- privacy (DT-36) -------------------------------------------------------------------------------------------- */
+
+.privacy-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); align-items: start; }
+.net-check { display: flex; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); font-size: var(--text-lg); font-weight: 700; }
+.net-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 3.25rem; height: 3.25rem;
+  border-radius: 50%; color: #fff; background: var(--ok);
+}
+.net-bad .net-icon { background: var(--bad); }
+.net-count { font-family: var(--font-numbers); font-size: var(--text-2xl); font-weight: 800; line-height: 1; }
+.net-clean .net-count { color: var(--ok); }
+.net-bad .net-count { color: var(--bad); }
+.net-since { display: block; color: var(--muted); font-size: var(--text-sm); font-weight: 500; }
+.privacy-facts { display: grid; gap: var(--space-2); margin: 0 0 var(--space-3); container-type: inline-size; }
+.privacy-facts div { display: grid; grid-template-columns: minmax(7rem, auto) minmax(0, 1fr); gap: var(--space-1) var(--space-3); }
+.privacy-facts dt { color: var(--muted); font-size: var(--text-sm); font-weight: 600; }
+.privacy-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@container (max-width: 26rem) { .privacy-facts div { grid-template-columns: minmax(0, 1fr); } }
+.section-subtitle { margin: var(--space-3) 0 var(--space-2); font-size: 1rem; }
+.privacy-devices { display: flex; flex-direction: column; gap: var(--space-1); margin: 0 0 var(--space-2); padding: 0; list-style: none; }
+.privacy-devices li { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); align-items: baseline; }
+.rule-list, .custom-rules { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.switch-row { display: flex; align-items: flex-start; gap: var(--space-3); min-height: var(--touch); padding: var(--space-2) 0; cursor: pointer; }
+.switch-row input { flex-shrink: 0; width: 1.35rem; height: 1.35rem; margin-top: 0.15rem; accent-color: var(--accent); }
+.switch-row > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.custom-rule { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.custom-rule-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.custom-rule-head input { flex: 1 1 10rem; min-width: 0; }
+.word-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.word-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1); max-width: 100%; min-height: var(--touch); padding-left: var(--space-3);
+  border-radius: var(--radius-pill); background: var(--surface-2); font-weight: 600;
+}
+.word-chip > span { min-width: 0; overflow-wrap: anywhere; }
+.add-word input, .try-title input { flex: 1 1 12rem; min-width: 0; }
+.redaction-actions { margin-top: var(--space-3); }
+.try-title { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-4); }
+.try-title .field-note, .redaction-card .field-note { text-align: left; }
+.stored-matches { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-4); }
+.stored-matches p { margin: 0; }
+.confirm-row { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--bad); border-radius: var(--radius); }
+.export-card .chart-card-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+.export-card p { margin: 0; }
+.danger-zone {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); width: 100%; padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.dialog form { display: flex; flex-direction: column; gap: var(--space-2); }
+.delete-phrase { width: 100%; }
 
 /* --- insights: food and calendar (DT-57) ----------------------------------------------------------------------- */
 

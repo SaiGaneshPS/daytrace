@@ -68,6 +68,17 @@ const FOOD_CALENDAR = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtur
 const FOCUS_SLEEP = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-focus-sleep.json"), "utf-8")) as Record<string, Record<string, object>>;
 const APPS_DEVICES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-apps-devices.json"), "utf-8")) as Record<string, Record<string, object>>;
 const STREAKS_WRAPPED = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "streaks-wrapped.json"), "utf-8")) as Record<string, object>;
+const PRIVACY = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "privacy.json"), "utf-8")) as { rules: object };
+const NETWORK = {
+  since: "2026-09-25T12:00:00Z", internet_connections: 0, outgoing: { localhost: 6, lan: 0, tailscale: 0, internet: 0 },
+  blocked: { count: 1, destinations: [{ host: "a-very-long-host-name.example.internet", port: 443, count: 1, last: "2026-09-25T13:00:00Z" }] },
+  incoming: { localhost: 1_234_567, lan: 34, tailscale: 5, internet: 0 }, refused: { localhost: 0, lan: 2, tailscale: 0, internet: 0 },
+  listening: ["127.0.0.1:8767", "[::1]:8767", "192.168.100.200:8767"], guarded: true,
+};
+const STORAGE = {
+  profile: "shared-dev", folder: "C:\\Users\\Someone With A Long Name\\AppData\\Local\\Daytrace\\profiles\\shared-dev", file: "daytrace-shared-dev.db",
+  size_bytes: 1_234_567_890, events: 12_345_678, first_event: "2025-09-12T12:00:00Z", last_event: "2026-09-25T17:00:00Z", devices: 4,
+};
 
 async function mockHub(page: Page, local: boolean) {
   await page.clock.setFixedTime(new Date("2026-09-25T14:00:00-04:00"));
@@ -90,6 +101,10 @@ async function mockHub(page: Page, local: boolean) {
   for (const name of ["streaks", "goals", "achievements", "wrapped"]) {
     await page.route(`**/api/v1/${name}?**`, (route) => route.fulfill({ json: STREAKS_WRAPPED[name] }));
   }
+  await page.route("**/api/v1/privacy/network", (route) => route.fulfill({ json: NETWORK }));
+  await page.route("**/api/v1/privacy/storage", (route) => route.fulfill({ json: { ...STORAGE, folder: local ? STORAGE.folder : null } }));
+  await page.route("**/api/v1/privacy/redaction", (route) => route.fulfill({ json: PRIVACY.rules }));
+  await page.route("**/api/v1/privacy/redaction/stored", (route) => route.fulfill({ json: { matches: 1234 } }));
   await page.route("**/api/v1/ai/status", (route) => route.fulfill({ json: { base_url: "http://127.0.0.1:1234/v1", model: ANSWER.model, reachable: true, tool_calling: true, models: [ANSWER.model], error: null } }));
   await page.route("**/api/v1/story?**", (route) => route.fulfill({ json: STORY }));
   await page.route("**/api/v1/ask", (route) => route.fulfill({ json: ANSWER }));
@@ -273,6 +288,29 @@ test("Wrapped fits every screen and text size", async ({ page }) => {
   await mockHub(page, true);
   await page.goto("/wrapped");
   await sweep(page, () => expect(page.getByRole("button", { name: "Save as image" })).toBeEnabled());
+});
+
+test("Privacy, with a rule of your own, fits every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/privacy");
+  const card = page.getByRole("region", { name: "Hide sensitive titles" });
+  await card.getByRole("button", { name: "Add a rule" }).click();
+  for (const word of ["Falcon", "Supercalifragilisticexpialidocious project", "Q3"]) {
+    await card.getByLabel("A word or phrase to hide in Your words").fill(word);
+    await card.getByLabel("A word or phrase to hide in Your words").press("Enter");
+  }
+  await sweep(page, () => expect(page.locator(".net-check")).toBeVisible());
+});
+
+test("Privacy's confirmations fit every screen and text size", async ({ page }) => {
+  test.slow();
+  await mockHub(page, true);
+  await page.goto("/privacy");
+  await page.getByRole("button", { name: "Hide them in stored data" }).click();
+  await expect(page.getByRole("group", { name: "Hide stored words" })).toBeVisible();
+  await page.getByRole("button", { name: "Delete all data" }).click();
+  await sweep(page, () => expect(page.getByRole("dialog", { name: "Delete all your data?" })).toBeVisible());
 });
 
 test("the style guide fits every screen and text size", async ({ page }) => {
