@@ -33,6 +33,15 @@ function minutes(value: number): string {
   return !hours ? `${rest}m` : rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
+/** A day as the page writes it ("Sat 19" in Edge, "19 Sat" in Linux Chromium: the browser's language data decides). */
+function shortDayIn(page: Page, day: string): Promise<string> {
+  return page.evaluate((iso) => {
+    const [year, month, date] = iso.split("-").map(Number);
+    return new Date(year, month - 1, date).toLocaleDateString([], { weekday: "short", day: "numeric" });
+  }, day);
+}
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 type Answers = { apps?: (range: string) => object | "fail"; devices?: (range: string) => object | "fail"; detail?: (app: string, range: string) => object | "fail" };
 
 async function mockHub(page: Page, answers: Answers = {}, { fixedClock = true } = {}) {
@@ -128,7 +137,8 @@ test("the leaderboard is in order, with each app's week and change", async ({ pa
     await expect(row.locator(".leader-app")).toHaveText(item.name);
     await expect(row.locator(".leader-time")).toHaveText(minutes(item.value));
     await expect(row.locator(".spark")).toBeVisible();
-    await expect(row.locator(".leader-spark")).toHaveAttribute("title", /^Sat 19: .*, Fri 25: /); // the 7 days to the range's end
+    const [first, last] = [await shortDayIn(page, "2026-09-19"), await shortDayIn(page, "2026-09-25")];
+    await expect(row.locator(".leader-spark")).toHaveAttribute("title", new RegExp(`^${escaped(first)}: .*, ${escaped(last)}: `)); // the week to the range's end
     const change = item.change;
     if (!change || change.direction === "same") continue;
     const tone = change.better === "neutral" ? /change-neutral/ : change.direction === change.better ? /change-good/ : /change-bad/;
@@ -219,12 +229,14 @@ test("a day a device sent nothing shows as no data on the strip, never as none u
   const phone = rows.filter({ hasText: "iPhone (demo)" });
   await expect(phone.locator(".sync-none")).toHaveCount(1);
   await expect(phone.locator(".sync-sent")).toHaveCount(6);
-  await expect(phone.locator(".sync-cell").nth(1)).toHaveAttribute("title", "Sun 20: no data");
-  await expect(phone.locator(".visually-hidden")).toHaveText("Sent data on 6 of 7 days; no data on Sun 20.");
+  const sunday = await shortDayIn(page, "2026-09-20");
+  await expect(phone.locator(".sync-cell").nth(1)).toHaveAttribute("title", `${sunday}: no data`);
+  await expect(phone.locator(".visually-hidden")).toHaveText(`Sent data on 6 of 7 days; no data on ${sunday}.`);
   const extra = rows.filter({ hasText: "Spare phone" });
   await expect(extra.locator(".sync-off")).toHaveCount(4);
   await expect(extra.locator(".sync-none")).toHaveCount(3);
-  await expect(extra.locator(".visually-hidden")).toHaveText("Sent data on 0 of 7 days; no data on Wed 23, Thu 24, Fri 25.");
+  const since = await Promise.all(["2026-09-23", "2026-09-24", "2026-09-25"].map((day) => shortDayIn(page, day)));
+  await expect(extra.locator(".visually-hidden")).toHaveText(`Sent data on 0 of 7 days; no data on ${since.join(", ")}.`);
 });
 
 test("when the apps can't load, the devices still show, and Try again asks again", async ({ page }) => {
