@@ -1,4 +1,48 @@
 {
-  "$comment": "DT-44 fills in the default rules.",
-  "rules": []
+  "$comment": "DT-44: the built-in redaction rules. A window, app or calendar title that matches one is stored as [redacted] (the app name and times stay); a browser extension's site that matches one is stored as [redacted] too. `titles` are regular expressions matched anywhere in a title or site, ignoring case; the (?!\\.(py|ts|...)) parts keep a code file named like a word (pharmacy.ts, Clinic.cs) from counting. `apps` are pieces of an app name, app id or site (lowercase) whose titles are always redacted. The user can switch a rule off, or add their own words, from the Privacy page.",
+  "rules": [
+    {
+      "id": "banking",
+      "name": "Banking and payments",
+      "description": "Online banking, account pages, statements and transfers, and the big banks and payment apps.",
+      "titles": [
+        "\\b(online|internet|mobile) banking\\b",
+        "\\b(account (summary|activity|balance|details|overview)|bank statements?|credit card statements?|e-?transfers?|interac|wire transfers?|routing number|iban)\\b(?!\\.(?:py|pyi|ipynb|ts|tsx|js|jsx|mjs|cjs|cs|java|kt|go|rs|rb|php|c|cc|cpp|h|hpp|swift|md|json|ya?ml|toml|ini|sql|html?|css|scss|txt|csv|xml)\\b)",
+        "\\b(rbc|royal bank|td bank|td canada trust|easyweb|bmo|scotiabank|scotia online|cibc|tangerine|desjardins|simplii|eq bank|wealthsimple|questrade|chase online|wells fargo|bank of america|capital one|citibank|hsbc|barclays|monzo|revolut|paypal|venmo|zelle|koho|neo financial)\\b(?!\\.(?:py|pyi|ipynb|ts|tsx|js|jsx|mjs|cjs|cs|java|kt|go|rs|rb|php|c|cc|cpp|h|hpp|swift|md|json|ya?ml|toml|ini|sql|html?|css|scss|txt|csv|xml)\\b)"
+      ],
+      "apps": ["paypal", "venmo", "revolut", "monzo", "wealthsimple", "questrade", "tangerine", "desjardins", "wellsfargo", "capitalone",
+               "com.rbc.", "com.td.", "com.bmo.", "com.scotiabank.", "com.cibc.", "com.chase.", "com.infonow.bofa"]
+    },
+    {
+      "id": "health",
+      "name": "Health portals and appointments",
+      "description": "Patient portals, records and results, prescriptions, and appointments with doctors, dentists and therapists.",
+      "titles": [
+        "\\b(mychart|patient portal|health records?|medical records?|lab results?|prescriptions?|pharmacy|telehealth|telemedicine)\\b(?!\\.(?:py|pyi|ipynb|ts|tsx|js|jsx|mjs|cjs|cs|java|kt|go|rs|rb|php|c|cc|cpp|h|hpp|swift|md|json|ya?ml|toml|ini|sql|html?|css|scss|txt|csv|xml)\\b)",
+        "\\b(therapy|therapist|psychiatr\\w*|psycholog\\w*|counsell?ing|dentist|dental|clinic|hospital|physiotherapy|doctor'?s? (appointment|visit))\\b(?!\\.(?:py|pyi|ipynb|ts|tsx|js|jsx|mjs|cjs|cs|java|kt|go|rs|rb|php|c|cc|cpp|h|hpp|swift|md|json|ya?ml|toml|ini|sql|html?|css|scss|txt|csv|xml)\\b)",
+        "(?-i:\\bDr\\.? [A-Z][a-z]+)"
+      ],
+      "apps": ["mychart", "betterhelp", "talkspace", "teladoc", "lifelabs"]
+    },
+    {
+      "id": "passwords",
+      "name": "Password managers",
+      "description": "Every title in a password manager (the names of saved logins), and pages that name one.",
+      "titles": [
+        "\\b(1password|bitwarden|lastpass|keepass(xc)?|dashlane|keeper (security|password manager)|nordpass|proton pass|enpass|roboform)\\b"
+      ],
+      "apps": ["1password", "bitwarden", "lastpass", "keepass", "dashlane", "keepersecurity", "keeper password manager", "keeperpasswordmanager",
+               "nordpass", "protonpass", "proton pass", "enpass", "roboform", "com.agilebits"]
+    },
+    {
+      "id": "private",
+      "name": "Private and incognito windows",
+      "description": "Browser windows opened as InPrivate, Incognito or Private Browsing.",
+      "titles": [
+        "\\b(inprivate|incognito|private browsing|private window)\\b",
+        "\\(private\\)"
+      ],
+      "apps": []
+    }
+  ]
 }
