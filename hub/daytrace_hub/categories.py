@@ -24,9 +24,11 @@ import logging
 import re
 import sqlite3
 import threading
+import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from importlib import resources
 from typing import TYPE_CHECKING, Any, Literal
@@ -205,10 +207,14 @@ def delete_override(conn: sqlite3.Connection, key: str) -> bool:
 
 # --- DT-42: the local model fills in unknown apps -----------------------------------------------------------------
 
-AI_BATCH = 25  # apps per question: quick to answer, and few enough that a small model keeps them apart
+AI_BATCH = 10  # apps per question: a few seconds for a small model, so a meal or a question never waits long behind it
 AI_BATCHES_PER_RUN = 8
+AI_WINDOW_DAYS = 92  # the longest Insights range: an app not used since doesn't matter to any chart
+AI_SKIP_SECONDS = 6 * 3600.0  # apps the model answered badly about are asked about again after this
 AI_MAX_TOKENS = 2048
 AI_TIMEOUT = httpx.Timeout(connect=3.0, read=120.0, write=10.0, pool=5.0)
+DECLINED_KEY = "ai_categories"  # settings row: {"declined": [keys whose guess the user removed]}
+MAX_DECLINED = 5000
 # What each category means, as the built-in list uses it (data/categories.json).
 AI_MEANINGS = {
     "social": "social media and feeds (Instagram, Reddit, X, LinkedIn)",
@@ -244,11 +250,13 @@ _AI_SYSTEM = (
     " using only the category names above. Browsers are other, whatever they show (the website is sorted on its own)."
     " If you don't know an item, answer other rather than guessing."
 )
-# App and site events that have neither a category from their collector nor one of their own yet.
+# App and site events of the last AI_WINDOW_DAYS with neither a category from their collector nor one of their own
+# yet (events_by_start keeps it to that window, however long the history).
 _UNKNOWN_SQL = (
     "SELECT kind = 'web' AS web, CASE WHEN kind = 'web' THEN json_extract(data, '$.domain') ELSE app END AS name,"
     " app_id, SUM(COALESCE(julianday(end_utc) - julianday(start_utc), 0)) AS used, COUNT(*) AS seen"
-    " FROM events WHERE category IS NULL AND kind IN ('app_session', 'app_open', 'app_close', 'window', 'web')"
+    " FROM events WHERE start_utc >= ? AND category IS NULL"
+    " AND kind IN ('app_session', 'app_open', 'app_close', 'window', 'web')"
     " GROUP BY web, name, app_id ORDER BY used DESC, seen DESC"
 )
 
@@ -261,15 +269,35 @@ class UnknownApp:
     app_id: str | None
 
 
-def unknown_apps(conn: sqlite3.Connection, limit: int | None = None) -> list[UnknownApp]:
-    """Apps and sites nothing knows yet (neither the user, the collector, the built-in list nor the model), the most
-    used first. Never one the privacy rules hide (DT-44): its name stays out of the question and out of the table."""
+def load_declined(conn: sqlite3.Connection) -> set[str]:
+    """Keys whose AI guess the user removed: never guessed again (a choice of their own still can be made)."""
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (DECLINED_KEY,)).fetchone()
+    try:
+        keys = json.loads(row[0]).get("declined", []) if row else []
+    except (ValueError, AttributeError):
+        return set()
+    return {key for key in keys if isinstance(key, str)} if isinstance(keys, list) else set()
+
+
+def decline(conn: sqlite3.Connection, key: str) -> None:
+    """Remember that the user took the model's guess for `key` off, so it isn't guessed again."""
+    keys = sorted(load_declined(conn) | {key})[-MAX_DECLINED:]
+    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                 (DECLINED_KEY, json.dumps({"declined": keys}, ensure_ascii=False)))
+
+
+def unknown_apps(conn: sqlite3.Connection, limit: int | None = None, now: datetime | None = None) -> list[UnknownApp]:
+    """Apps and sites of the last AI_WINDOW_DAYS nothing knows yet (neither the user, the collector, the built-in
+    list nor the model), the most used first. Never one the privacy rules hide (DT-44): its name stays out of the
+    question and out of the table. Nor one whose guess the user removed."""
     from .redaction import REDACTED, redactor_for  # redaction imports sessions, which imports this module
 
     categorizer = Categorizer.from_db(conn)
     rules = redactor_for(conn)
+    declined = load_declined(conn)
+    since = utc_text((now or datetime.now(UTC)) - timedelta(days=AI_WINDOW_DAYS))
     found: dict[str, UnknownApp] = {}
-    for row in conn.execute(_UNKNOWN_SQL):
+    for row in conn.execute(_UNKNOWN_SQL, (since,)):
         web, name, app_id = bool(row["web"]), row["name"], row["app_id"]
         name = name if isinstance(name, str) and name.strip() else None
         if REDACTED in (name, app_id) or (web and name is None) or rules.hides_name(name, app_id, web=web):
@@ -278,7 +306,7 @@ def unknown_apps(conn: sqlite3.Connection, limit: int | None = None) -> list[Unk
         if categorizer.lookup(name, None if web else app_id, kind).source != "default":
             continue
         key = override_key(name, None if web else app_id, kind)
-        if key is None or key in found:
+        if key is None or key in found or key in declined:
             continue
         found[key] = UnknownApp(key=key, web=web, name=name, app_id=None if web else app_id)
         if limit is not None and len(found) >= limit:
@@ -303,8 +331,8 @@ def _ai_items(apps: list[UnknownApp]) -> str:
 
 def ask_categories(llm: LLM, apps: list[UnknownApp]) -> dict[str, str]:
     """The local model's category for each app, by override key. An app it skipped is "other" (asked about once);
-    a reply that answers fewer than half of them is no answer at all (LLMError), so nothing is saved from it."""
-    from .llm import LLMError
+    a reply that answers fewer than half of them is no answer at all (LLMBadAnswer), so nothing is saved from it."""
+    from .llm import LLMBadAnswer
 
     messages = [{"role": "system", "content": _AI_SYSTEM}, {"role": "user", "content": _ai_items(apps)}]
     reply = llm.json_reply(messages, AI_SCHEMA, "app_categories", max_tokens=AI_MAX_TOKENS, timeout=AI_TIMEOUT)
@@ -316,33 +344,65 @@ def ask_categories(llm: LLM, apps: list[UnknownApp]) -> dict[str, str]:
         if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(apps) and category in CATEGORIES:
             answers.setdefault(apps[n - 1].key, category)
     if 2 * len(answers) < len(apps):
-        raise LLMError(f"the model answered for {len(answers)} of {len(apps)} apps")
+        raise LLMBadAnswer(f"the model answered for {len(answers)} of {len(apps)} apps")
     return {app.key: answers.get(app.key, "other") for app in apps}
 
 
-def categorize_unknown(database: Database, llm: LLM, batches: int = AI_BATCHES_PER_RUN, batch: int = AI_BATCH) -> int:
+def categorize_unknown(
+    database: Database,
+    llm: LLM,
+    batches: int = AI_BATCHES_PER_RUN,
+    batch: int = AI_BATCH,
+    skip: dict[str, float] | None = None,
+    stopped: Callable[[], bool] = lambda: False,
+    clock: Callable[[], float] = time.monotonic,
+) -> int:
     """Ask the local model about apps nothing knows, a batch at a time, and save its answers (source "ai"). Returns
-    how many were saved. Raises LLMError when the model can't be used; what was saved before stays."""
+    how many were saved.
+
+    - Before saving, each app is checked again in the same transaction: still seen, still unknown, still visible
+      under the privacy rules. So a delete-all, a new rule or the user's own choice made while the model thought
+      wins, and nothing it read before is written back.
+    - A batch the model answers badly (cut off, too little) is put in `skip` for AI_SKIP_SECONDS, and the next
+      batch is asked; it never blocks the others.
+    - `stopped` is asked between batches and before saving (the hub is shutting down). A run also ends, to be tried
+      later, when the model is busy answering someone else (a question, a meal).
+    Raises LLMError when the model can't be used; what was saved before stays."""
+    from .llm import LLMBadAnswer
+
+    skip = {} if skip is None else skip
     saved = 0
-    asked: set[str] = set()
-    for _ in range(batches):
-        with database.connect() as conn:
-            apps = [app for app in unknown_apps(conn, limit=batch + len(asked)) if app.key not in asked][:batch]
-        if not apps:
+    for key, until in list(skip.items()):
+        if until <= clock():
+            del skip[key]
+    with database.connect() as conn:
+        waiting = [app for app in unknown_apps(conn, limit=batch * batches + len(skip)) if app.key not in skip]
+    for first in range(0, min(len(waiting), batch * batches), batch):
+        if stopped() or llm.busy():
             break
-        answers = ask_categories(llm, apps)
-        asked.update(answers)
+        apps = waiting[first:first + batch]
+        try:
+            answers = ask_categories(llm, apps)
+        except LLMBadAnswer as exc:
+            log.info("The model answered badly about %d apps (%s); they are asked about again later", len(apps), exc)
+            skip.update({app.key: clock() + AI_SKIP_SECONDS for app in apps})
+            continue
+        if stopped():
+            break
         with database.connect() as conn, transaction(conn):
+            still = {app.key for app in unknown_apps(conn)}
             for key, category in answers.items():
-                save_override(conn, key, category, "ai")  # never over a choice the user made meanwhile
-        saved += len(answers)
+                if key in still:
+                    save_override(conn, key, category, "ai")
+                    saved += 1
     return saved
 
 
 class AiCategorizer:
     """Runs categorize_unknown() in a background thread: `delay` seconds after wake() (new events arrived, so a burst
-    of them is one run), and every `interval` seconds (the desktop tracker writes without waking it). A model that
-    isn't there is tried again at the next run; the hub never waits for this."""
+    of them is one run), and every `interval` seconds (the desktop tracker writes without waking it). A run is
+    skipped when nothing changed since the last one found no more work. A model that isn't there is tried again at
+    the next run; the hub never waits for this."""
 
     def __init__(self, database: Database, llm: LLM, interval: float = 600.0, delay: float = 30.0) -> None:
         self.database = database
@@ -352,6 +412,8 @@ class AiCategorizer:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._skip: dict[str, float] = {}
+        self._done_at: int | None = None  # the data version when a run last found nothing left to ask
         self.runs = 0  # finished runs, for tests
 
     def start(self) -> None:
@@ -367,15 +429,31 @@ class AiCategorizer:
         if self._thread is not None:
             self._thread.join(timeout)
 
+    def forget(self) -> None:
+        """After delete-all (DT-46): nothing about the old apps stays in memory, and the next run looks afresh."""
+        self._skip.clear()
+        self._done_at = None
+
     def run_once(self) -> int:
+        from .db import data_version
         from .llm import LLMError
 
         try:
-            return categorize_unknown(self.database, self.llm)
+            with self.database.connect() as conn:
+                version = data_version(conn)
+            if version == self._done_at:
+                return 0
+            saved = categorize_unknown(self.database, self.llm, skip=self._skip, stopped=self._stop.is_set)
+            with self.database.connect() as conn:
+                if not [app for app in unknown_apps(conn, limit=len(self._skip) + 1) if app.key not in self._skip]:
+                    self._done_at = data_version(conn)  # nothing left to ask until something changes
+            return saved
         except LLMError as exc:
-            log.info("Apps not sorted into categories yet: %s", exc)
+            if not self._stop.is_set():
+                log.info("Apps not sorted into categories yet: %s", exc)
         except Exception:  # never let the thread die: the next run tries again
-            log.exception("Sorting apps into categories failed")
+            if not self._stop.is_set():  # a client closed at shutdown is expected
+                log.exception("Sorting apps into categories failed")
         return 0
 
     def _run(self) -> None:

@@ -93,6 +93,11 @@ class LLMStatusError(LLMError):
         self.status_code = status_code
 
 
+class LLMBadAnswer(LLMError):
+    """The model answered, but not with what was asked for (cut off, no JSON, too little of it): the server works,
+    and another question may go better."""
+
+
 @dataclass(frozen=True)
 class LLMSettings:
     base_url: str = DEFAULT_BASE_URL
@@ -322,6 +327,12 @@ class LLM:
         self._tool_checks: dict[str, tuple[bool | None, float]] = {}  # model -> (result, when)
         self._probing: set[str] = set()
         self._chosen: tuple[str, float] | None = None  # the model picked last, and when
+        self._in_flight = 0  # chat requests being answered now (DT-42's background work waits its turn)
+
+    def busy(self) -> bool:
+        """Whether the model server is answering one of the hub's chat requests right now."""
+        with self._lock:
+            return self._in_flight > 0
 
     @property
     def shown_url(self) -> str:
@@ -349,10 +360,10 @@ class LLM:
         except Exception as exc:  # a 200 that is not a model list: some other program on that port
             raise LLMError(f"what answers at {self.shown_url} is not an OpenAI-compatible model server") from exc
 
-    def model(self, available: list[str] | None = None) -> str:
+    def model(self, available: list[str] | None = None, retry: bool = True) -> str:
         """The model to use: DAYTRACE_LLM_MODEL when the server offers it, otherwise the first chat model it lists
         (embedding models, which servers list too, can't hold a conversation)."""
-        available = self.models() if available is None else available
+        available = self.models(retry=retry) if available is None else available
         wanted = self.settings.model
         if wanted is not None:
             if wanted not in available:
@@ -368,13 +379,14 @@ class LLM:
             self._chosen = (chosen, self._clock())
         return chosen
 
-    def current_model(self) -> str:
-        """The model to use, asking the server at most once a minute (not on every turn of a conversation)."""
+    def current_model(self, retry: bool = True) -> str:
+        """The model to use, asking the server at most once a minute (not on every turn of a conversation). With
+        `retry` off, a server that isn't there is asked only once, so the caller hears so quickly."""
         with self._lock:
             chosen = self._chosen
         if chosen is not None and self._clock() - chosen[1] < MODEL_TTL_SECONDS:
             return chosen[0]
-        return self.model()
+        return self.model(retry=retry)
 
     def chat(
         self,
@@ -414,10 +426,12 @@ class LLM:
             options["timeout"] = timeout
         if not retry:
             options["max_retries"] = 0
+        with self._lock:
+            self._in_flight += 1
         try:
             client = self._sdk().with_options(**options) if options else self._sdk()
             response = client.chat.completions.create(
-                model=model or self.current_model(), messages=messages, temperature=temperature, **extra  # type: ignore[arg-type]
+                model=model or self.current_model(retry=retry), messages=messages, temperature=temperature, **extra  # type: ignore[arg-type]
             )
             return response.choices[0]
         except openai.OpenAIError as exc:
@@ -426,6 +440,9 @@ class LLM:
             raise
         except Exception as exc:  # a 200 that is not a chat completion
             raise LLMError(f"the model server at {self.shown_url} sent an answer Daytrace doesn't understand") from exc
+        finally:
+            with self._lock:
+                self._in_flight -= 1
 
     def json_reply(
         self,
@@ -439,7 +456,7 @@ class LLM:
         """A JSON object that should fit `schema` (the caller still checks it). The server is asked for structured
         output (LM Studio and Ollama both take a json_schema); one that refuses that (a 4xx) is asked again without
         it, since the prompt asks for JSON too. Temperature 0, so the same question gets the same answer.
-        Raises LLMError, also for a reply with no JSON object in it."""
+        Raises LLMError when the server can't be used, and LLMBadAnswer for a reply cut off or without JSON."""
         response_format = {"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True}}
         try:
             choice = self.complete(messages, temperature=0.0, max_tokens=max_tokens, timeout=timeout, retry=retry,
@@ -449,11 +466,11 @@ class LLM:
                 raise
             choice = self.complete(messages, temperature=0.0, max_tokens=max_tokens, timeout=timeout, retry=retry)
         if getattr(choice, "finish_reason", None) == "length":
-            raise LLMError("the model's answer was cut off before it finished")
+            raise LLMBadAnswer("the model's answer was cut off before it finished")
         try:
             return json_in(getattr(choice.message, "content", None))
         except ValueError as exc:
-            raise LLMError(f"the model's answer was not the JSON asked for ({exc})") from exc
+            raise LLMBadAnswer(f"the model's answer was not the JSON asked for ({exc})") from exc
 
     def supports_tools(self, model: str) -> bool | None:
         """Whether `model` calls a tool when asked to (None: couldn't tell). It costs a reply, so the answer is

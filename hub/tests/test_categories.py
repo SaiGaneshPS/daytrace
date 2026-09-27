@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from importlib import resources
@@ -18,6 +19,8 @@ from daytrace_hub.app import create_app
 from daytrace_hub.auth import register_device
 from daytrace_hub.categories import (
     AI_MEANINGS,
+    AI_SKIP_SECONDS,
+    AI_WINDOW_DAYS,
     CATEGORIES,
     AiCategorizer,
     Categorizer,
@@ -29,6 +32,7 @@ from daytrace_hub.categories import (
     categorize_unknown,
     domain_suffixes,
     load_builtin,
+    load_declined,
     load_overrides,
     parse_builtin,
     save_override,
@@ -36,7 +40,7 @@ from daytrace_hub.categories import (
 )
 from daytrace_hub.config import Settings, load_settings
 from daytrace_hub.db import Database, transaction
-from daytrace_hub.llm import LLMError, json_in
+from daytrace_hub.llm import LLMBadAnswer, LLMError, json_in
 from daytrace_hub.models import Event
 from daytrace_hub.sessions import sessions_for
 
@@ -417,14 +421,163 @@ def test_the_question_lists_names_ids_and_sites_and_the_fixed_categories(db: Dat
     assert body["temperature"] == 0
 
 
-def test_an_answer_for_too_few_apps_saves_nothing(db: Database, fake_llm: FakeModelServer) -> None:
+def test_an_answer_for_too_few_apps_saves_nothing_and_they_wait(db: Database, fake_llm: FakeModelServer) -> None:
     add(db, "android-1", "android", [session(0, "Mystery"), session(1, "Zork"), session(2, "Blip")])
     fake_llm.reply_text(json.dumps({"apps": [{"n": 1, "category": "games"}, {"n": 9, "category": "games"},
                                              {"n": 2, "category": "not-a-category"}, {"n": True, "category": "work"}]}))
-    with pytest.raises(LLMError, match="1 of 3"):
-        categorize_unknown(db, fake_llm.llm())
+    with pytest.raises(LLMBadAnswer, match="1 of 3"):
+        ask_categories(fake_llm.llm(), [UnknownApp(k, False, k, None) for k in ("mystery", "zork", "blip")])
+    fake_llm.reply_text(json.dumps({"apps": [{"n": 1, "category": "games"}]}))
+    skip: dict[str, float] = {}
+    assert categorize_unknown(db, fake_llm.llm(), skip=skip, clock=lambda: 100.0) == 0
+    assert set(skip) == {"mystery", "zork", "blip"} and set(skip.values()) == {100.0 + AI_SKIP_SECONDS}
     with db.connect() as conn:
         assert load_overrides(conn) == {}
+    assert categorize_unknown(db, fake_llm.llm(), skip=skip, clock=lambda: 200.0) == 0
+    assert len(fake_llm.chats()) == 2  # the direct question and the first run's: still waiting, not asked again
+    answer(fake_llm, "games", "study", "other")
+    assert categorize_unknown(db, fake_llm.llm(), skip=skip, clock=lambda: 101.0 + AI_SKIP_SECONDS) == 3
+    assert skip == {}
+
+
+def test_one_bad_batch_never_blocks_the_next(db: Database, fake_llm: FakeModelServer) -> None:
+    add(db, "android-1", "android", [session(0, "Mystery"), session(1, "Mystery"), session(2, "Zork"), session(3, "Blip")])
+    fake_llm.reply_text("I would rather not say.")  # the first batch: Mystery and one more
+    answer(fake_llm, "games")
+    skip: dict[str, float] = {}
+    assert categorize_unknown(db, fake_llm.llm(), batch=2, skip=skip) == 1
+    assert len(skip) == 2 and "mystery" in skip
+    with db.connect() as conn:
+        assert [key for key, o in load_overrides(conn).items() if o.source == "ai"] == [
+            ({"zork", "blip"} - set(skip)).pop()]
+
+
+def test_a_run_stops_between_batches_and_before_saving(db: Database, fake_llm: FakeModelServer) -> None:
+    add(db, "android-1", "android", [session(0, "Mystery"), session(1, "Zork")])
+    assert categorize_unknown(db, fake_llm.llm(), batch=1, stopped=lambda: True) == 0
+    assert fake_llm.chats() == []
+    answer(fake_llm, "games")
+    calls = iter([False, True])  # stopped while the model thought
+    assert categorize_unknown(db, fake_llm.llm(), batch=1, stopped=lambda: next(calls, True)) == 0
+    with db.connect() as conn:
+        assert load_overrides(conn) == {}
+
+
+def test_a_run_waits_while_the_model_answers_someone_else(db: Database, fake_llm: FakeModelServer, monkeypatch: pytest.MonkeyPatch) -> None:
+    add(db, "android-1", "android", [session(0, "Mystery")])
+    llm = fake_llm.llm()
+    monkeypatch.setattr(llm, "busy", lambda: True)
+    assert categorize_unknown(db, llm) == 0
+    assert fake_llm.chats() == []
+
+
+def test_the_model_is_busy_while_a_chat_is_answered(fake_llm: FakeModelServer) -> None:
+    llm = fake_llm.llm()
+    llm.current_model()
+    fake_llm.hold_chats = threading.Event()
+    reply = threading.Thread(target=lambda: llm.chat([{"role": "user", "content": "hi"}]))
+    reply.start()
+    assert fake_llm.chat_started.wait(5)
+    assert llm.busy()
+    fake_llm.hold_chats.set()
+    reply.join(5)
+    assert not llm.busy()
+
+
+def test_nothing_is_saved_for_apps_gone_or_hidden_while_the_model_thought(db: Database, fake_llm: FakeModelServer,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    import daytrace_hub.categories as module
+    from daytrace_hub.api.privacy import delete_everything
+
+    add(db, "android-1", "android", [session(0, "Acme Planner"), session(1, "Zork")])
+    answer(fake_llm, "work", "games")
+    real = module.ask_categories
+
+    def meanwhile(llm: Any, apps: list[UnknownApp]) -> dict[str, str]:
+        answers = real(llm, apps)
+        with db.connect() as conn, transaction(conn):
+            redaction.save_choices(conn, redaction.check_choices([], [("Work", ["Acme"])]))  # a new rule
+        return answers
+
+    monkeypatch.setattr(module, "ask_categories", meanwhile)
+    assert categorize_unknown(db, fake_llm.llm()) == 1
+    with db.connect() as conn:
+        assert set(load_overrides(conn)) == {"zork"}  # never "acme planner"
+
+    add(db, "android-1", "android", [session(2, "Blip")])
+    answer(fake_llm, "games")
+
+    def delete_first(llm: Any, apps: list[UnknownApp]) -> dict[str, str]:
+        answers = real(llm, apps)
+        delete_everything(db, keep_redaction_rules=True)  # Delete everything, while the model thought
+        return answers
+
+    monkeypatch.setattr(module, "ask_categories", delete_first)
+    assert categorize_unknown(db, fake_llm.llm()) == 0
+    with db.connect() as conn:
+        assert load_overrides(conn) == {}
+
+
+def test_a_guess_the_user_removes_is_not_made_again(client: TestClient, db: Database, fake_llm: FakeModelServer) -> None:
+    seed(db)  # Mystery is the one unknown app
+    answer(fake_llm, "games")
+    categorize_unknown(db, fake_llm.llm())
+    assert client.delete("/api/v1/categories/mystery").status_code == 204
+    with db.connect() as conn:
+        assert load_declined(conn) == {"mystery"}
+        assert unknown_apps(conn) == []
+    assert categorize_unknown(db, fake_llm.llm()) == 0 and len(fake_llm.chats()) == 1
+    assert client.put("/api/v1/categories/mystery", json={"category": "study"}).status_code == 200  # still theirs to set
+    client.put("/api/v1/categories/zork", json={"category": "games"})
+    assert client.delete("/api/v1/categories/zork").status_code == 204  # the user's own choice: nothing declined
+    with db.connect() as conn:
+        assert load_declined(conn) == {"mystery"}
+
+
+def test_apps_not_used_in_the_window_are_not_asked_about(db: Database) -> None:
+    long_ago = (datetime.now(UTC) - timedelta(days=AI_WINDOW_DAYS + 1)).isoformat()
+    later = (datetime.now(UTC) - timedelta(days=AI_WINDOW_DAYS + 1) + timedelta(minutes=5)).isoformat()
+    add(db, "android-1", "android", [{"kind": "app_session", "source": "usagestats", "start": long_ago, "end": later,
+                                      "seq": 0, "app": "Ancient"}, session(1, "Mystery")])
+    with db.connect() as conn:
+        assert [app.key for app in unknown_apps(conn)] == ["mystery"]
+
+
+def test_the_worker_skips_a_run_when_nothing_changed(db: Database, fake_llm: FakeModelServer, monkeypatch: pytest.MonkeyPatch) -> None:
+    import daytrace_hub.categories as module
+
+    add(db, "android-1", "android", [session(0, "Mystery")])
+    answer(fake_llm, "games")
+    worker = AiCategorizer(db, fake_llm.llm())
+    assert worker.run_once() == 1
+    runs: list[bool] = []
+    real = module.categorize_unknown
+    monkeypatch.setattr(module, "categorize_unknown", lambda *a, **k: runs.append(True) or real(*a, **k))
+    assert worker.run_once() == 0  # its own save changed the data once: one more look finds nothing
+    assert worker.run_once() == 0
+    assert len(runs) <= 1
+    add(db, "android-1", "android", [session(1, "Zork")])
+    answer(fake_llm, "games")
+    assert worker.run_once() == 1  # new events: it looks again
+    worker.forget()
+    assert worker._done_at is None
+
+
+def test_delete_all_clears_what_the_worker_remembers(settings: Settings, fake_llm: FakeModelServer) -> None:
+    on = Settings(profile=settings.profile, data_dir=settings.data_dir, ai_categories=True)
+    with TestClient(create_app(on, llm=fake_llm.llm()), client=LOCAL_CLIENT, base_url=LOCAL_URL) as client:
+        worker = client.app.state.ai_categorizer
+        worker._skip["mystery"] = 1e18
+        body = {"confirm": "delete all my daytrace data", "keep_redaction_rules": True}
+        assert client.post("/api/v1/privacy/delete", json=body).status_code == 200
+        assert worker._skip == {}
+
+
+def test_asking_once_for_the_model_is_one_request_when_retry_is_off(fake_llm: FakeModelServer) -> None:
+    fake_llm.status_codes = [500, 500]
+    with pytest.raises(LLMError):
+        fake_llm.llm().current_model(retry=False)
+    assert len(fake_llm.requests) == 1
 
 
 def test_apps_the_model_skips_are_other_and_its_first_answer_wins(fake_llm: FakeModelServer) -> None:

@@ -404,8 +404,8 @@ def delete_everything(database: Database, keep_redaction_rules: bool = True) -> 
 
 
 def forget_in_memory(app: Any) -> None:
-    """What the hub process still held of the deleted data: cached answers and redaction rules, and the pairing
-    code (a code shown before the delete must not pair a device after it)."""
+    """What the hub process still held of the deleted data: cached answers and redaction rules, the pairing code (a
+    code shown before the delete must not pair a device after it), and what the AI categorizer remembered."""
     from .. import nudges, redaction, streaks
     from . import devices as devices_api
     from . import insights as insights_api
@@ -416,6 +416,9 @@ def forget_in_memory(app: Any) -> None:
     redaction._parse_choices.cache_clear()
     redaction._redactor.cache_clear()
     app.state.pairing = devices_api.PairingCodes()
+    sorter = getattr(app.state, "ai_categorizer", None)
+    if sorter is not None:  # DT-42: the apps it skipped; a run in progress checks again before it saves anything
+        sorter.forget()
 
 
 @router.post(

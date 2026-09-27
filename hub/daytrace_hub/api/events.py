@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any
@@ -24,6 +25,7 @@ from .. import nudges
 from ..auth import AuthenticatedDevice, CurrentDevice, Editor, Reader, get_database
 from ..db import Database, transaction, utc_offset_minutes, utc_text
 from ..models import (
+    HUB_READING,
     MEAL_TYPES,
     BatchTooLargeError,
     Event,
@@ -32,6 +34,7 @@ from ..models import (
     MalformedBatchError,
     ParsedMeal,
     RejectedEvent,
+    identity_data,
     parse_batch,
 )
 from ..redaction import REDACTED, redacted_forms, redactor_for
@@ -127,12 +130,10 @@ def dumped(data: dict[str, Any]) -> str:
 
 def unread(row: dict[str, Any]) -> dict[str, Any]:
     """A stored or incoming row without what the hub read from a meal's text (DT-42, data.parsed): that reading is
-    the hub's, so two copies of a meal are the same meal whatever it made of them."""
-    if row["kind"] != "meal" or '"parsed"' not in row["data"]:
+    the hub's, so two copies of a meal are the same meal whatever it made of them (models.identity_data)."""
+    if row["kind"] != "meal" or f'"{HUB_READING}"' not in row["data"]:
         return row
-    data = json.loads(row["data"])
-    data.pop("parsed", None)
-    return {**row, "data": dumped(data)}
+    return {**row, "data": dumped(identity_data(row["kind"], json.loads(row["data"])))}
 
 
 def same_event(stored: dict[str, Any], incoming: dict[str, Any]) -> bool:
@@ -263,18 +264,23 @@ def last_seq(conn: sqlite3.Connection, device_id: str) -> int | None:
 
 # --- DT-42: meals from plain text ---------------------------------------------------------------------------------
 
-MEAL_TIMEOUT = httpx.Timeout(connect=3.0, read=20.0, write=10.0, pool=5.0)  # the collector waits for the answer
+MEAL_BUDGET_SECONDS = 20.0  # the model's time for all of one request's meals: the collector waits for the answer
+MEAL_MODEL_MAX = 5  # meals per request the model reads; the rest (a phone catching up) are split
 MEAL_MAX_TOKENS = 1024
 MEAL_MAX_ITEMS = 30
 # A meal type the text doesn't name, from the hour it was eaten: from 04:00, 11:00 and 17:00, else a snack.
 MEAL_HOURS = (("breakfast", 4, 11), ("lunch", 11, 15), ("dinner", 17, 22))
 _MEAL_NAMES = {"breakfast": "breakfast", "brunch": "breakfast", "lunch": "lunch", "dinner": "dinner",
                "supper": "dinner", "snack": "snack", "snacks": "snack"}
-_MEAL_NAMED = re.compile(r"\b(" + "|".join(_MEAL_NAMES) + r")\b", re.IGNORECASE)
+_NAMES = "|".join(_MEAL_NAMES)
+# A meal the text names, never a food with a meal's name in it ("breakfast burrito for dinner" is dinner): "for
+# dinner", "as a snack", "at lunch" (the last one wins), or a leading "Lunch:".
+_MEAL_FOR = re.compile(rf"\b(?:for|at|as)\s+(?:(?:a|an|my|an\s+early|a\s+late|a\s+quick)\s+)?({_NAMES})\b", re.IGNORECASE)
+_MEAL_LEAD = re.compile(rf"^\s*({_NAMES})\s*[:\-]", re.IGNORECASE)
 _MEAL_SPLIT = re.compile(r"\s*(?:[,;\n+&]|\band\b|\bplus\b|\bthen\b)\s*", re.IGNORECASE)
-_MEAL_LABEL = re.compile(r"^\s*(?:for\s+)?(?:a\s+)?(?:" + "|".join(_MEAL_NAMES) + r")\s*[:\-]\s*", re.IGNORECASE)
+_MEAL_LABEL = re.compile(rf"^\s*(?:for\s+)?(?:a\s+)?(?:{_NAMES})\s*[:\-]\s*", re.IGNORECASE)
 _MEAL_OPENING = re.compile(r"^\s*(?:i\s+)?(?:just\s+)?(?:had|ate|eaten)\s+", re.IGNORECASE)
-_MEAL_CLOSING = re.compile(r"\s+(?:for|at)\s+(?:a\s+)?(?:" + "|".join(_MEAL_NAMES) + r")\s*[.!]*\s*$", re.IGNORECASE)
+_MEAL_CLOSING = re.compile(rf"\s+(?:for|at|as)\s+(?:a\s+)?(?:{_NAMES})\s*[.!]*\s*$", re.IGNORECASE)
 _WORD = re.compile(r"[^\W_]+")
 MEAL_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -308,16 +314,17 @@ def meal_items_from_text(text: str) -> list[str]:
     return [item[:100] for item in items if _WORD.search(item)][:MEAL_MAX_ITEMS]
 
 
-def meal_items_from_model(text: str, llm: LLM) -> list[str] | None:
-    """The foods in a meal note as the local model lists them, or None when it can't be used or answers with a food
-    the note doesn't name (every item must share a word with the note)."""
-    from ..llm import LLMError
+def meal_items_from_model(text: str, llm: LLM, seconds: float) -> list[str] | None:
+    """The foods in a meal note as the local model lists them, within `seconds`. None when its answer doesn't hold up
+    (a food the note doesn't name: every item must share a word with the note). Raises LLMError when the model
+    can't be used, so the caller stops asking it."""
+    from ..llm import LLMBadAnswer
 
     messages = [{"role": "system", "content": _MEAL_SYSTEM}, {"role": "user", "content": text}]
+    timeout = httpx.Timeout(connect=min(3.0, seconds), read=seconds, write=min(10.0, seconds), pool=min(5.0, seconds))
     try:
-        reply = llm.json_reply(messages, MEAL_SCHEMA, "meal_items", max_tokens=MEAL_MAX_TOKENS, timeout=MEAL_TIMEOUT,
-                               retry=False)
-    except LLMError:
+        reply = llm.json_reply(messages, MEAL_SCHEMA, "meal_items", max_tokens=MEAL_MAX_TOKENS, timeout=timeout, retry=False)
+    except LLMBadAnswer:
         return None
     items = reply.get("items") if isinstance(reply, dict) else None
     if not isinstance(items, list) or not 1 <= len(items) <= MEAL_MAX_ITEMS:
@@ -327,6 +334,14 @@ def meal_items_from_model(text: str, llm: LLM) -> list[str] | None:
     if len(cleaned) != len(items) or any(not 1 <= len(item) <= 100 or not _words(item) & said for item in cleaned):
         return None
     return cleaned
+
+
+def meal_type_named(text: str) -> str | None:
+    """The meal a note names ("for dinner", "Lunch: ..."), or None: a food called after a meal names none."""
+    named = [match.group(1) for match in _MEAL_FOR.finditer(text)]
+    if not named and (lead := _MEAL_LEAD.match(text)):
+        named = [lead.group(1)]
+    return _MEAL_NAMES[named[-1].casefold()] if named else None
 
 
 def meal_type_at(start: datetime) -> str:
@@ -343,28 +358,30 @@ def meal_type_at(start: datetime) -> str:
     return "snack"
 
 
-def read_meal(event: Event, llm: LLM | None) -> dict[str, Any]:
-    """What the hub makes of a meal's text: the items and meal type it lacks, and where each came from. The local
-    model lists the items when there is one; otherwise, or when its answer doesn't hold up, the text is split."""
+def read_meal(event: Event, model_items: list[str] | None = None) -> dict[str, Any]:
+    """What the hub makes of a meal's text: the items and meal type it lacks, and where each came from. The items
+    are the model's when it gave some (`model_items`), else the text split."""
     text = str(event.data["text"])
     reading: dict[str, Any] = {}
     if "items" not in event.data:
-        items = meal_items_from_model(text, llm) if llm is not None else None
-        by = "ai" if items else "text"
-        items = items or meal_items_from_text(text) or [" ".join(text.split())[:100]]
-        reading.update(items=items, items_by=by)
+        items = model_items or meal_items_from_text(text) or [" ".join(text.split())[:100]]
+        reading.update(items=items, items_by="ai" if model_items else "text")
     if "meal_type" not in event.data:
-        named = _MEAL_NAMED.search(text)
-        if named:
-            reading.update(meal_type=_MEAL_NAMES[named.group(1).casefold()], type_by="text")
-        else:
-            reading.update(meal_type=meal_type_at(event.start), type_by="time")
+        named = meal_type_named(text)
+        reading.update(meal_type=named or meal_type_at(event.start), type_by="text" if named else "time")
     return reading
 
 
-def read_meals(database: Database, device_id: str, events: list[tuple[int, Event]], llm: LLM | None) -> dict[int, dict[str, Any]]:
+def read_meals(database: Database, device_id: str, events: list[tuple[int, Event]], llm: LLM | None,
+               clock: Callable[[], float] = time.monotonic) -> dict[int, dict[str, Any]]:
     """The hub's reading of each meal sent as text, by index. A meal stored already, saying the same, keeps the
-    reading it was stored with, so a resend is neither read again nor told something else."""
+    reading it was stored with, so a resend is neither read again nor told something else.
+
+    The model gets MEAL_BUDGET_SECONDS for the whole request and at most MEAL_MODEL_MAX meals; the first sign that
+    it can't be used (not running, an error) ends its turn. Whatever it didn't read is split, so a collector never
+    waits long, however many meals it sends or however busy the model is."""
+    from ..llm import LLMError
+
     wanted = [(index, event) for index, event in events if needs_reading(event)]
     if not wanted:
         return {}
@@ -376,13 +393,25 @@ def read_meals(database: Database, device_id: str, events: list[tuple[int, Event
             row = conn.execute("SELECT data FROM events WHERE device_id = ? AND dedup_key = ?",
                                (device_id, shown.dedup_key())).fetchone()
             data = json.loads(row["data"]) if row is not None else None
-            if isinstance(data, dict) and isinstance(data.get("parsed"), dict):
-                earlier = data.pop("parsed")
+            if isinstance(data, dict) and isinstance(data.get(HUB_READING), dict):
+                earlier = data.pop(HUB_READING)
                 if data == shown.data:
                     readings[index] = earlier
-    for index, event in wanted:
-        if index not in readings:
-            readings[index] = read_meal(event, llm)  # outside any transaction: the model may take a few seconds
+    deadline = clock() + MEAL_BUDGET_SECONDS
+    asked = 0
+    model = llm
+    for index, event in wanted:  # outside any transaction: the model may take a few seconds
+        if index in readings:
+            continue
+        items = None
+        left = deadline - clock()
+        if model is not None and "items" not in event.data and asked < MEAL_MODEL_MAX and left >= 1.0:
+            asked += 1
+            try:
+                items = meal_items_from_model(str(event.data["text"]), model, left)
+            except LLMError:
+                model = None  # not running, or busy past the budget: the rest are split
+        readings[index] = read_meal(event, items)
     return readings
 
 
@@ -415,6 +444,11 @@ def ingest(database: Database, device: AuthenticatedDevice, payload: Any, now: d
     with database.connect() as conn:
         try:
             with transaction(conn):
+                # Reading meals can take seconds: a device revoked meanwhile stores nothing, as at the door.
+                revoked = conn.execute("SELECT revoked_at FROM devices WHERE device_id = ?", (device.device_id,)).fetchone()
+                if revoked is not None and revoked["revoked_at"] is not None:
+                    raise ApiError(401, "unauthorized", "this device isn't paired any more; pair it again",
+                                   headers={"WWW-Authenticate": "Bearer"})
                 stored = store_events(conn, device.device_id, pairs, readings)
         except sqlite3.IntegrityError:
             # The device was deleted after it was let in (delete-all, DT-46): pair again, as a revoked one does.
@@ -495,8 +529,10 @@ async def post_events(
     if device.is_viewer:
         raise ApiError(403, "forbidden", "viewer tokens can read the dashboard but cannot send events")
     payload = await read_json_body(request)
+    settings = getattr(request.app.state, "settings", None)
+    reader = getattr(request.app.state, "llm", None) if settings is None or settings.ai_meals else None  # DT-42
     try:
-        result = await run_in_threadpool(ingest, database, device, payload, llm=getattr(request.app.state, "llm", None))
+        result = await run_in_threadpool(ingest, database, device, payload, llm=reader)
     except MalformedBatchError as exc:
         raise ApiError(400, "bad_request", str(exc)) from None
     except BatchTooLargeError as exc:

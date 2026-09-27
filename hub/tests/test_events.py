@@ -9,13 +9,26 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from conftest import FakeModelServer
+from conftest import LOCAL_CLIENT, LOCAL_URL, FakeModelServer
 from fastapi.testclient import TestClient
 
-from daytrace_hub import __version__
+from daytrace_hub import __version__, redaction
+from daytrace_hub.api import events as events_api
 from daytrace_hub.api import timeline as timeline_api
-from daytrace_hub.api.events import MAX_BODY_BYTES, ingest, meal_items_from_text, meal_type_at, store_events
+from daytrace_hub.api.events import (
+    MAX_BODY_BYTES,
+    MEAL_BUDGET_SECONDS,
+    MEAL_MODEL_MAX,
+    ingest,
+    meal_items_from_text,
+    meal_type_at,
+    meal_type_named,
+    read_meals,
+    store_events,
+)
+from daytrace_hub.app import create_app
 from daytrace_hub.auth import AuthenticatedDevice, hash_token, register_device
+from daytrace_hub.config import Settings, load_settings
 from daytrace_hub.db import Database, transaction
 from daytrace_hub.models import Event
 from daytrace_hub.stats import Stats
@@ -655,3 +668,104 @@ def test_a_model_that_is_down_is_not_waited_for(client: TestClient, tokens: dict
     fake_llm.down = True
     reading = post(client, tokens["iphone-1"], meal()).json()["meals"][0]
     assert reading["items_by"] == "text"
+
+
+def many(count: int) -> dict[str, Any]:
+    return {"events": [meal(f"soup number {n}", start=f"2026-09-25T13:{n:02d}:00-04:00") for n in range(count)]}
+
+
+def test_a_model_that_fails_is_asked_once_per_request(client: TestClient, tokens: dict[str, str], fake_llm: FakeModelServer) -> None:
+    fake_llm.status_codes = [500] * 50  # the model list and every chat fail
+    body = post(client, tokens["iphone-1"], many(10)).json()
+    assert [m["items_by"] for m in body["meals"]] == ["text"] * 10
+    assert len(fake_llm.requests) == 1  # one look for the model, no retry, then the text is split
+
+
+def test_the_model_reads_a_few_meals_per_request_and_the_rest_are_split(client: TestClient, tokens: dict[str, str],
+                                                                        fake_llm: FakeModelServer) -> None:
+    for n in range(MEAL_MODEL_MAX + 2):
+        fake_llm.reply_text(json.dumps({"items": [f"soup number {n}"]}))
+    body = post(client, tokens["iphone-1"], many(MEAL_MODEL_MAX + 2)).json()
+    assert [m["items_by"] for m in body["meals"]] == ["ai"] * MEAL_MODEL_MAX + ["text"] * 2
+    assert len(fake_llm.chats()) == MEAL_MODEL_MAX
+
+
+def test_the_model_gets_one_time_budget_for_the_whole_request(db: Database, tokens: dict[str, str], fake_llm: FakeModelServer) -> None:
+    fake_llm.reply_text(json.dumps({"items": ["soup number 0"]}))
+    fake_llm.reply_text(json.dumps({"items": ["soup number 1"]}))
+    ticks = iter([0.0, 0.0, MEAL_BUDGET_SECONDS])  # the budget is spent after the first meal
+    events = [(n, Event.model_validate(e)) for n, e in enumerate(many(2)["events"])]
+    readings = read_meals(db, "iphone-1", events, fake_llm.llm(), clock=lambda: next(ticks))
+    assert [readings[n]["items_by"] for n in (0, 1)] == ["ai", "text"]
+    assert len(fake_llm.chats()) == 1
+
+
+def test_the_meal_readers_timeout_is_what_is_left_of_the_budget(db: Database, tokens: dict[str, str], fake_llm: FakeModelServer,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[float] = []
+    real = events_api.meal_items_from_model
+    monkeypatch.setattr(events_api, "meal_items_from_model", lambda text, llm, seconds: seen.append(seconds) or real(text, llm, seconds))
+    ticks = iter([0.0, 5.0, 12.0])
+    events = [(n, Event.model_validate(e)) for n, e in enumerate(many(2)["events"])]
+    read_meals(db, "iphone-1", events, fake_llm.llm(), clock=lambda: next(ticks))
+    assert seen == [MEAL_BUDGET_SECONDS - 5.0, MEAL_BUDGET_SECONDS - 12.0]
+
+
+@pytest.mark.parametrize(("text", "named"), [
+    ("breakfast burrito for dinner", "dinner"), ("leftover dinner rolls for lunch", "lunch"),
+    ("Brunch-style eggs for supper", "dinner"), ("Lunch: rice and dal", "lunch"), ("dinner - pasta", "dinner"),
+    ("crackers as a snack", "snack"), ("toast at breakfast", "breakfast"), ("breakfast burrito", None),
+    ("dinner rolls", None), ("pizza for a late dinner", "dinner"),
+])
+def test_only_an_explicit_meal_names_the_type(text: str, named: str | None) -> None:
+    assert meal_type_named(text) == named
+
+
+def test_the_timeline_shows_the_hubs_reading(client: TestClient, tokens: dict[str, str]) -> None:
+    post(client, tokens["iphone-1"], meal())
+    body = client.get("/api/v1/timeline", params={"date": "2026-09-25", "tz": "America/Toronto"}).json()
+    assert [(m["items"], m["meal_type"]) for m in body["meals"]] == [(["two rotis", "dal"], "lunch")]
+
+
+def test_a_device_revoked_while_its_meals_are_read_stores_nothing(client: TestClient, db: Database, tokens: dict[str, str],
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    real = events_api.read_meals
+
+    def revoke_meanwhile(*args: Any, **kwargs: Any) -> dict[int, dict[str, Any]]:
+        readings = real(*args, **kwargs)
+        with db.connect() as conn:
+            conn.execute("UPDATE devices SET revoked_at = '2026-09-25T17:00:00.000000Z' WHERE device_id = 'iphone-1'")
+        return readings
+
+    monkeypatch.setattr(events_api, "read_meals", revoke_meanwhile)
+    response = post(client, tokens["iphone-1"], meal())
+    assert response.status_code == 401
+    assert stored(db, "iphone-1") == []
+
+
+def test_a_meal_is_still_one_meal_after_the_rules_hide_its_title(client: TestClient, db: Database, tokens: dict[str, str]) -> None:
+    event = meal(title="Lunch near the Falcon office")
+    assert post(client, tokens["iphone-1"], event).json()["accepted"] == 1
+    with db.connect() as conn, transaction(conn):
+        redaction.save_choices(conn, redaction.check_choices([], [("Work", ["Falcon"])]))
+    assert redaction.stored_matches(db, apply=True) == 1
+    again = post(client, tokens["iphone-1"], event).json()
+    assert (again["accepted"], again["duplicates"]) == (0, 1)
+    assert len(stored(db, "iphone-1")) == 1
+
+
+def test_meals_can_be_kept_from_the_model(settings: Settings, db: Database, tokens: dict[str, str], fake_llm: FakeModelServer) -> None:
+    off = Settings(profile=settings.profile, data_dir=settings.data_dir, ai_meals=False)
+    with TestClient(create_app(off, llm=fake_llm.llm()), client=LOCAL_CLIENT, base_url=LOCAL_URL) as client:
+        reading = post(client, tokens["iphone-1"], meal()).json()["meals"][0]
+    assert reading["items_by"] == "text" and fake_llm.chats() == []
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, True), ("off", False), ("on", True)])
+def test_the_meals_setting_is_on_unless_switched_off(tmp_path: Path, value: str | None, expected: bool) -> None:
+    env = {"DAYTRACE_DATA_DIR": str(tmp_path)}
+    if value is not None:
+        env["DAYTRACE_AI_MEALS"] = value
+    assert load_settings("demo", env).ai_meals is expected
+    with pytest.raises(ValueError, match="DAYTRACE_AI_MEALS"):
+        load_settings("demo", {**env, "DAYTRACE_AI_MEALS": "sometimes"})
