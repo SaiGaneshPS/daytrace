@@ -8,7 +8,8 @@ cloud server, the AI runs on your own machine, and the hub shows you that it mad
 
 ![A tour of the dashboard with demo data: the Today timeline, the day's story, Ask, Insights, Streaks, the weekly Wrapped card and the Privacy page](docs/img/tour.png)
 
-**Watch it run:** [a recording of the demo](docs/img/demo.webm) (about 2 minutes, captioned, no sound).
+**Watch it run:** [a recording of the demo](docs/img/demo.webm) (about 2 minutes, captioned, no sound). It's a
+10 MB WebM file: GitHub shows its file page, and "View raw" downloads it. It plays in Chrome, Edge, Firefox and VLC.
 
 **The pitch:** [docs/pitch.md](docs/pitch.md), the problem, the gap and what's next, with sources.
 
@@ -136,7 +137,8 @@ collectors exist.
 - **A local AI only.** The model runs on your machine or your LAN (the test profiles may also use your tailnet),
   and the hub refuses any other address for it.
 - **Sensitive titles are never stored.** Banking, health portals, password managers and private browser windows
-  become `[redacted]`, plus any words you add. The time still counts; only the words are gone.
+  become `[redacted]`. Words you add hide new events at once, and stored ones when you confirm. The time still
+  counts; only the words are gone.
 - **Every device is paired.** A phone joins with a one-time code from the hub's own screen, gets its own token (the
   hub keeps only a hash of it), and can be revoked at any time.
 - **Yours to take or delete.** Export everything as JSON, or delete everything after typing a confirmation phrase.
