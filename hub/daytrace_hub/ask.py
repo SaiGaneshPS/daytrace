@@ -21,6 +21,7 @@ OFF_TOPIC and the hub words the reply. Streaks get a tool when their engine (DT-
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -232,28 +233,44 @@ def get_totals(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     if not counted:  # missing is not zero: no total to give
         out.notes.append("no screen data on any of those days, so there is nothing to count")
         return out
-    out.facts.append(Fact(f"{subject}, {when}", round(result["total_minutes"]), "minutes"))
-    if len(days) > 1:
-        out.facts.append(Fact(f"daily average of {subject} over the {len(counted)} days with data, {when}",
-                              round(result["total_minutes"] / len(counted)), "minutes"))
     used = [item for item in result["items"] if item["seconds"]]
-    if group_by in NOUNS:
-        out.facts.append(Fact(f"number of {NOUNS[group_by]} used{filters.scope(app=group_by != 'app')}, {when}",
-                              len(used), NOUNS[group_by]))
+    # An app filter can match several apps and sites (YouTube, youtube.com). Whatever the grouping, the total and all
+    # that is cut from it are then of all of them together ("the whole"), and each app's own time says whose part it
+    # is: an answer can't pair one app's time with the average of them all (both are facts, so the number check
+    # can't tell).
+    matched = (used if group_by == "app" else _matched(stats, days, filters)) if filters.app else []
+    many = len(matched) > 1
+    whole = subject + (f" (all {len(matched)} together)" if many else "")
+    if many:
+        out.notes.append(f"the total counts all {len(matched)} apps and sites matching {filters.app} at once, and the daily "
+                         "average is of that total; each line starting \"of that total\" is one of them")
+    total = round(result["total_minutes"])
+    named = f"{subject} (all {len(matched)} together: {_names([item['key'] for item in matched])})" if many else subject
+    out.facts.append(Fact(f"{named}, {when}", total, "minutes"))
+    if len(days) > 1:
+        out.facts.append(Fact(f"daily average of {whole}, over the {len(counted)} days with data, {when}",
+                              round(result["total_minutes"] / len(counted)), "minutes"))
+    if group_by in NOUNS and not (group_by == "app" and many):  # how many match is in the total's own label then
+        what = f"{NOUNS[group_by]} matching {filters.app}" if group_by == "app" and filters.app else NOUNS[group_by]
+        out.facts.append(Fact(f"number of {what} used{filters.scope(app=group_by != 'app')}, {when}", len(used), NOUNS[group_by]))
     items = used[:MAX_ITEMS] if group_by in NOUNS else result["items"]  # every hour and day, in order
+    values = [round(item["minutes"]) for item in items]
+    if group_by == "app" and many and len(used) <= MAX_ITEMS:
+        values = _whole_parts([item["minutes"] for item in items], total)  # parts that add up to the total said
     points = []
-    for item in items:
+    for item, value in zip(items, values, strict=True):
         key = item["key"]
         if group_by == "app":
-            label, point = f"time in {key}{filters.scope(app=False)}, {when}", key
+            one_of = f" (one of the {len(matched)} matching {filters.app})" if many else ""
+            label, point = f"{'of that total, ' if many else ''}time in {key}{filters.scope(app=False)}{one_of}, {when}", key
         elif group_by in ("category", "device"):
             label, point = f"time on {key}{filters.scope(category=group_by != 'category')}, {when}", key
         elif group_by == "hour":
-            label, point = f"{subject} between {key}:00 and {(int(key) + 1) % 24:02d}:00 (all days together), {when}", f"{key}:00"
+            label, point = f"{whole} between {key}:00 and {(int(key) + 1) % 24:02d}:00 (all days together), {when}", f"{key}:00"
         else:
-            label, point = f"{subject} on {_on(date.fromisoformat(key))}", key
-        out.facts.append(Fact(label, round(item["minutes"]), "minutes"))
-        points.append((point, round(item["minutes"])))
+            label, point = f"{whole} on {_on(date.fromisoformat(key))}", key
+        out.facts.append(Fact(label, value, "minutes"))
+        points.append((point, value))
     if group_by in NOUNS and len(used) > MAX_ITEMS:
         out.notes.append(f"only the {NOUNS[group_by]} with the most time are listed by name")
     if filters.between and filters.between[1] <= filters.between[0]:
@@ -285,6 +302,30 @@ def _runs(pieces: Iterable[Session]) -> list[_Run]:
     return sorted(runs, key=lambda run: run.first.start)
 
 
+def _matched(stats: Stats, days: Sequence[date], filters: _Filters) -> list[dict[str, Any]]:
+    """The apps and sites an app filter matches with time on these days, whatever a total is grouped by."""
+    found = stats.totals(days[0], days[-1], "app", between=filters.between, app=filters.app, category=filters.category,
+                         device_types=filters.device_types)
+    return [item for item in found["items"] if item["seconds"]]
+
+
+def _names(names: Sequence[str]) -> str:
+    """ "YouTube and youtube.com", "A, B and C", "A, B, C and others" (no count: a bare number would lend itself to an
+    answer's check)."""
+    if len(names) > 3:
+        return f"{', '.join(names[:3])} and others"
+    return " and ".join(names) if len(names) < 3 else f"{names[0]}, {names[1]} and {names[2]}"
+
+
+def _whole_parts(minutes: Sequence[float], total: int) -> list[int]:
+    """Whole minutes for the parts of a total that add up to the total as said (the largest remainders round up)."""
+    parts = [math.floor(value) for value in minutes]
+    by_remainder = sorted(range(len(parts)), key=lambda i: minutes[i] - parts[i], reverse=True)
+    for i in by_remainder[: max(0, total - sum(parts))]:
+        parts[i] += 1
+    return parts
+
+
 def get_sessions(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     days, filters = _range(args), _Filters.read(args)
     pieces: list[Session] = []
@@ -295,8 +336,13 @@ def get_sessions(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     when = _when(days)
     out = ToolOutput(days=set(days))
     _in_progress_note(stats, days, out)
+    names = {run.first.app or run.first.app_id or "unknown" for run in runs}
+    together = f" (all {len(names)} apps and sites together)" if filters.app and len(names) > 1 else ""
+    if together:
+        out.notes.append(f"the time in those sessions counts all {len(names)} apps and sites matching {filters.app} at once; "
+                         "each session listed is one of them")
     out.facts.append(Fact(f"number of sessions{filters.scope()}, {when}", len(runs), "sessions"))
-    out.facts.append(Fact(f"time in those sessions, {when}", round(sum(run.seconds for run in runs) / 60), "minutes"))
+    out.facts.append(Fact(f"time in those sessions{together}, {when}", round(sum(run.seconds for run in runs) / 60), "minutes"))
     for run in runs[:MAX_SESSIONS]:
         session, local = run.first, run.first.start.astimezone(stats.tz)
         out.days.add(local.date())

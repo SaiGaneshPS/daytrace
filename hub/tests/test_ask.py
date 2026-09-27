@@ -128,7 +128,7 @@ def test_sessions_say_when_things_happened(week: Database) -> None:
     out = tool(week, "get_sessions", {**LAST_WEEK, "app": "YouTube", "from_time": "23:00", "until_time": "03:00"})
     assert [(f.label, f.value) for f in out.facts] == [
         ("number of sessions in apps matching YouTube between 23:00 and 03:00, from Monday 2026-09-21 to Sunday 2026-09-27", 4),
-        ("time in those sessions, from Monday 2026-09-21 to Sunday 2026-09-27", 110),
+        ("time in those sessions (all 2 apps and sites together), from Monday 2026-09-21 to Sunday 2026-09-27", 110),
         ("YouTube (video) on android-1, Monday 2026-09-21 23:00 to 23:30", 30),
         ("YouTube (video) on android-1, Tuesday 2026-09-22 23:45 to 00:30", 45),  # one session across midnight
         ("YouTube (video) on android-1, Friday 2026-09-25 01:00 to 01:20", 20),
@@ -228,8 +228,8 @@ def test_wrong_numbers_twice_show_the_facts_instead(week: Database, fake_llm: Fa
     fake_llm.reply_text("You watched 3 hours of YouTube after 11 pm last week.")
     result = asked(week, fake_llm)
     assert result.fallback is True and result.model is None and "3 hours" in (result.reason or "")
-    assert result.answer.startswith("Here is what I found: time in apps matching YouTube between 23:00 and 03:00, "
-                                    "from Monday 2026-09-21 to Sunday 2026-09-27: 1 hour 50 minutes;")
+    assert result.answer.startswith("Here is what I found: time in apps matching YouTube between 23:00 and 03:00 "
+                                    "(all 2 together: YouTube and youtube.com), from Monday 2026-09-21 to Sunday 2026-09-27: 1 hour 50 minutes;")
     assert unsupported_numbers(result.answer, result.facts, WEEK_DAYS) == []  # the facts never fail their own check
 
 
@@ -354,9 +354,66 @@ def test_a_short_app_name_matches_whole_words_only(week: Database) -> None:
 def test_labels_never_repeat_with_different_values(week: Database) -> None:
     out = tool(week, "get_totals", {**YOUTUBE_AFTER_11, "group_by": "app"})
     assert len({f.label for f in out.facts}) == len(out.facts)
-    assert [(f.label.split(" between")[0], f.value) for f in out.facts[2:]] == [("number of apps used", 2),
-                                                                                 ("time in YouTube", 95),
-                                                                                 ("time in youtube.com", 15)]
+    assert [(f.label.split(" between")[0], f.value) for f in out.facts[2:]] == [("of that total, time in YouTube", 95),
+                                                                                 ("of that total, time in youtube.com", 15)]
+
+
+def test_an_app_and_its_site_are_parts_of_one_total_that_can_not_be_mixed_up(week: Database) -> None:
+    # The demo's question (DT-48): the total and the daily average are of the app and the site together, and each
+    # one's time says it is part of that, so "275 minutes, 43 a day" (the app's total, the average of both) can't be
+    # read off the facts.
+    out = tool(week, "get_totals", {**LAST_WEEK, "app": "YouTube"})
+    total, average = out.facts[0], out.facts[1]
+    assert total.label == ("time in apps matching YouTube (all 2 together: YouTube and youtube.com), "
+                           "from Monday 2026-09-21 to Sunday 2026-09-27")
+    assert average.label.startswith("daily average of time in apps matching YouTube (all 2 together), over the ")
+    assert not any(f.label.startswith("number of ") for f in out.facts)  # "2" is in the total's label: no "spread over 2"
+    parts = [f for f in out.facts if f.label.startswith("of that total, ")]
+    assert [f.label for f in parts] == [
+        "of that total, time in YouTube (one of the 2 matching YouTube), from Monday 2026-09-21 to Sunday 2026-09-27",
+        "of that total, time in youtube.com (one of the 2 matching YouTube), from Monday 2026-09-21 to Sunday 2026-09-27"]
+    assert sum(f.value for f in parts) == total.value
+    assert any('each line starting "of that total" is one of them' in note for note in out.notes)
+    one_app = tool(week, "get_totals", {**LAST_WEEK, "app": "edge"})  # one match: no parts to tell apart
+    assert not any("together" in f.label or f.label.startswith("of that total") for f in one_app.facts)
+    assert any(f.label.startswith("number of apps matching edge used, ") for f in one_app.facts)  # the filter kept
+
+
+def test_the_parts_add_up_to_the_total_said_whatever_the_seconds(db: Database) -> None:
+    # 109 minutes 36 seconds in the app and 13 minutes 36 seconds on the site: 123 minutes 12 seconds in all is "123",
+    # while each part rounded alone would make 110 + 14 = 124.
+    add(db, "android-1", "android", [phone(*YT, at(22, "10:00:00"), at(22, "11:49:36"), 1)])
+    add(db, "windows-1", "windows", [span("window", at(23, "20:00:00"), at(23, "20:13:36"), app="Microsoft Edge", app_id="msedge.exe")])
+    add(db, "browser-1", "browser", [span("web", at(23, "20:00:00"), at(23, "20:13:36"), source="browser", app_id="msedge.exe",
+                                          data={"domain": "youtube.com"}, seq=1)])
+    out = tool(db, "get_totals", {**LAST_WEEK, "app": "YouTube"})
+    parts = [f.value for f in out.facts if f.label.startswith("of that total, ")]
+    assert out.facts[0].value == 123 and sum(parts) == 123 and parts in ([110, 13], [109, 14])  # a tie of remainders: either
+    assert ask_module._whole_parts([109.7, 13.4], 123) == [110, 13]  # 109 + 13 = 122: the larger remainder rounds up
+    assert ask_module._whole_parts([0.5, 0.5, 0.5], 2) == [1, 1, 0]
+
+
+def test_every_grouping_and_the_sessions_say_the_total_is_of_them_all(week: Database) -> None:
+    by_day = tool(week, "get_totals", {**LAST_WEEK, "app": "YouTube", "group_by": "day"})
+    assert by_day.facts[1].label.startswith("daily average of time in apps matching YouTube (all 2 together), over the ")
+    assert all("(all 2 together" in f.label for f in by_day.facts if f.unit == "minutes")
+    sessions = tool(week, "get_sessions", {**LAST_WEEK, "app": "YouTube"})
+    assert sessions.facts[1].label.startswith("time in those sessions (all 2 apps and sites together), ")
+    assert any("each session listed is one of them" in note for note in sessions.notes)
+
+
+def test_parts_from_two_filters_keep_their_own_totals(week: Database) -> None:
+    # Two calls in one question whose filters both match the app and the site: merged into one list of facts, each
+    # part still says which total it is part of.
+    youtube = tool(week, "get_totals", {**LAST_WEEK, "app": "YouTube"})
+    tube = tool(week, "get_totals", {**LAST_WEEK, "app": "tube"})
+    part = next(f for f in tube.facts if f.label.startswith("of that total, time in youtube.com"))
+    assert "(one of the 2 matching tube)" in part.label  # a part names its own total, not just "that total"
+    shared = {f.label for f in youtube.facts} & {f.label for f in tube.facts}
+    assert not any("youtube.com" in label for label in shared)
+    assert ask_module._names(["A", "B", "C", "D"]) == "A, B, C and others"  # no count to lend a number to an answer
+    assert ask_module._names(["A", "B", "C"]) == "A, B and C" and ask_module._names(["A", "B"]) == "A and B"
+    assert all(" more" not in f.label for f in youtube.facts + tube.facts)  # no bare "N more" to lend a number
 
 
 def test_the_calendar_shows_what_is_still_ahead(db: Database) -> None:
