@@ -590,7 +590,7 @@ function PairPanel({ onChanged }: { onChanged: () => void }) {
               tabs={[
                 {
                   id: "app",
-                  label: "Daytrace app",
+                  label: "App",
                   content: (
                     <div className="pair-way">
                       {showQr && <QrCode src={qr("app")} alt="QR code for the Daytrace app" left={left / CODE_LIFETIME_MS} />}

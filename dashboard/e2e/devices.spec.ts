@@ -463,6 +463,13 @@ test("phone: every control on Devices can be tapped (44 px or more)", async ({ p
   await expect(page.locator(".code-digits")).toBeVisible();
   expect(await small()).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  // Every way to pair is on screen: none of the tabs is cut off at the edge (fonts differ between systems).
+  const cut = await page.getByRole("tab").evaluateAll((tabs) =>
+    tabs
+      .filter((tab) => tab.getBoundingClientRect().right > (tab.parentElement as HTMLElement).getBoundingClientRect().right + 0.5)
+      .map((tab) => tab.textContent),
+  );
+  expect(cut).toEqual([]);
 });
 
 for (const scheme of ["light", "dark"] as const) {

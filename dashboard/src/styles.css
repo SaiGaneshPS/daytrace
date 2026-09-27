@@ -403,6 +403,7 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .pair-start { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .pair-start p { margin: 0; max-width: 56ch; }
 .pair-panel { display: grid; gap: var(--space-5); }
+.pair-panel > * { min-width: 0; } /* the tabs scroll inside the card instead of pushing past it */
 @media (min-width: 900px) { .pair-panel { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
 .pair-code { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
 .pair-code p { margin: 0; }
