@@ -3,17 +3,20 @@
 // piece by CSS (all at once under reduced motion; motion's reveal would be skipped on a page opened directly, under
 // the app's AnimatePresence initial={false}), saves as a PNG (html-to-image) and, where the browser can share files
 // (phones), opens the share sheet. Every number is the hub's (GET /wrapped). The week lives in the address.
-// The image is drawn once the card is fully shown (never half faded in) and kept: a phone shares only right after a
-// tap, so the share sheet can't wait for the drawing. It never goes through fetch() or a data: URL, which the hub's
-// Content-Security-Policy (connect-src 'self') refuses.
+// The image is drawn only once the card is fully shown (never half faded in). Where there is a share sheet it is
+// drawn ahead and kept until the card looks different (a new size, theme or text size): a phone shares only right
+// after a tap, so the share sheet can't wait for the drawing. It never goes through fetch() or a data: URL, which
+// the hub's Content-Security-Policy (connect-src 'self') refuses.
 import { toBlob } from "html-to-image";
 import { type CSSProperties, type RefObject, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { AI_TIMEOUT_MS, useApi } from "../api/client";
 import type { components } from "../api/schema";
-import { longDay, shiftDay, useToday } from "../components/DayPicker";
+import { Chevron, longDay, shiftDay, useToday } from "../components/DayPicker";
 import Skeleton from "../components/Skeleton";
 import { formatMinutes } from "../components/StatCard";
+import { dayCount } from "../components/streakText";
+import { EARLIEST, localZone, valueOf } from "./insights/shared";
 
 type WrappedWeek = components["schemas"]["Wrapped"];
 
@@ -38,25 +41,24 @@ export function weekMonday(week: string): string {
 }
 
 export const shiftWeek = (week: string, by: number) => isoWeekOf(shiftDay(weekMonday(week), 7 * by));
-/** A real ISO week ("2026-W53" is, "2025-W53" isn't: 2025 has 52). */
-export const isWeek = (week: string) => /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/.test(week) && isoWeekOf(weekMonday(week)) === week;
+/** The first week the hub has: the first whose Monday is on or after its earliest day (1970-W02). */
+export const FIRST_WEEK = ((week) => (weekMonday(week) < EARLIEST ? shiftWeek(week, 1) : week))(isoWeekOf(EARLIEST));
+/** A real ISO week the hub can have ("2026-W53" is, "2025-W53" isn't: 2025 has 52). */
+export const isWeek = (week: string) =>
+  /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/.test(week) && isoWeekOf(weekMonday(week)) === week && week >= FIRST_WEEK;
 
 /** A piece of the card, revealed after the ones before it (styles.css .wrapped-card > *). */
 const step = (order: number) => ({ "--step": order }) as CSSProperties;
 
-function value(data: WrappedWeek, id: string): number | null {
-  const found = data.metrics.find((metric) => metric.id === id)?.value;
-  return typeof found === "number" ? found : null;
-}
-
 function WrappedCard({ data, card }: { data: WrappedWeek; card: RefObject<HTMLElement | null> }) {
-  const screen = value(data, "screen_time");
-  const daily = value(data, "daily_average");
+  const value = (id: string) => valueOf(data, id) ?? null;
+  const screen = value("screen_time");
+  const daily = value("daily_average");
   const stats = [
-    { label: "Focused", value: value(data, "focused_time"), text: (minutes: number) => formatMinutes(minutes) },
-    { label: "Focus score", value: value(data, "focus_score"), text: (score: number) => `${Math.round(score)}` },
-    { label: "Sleep a night", value: value(data, "sleep"), text: (minutes: number) => formatMinutes(minutes) },
-    { label: "After 11 pm", value: value(data, "late_night"), text: (minutes: number) => `${formatMinutes(minutes)} a night` },
+    { label: "Focused", value: value("focused_time"), text: (minutes: number) => formatMinutes(minutes) },
+    { label: "Focus score", value: value("focus_score"), text: (score: number) => `${Math.round(score)}` },
+    { label: "Sleep a night", value: value("sleep"), text: (minutes: number) => formatMinutes(minutes) },
+    { label: "After 11 pm", value: value("late_night"), text: (minutes: number) => `${formatMinutes(minutes)} a night` },
   ];
   const streaks = data.streaks.filter((streak) => streak.days_with_data);
   return (
@@ -100,7 +102,7 @@ function WrappedCard({ data, card }: { data: WrappedWeek; card: RefObject<HTMLEl
               <li key={streak.id}>
                 <span>{streak.name}</span>
                 <strong>
-                  {streak.met} of {streak.days_with_data} days
+                  {streak.met} of {dayCount(streak.days_with_data)}
                 </strong>
               </li>
             ))}
@@ -108,8 +110,8 @@ function WrappedCard({ data, card }: { data: WrappedWeek; card: RefObject<HTMLEl
         </section>
       )}
       <ol className="wrapped-lines" style={step(5)} aria-label="The week in three lines">
-        {data.lines.map((line) => (
-          <li key={line}>{line}</li>
+        {data.lines.map((line, index) => (
+          <li key={index /* by place: the plain lines can repeat one (the padding line) */}>{line}</li>
         ))}
       </ol>
       <p className="wrapped-foot" style={step(6)}>
@@ -126,16 +128,20 @@ async function cardImage(node: HTMLElement): Promise<Blob> {
   return image;
 }
 
+type Note = { text: string; problem: boolean };
+
 export default function Wrapped() {
   const [params, setParams] = useSearchParams();
   const today = useToday();
   const thisWeek = isoWeekOf(today);
   const asked = params.get("week");
   const week = asked && isWeek(asked) && asked <= thisWeek ? asked : shiftWeek(thisWeek, -1); // the last whole week
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tz = localZone();
   const loaded = useApi("/api/v1/wrapped", { query: { week, tz }, timeout: AI_TIMEOUT_MS, quiet: true });
   const data = loaded.current ? loaded.data : undefined;
   const card = useRef<HTMLElement>(null);
+  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+
   const [shown, setShown] = useState<WrappedWeek | null>(null); // the card that has finished its reveal
   const ready = data !== undefined && shown === data;
   useEffect(() => {
@@ -151,7 +157,9 @@ export default function Wrapped() {
       live = false;
     };
   }, [data]);
+
   const image = useRef<Promise<Blob> | null>(null);
+  const [look, setLook] = useState(0); // counts the times the card may have come to look different
   const draw = () => {
     if (!card.current) return Promise.reject(new Error("no card"));
     const made = cardImage(card.current);
@@ -162,12 +170,43 @@ export default function Wrapped() {
     return made;
   };
   useEffect(() => {
+    // A new size (a turned phone, a resized window, a new text size) or theme makes the kept image old.
+    const node = card.current;
+    if (!data || !node) return;
+    let timer: number | undefined;
+    const changed = () => {
+      image.current = null;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setLook((count) => count + 1), 300); // once it has settled
+    };
+    let size = `${node.offsetWidth}x${node.offsetHeight}`;
+    const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      const now = `${node.offsetWidth}x${node.offsetHeight}`;
+      if (now !== size) {
+        size = now;
+        changed();
+      }
+    });
+    resized?.observe(node);
+    const scheme = window.matchMedia?.("(prefers-color-scheme: dark)");
+    scheme?.addEventListener?.("change", changed);
+    const theme = new MutationObserver(changed);
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+    return () => {
+      resized?.disconnect();
+      scheme?.removeEventListener?.("change", changed);
+      theme.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [data]);
+  useEffect(() => {
     image.current = null;
-    if (ready) void draw().catch(() => undefined);
-  }, [ready, data]); // drawn again only for a new card
+    if (ready && canShare) void draw().catch(() => undefined); // only where a share sheet waits on it
+  }, [ready, data, look, canShare]); // draw is made anew each render; these are what it depends on
+
   const [busy, setBusy] = useState<"save" | "share" | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+  const [note, setNote] = useState<Note | null>(null);
+  useEffect(() => setNote(null), [week]); // a note is about the week it was said for
   const name = `daytrace-wrapped-${week}.png`;
   const go = (by: number) =>
     setParams((previous) => {
@@ -187,9 +226,9 @@ export default function Wrapped() {
       link.href = url;
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000); // after the download has started
-      setNote(`Saved as ${name}.`);
+      setNote({ text: `Saved as ${name}.`, problem: false });
     } catch {
-      setNote("The card couldn't be saved as an image.");
+      setNote({ text: "The card couldn't be saved as an image.", problem: true });
     } finally {
       setBusy(null);
     }
@@ -201,12 +240,12 @@ export default function Wrapped() {
     try {
       const file = new File([await (image.current ?? draw())], name, { type: "image/png" });
       if (!navigator.canShare({ files: [file] })) {
-        setNote("This browser can't share images: save it instead.");
+        setNote({ text: "This browser can't share images: save it instead.", problem: false });
         return;
       }
       await navigator.share({ files: [file], title: "My week on Daytrace" });
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) setNote("The card couldn't be shared.");
+      if (!(error instanceof DOMException && error.name === "AbortError")) setNote({ text: "The card couldn't be shared.", problem: true });
     } finally {
       setBusy(null);
     }
@@ -220,18 +259,14 @@ export default function Wrapped() {
           <h1>Wrapped</h1>
         </div>
         <div className="week-picker" role="group" aria-label="Week">
-          <button type="button" className="icon-button" aria-label="The week before" onClick={() => go(-1)}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
+          <button type="button" className="icon-button" aria-label="The week before" onClick={() => go(-1)} disabled={week <= FIRST_WEEK}>
+            <Chevron direction="left" />
           </button>
           <span className="week-name">
             {longDay(weekMonday(week))} to {longDay(shiftDay(weekMonday(week), 6))}
           </span>
           <button type="button" className="icon-button" aria-label="The week after" onClick={() => go(1)} disabled={week >= thisWeek}>
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-              <path d="M9 5l7 7-7 7" />
-            </svg>
+            <Chevron direction="right" />
           </button>
         </div>
       </header>
@@ -261,8 +296,8 @@ export default function Wrapped() {
                 {busy === "share" ? "Sharing..." : "Share"}
               </button>
             )}
-            <p className="field-note" role="status">
-              {note}
+            <p className={`field-note${note?.problem ? "" : " field-hint"}`} role="status">
+              {note?.text}
             </p>
             {data.fallback && data.reason && <p className="muted wrapped-reason">Plain lines: {data.reason}.</p>}
           </div>

@@ -9,14 +9,14 @@
 // and a failed load says so where its numbers would be.
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import { useApi, usePolling } from "../api/client";
+import { useApi, useDaily, usePolling } from "../api/client";
 import type { components } from "../api/schema";
 import ChartCard from "../components/ChartCard";
 import DayPicker, { longDay, useToday } from "../components/DayPicker";
 import StatCard, { formatMinutes, spokenMinutes } from "../components/StatCard";
 import Tabs from "../components/Tabs";
 import StreakFlame from "../components/StreakFlame";
-import { flameState, todayWords } from "../components/streakText";
+import { dayCount, flameState, todayWords } from "../components/streakText";
 import Timeline from "../components/Timeline";
 
 import { type ChartOption, categoryStyle, useEChart } from "../theme/charts";
@@ -157,8 +157,9 @@ function Health({ summary }: { summary: Summary }) {
 }
 
 /** DT-54: the streaks at a glance, each flame with its days and what today needs; the Streaks page has the rest. */
-function StreakStrip({ tz }: { tz: string }) {
+function StreakStrip({ tz, today }: { tz: string; today: string }) {
   const streaks = useApi("/api/v1/streaks", { query: { tz, days: 1 }, quiet: true });
+  useDaily(streaks.reload, today);
   const list = streaks.data?.streaks ?? [];
   if (!list.length) return null; // not loaded, or the hub can't say yet: Today stays as it was
   return (
@@ -176,7 +177,7 @@ function StreakStrip({ tz }: { tz: string }) {
           <li key={streak.id} className={`streak-chip streak-${flameState(streak)}`}>
             <StreakFlame days={streak.current} state={flameState(streak)} />
             <span>
-              <strong>{streak.name}</strong> {streak.current} {streak.current === 1 ? "day" : "days"}
+              <strong>{streak.name}</strong> {dayCount(streak.current)}
               <span className="muted">{todayWords(streak)}</span>
             </span>
           </li>
@@ -270,7 +271,7 @@ export default function Today() {
         />
       </div>
 
-      {live && <StreakStrip tz={tz} />}
+      {live && <StreakStrip tz={tz} today={today} />}
 
       <Tabs
         label="Today views"

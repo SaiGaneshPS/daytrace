@@ -575,7 +575,10 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 /* --- streaks, goals, badges and Wrapped (DT-54) --------------------------------------------------------------- */
 
 .section-title { margin: 0; font-size: var(--text-lg); }
-.link { color: var(--accent-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.link {
+  display: inline-flex; align-items: center; min-height: var(--touch); /* a thumb-sized target, like every control */
+  color: var(--accent-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px;
+}
 /* Each flame sits in a box as big as the biggest (a month's run), so the words beside every flame line up. */
 .flame { display: inline-flex; flex-shrink: 0; align-items: flex-end; justify-content: center; width: 3.4rem; height: 4.25rem; }
 .flame svg { width: calc(2.6rem * var(--flame-scale, 1)); height: auto; overflow: visible; transform-origin: 50% 90%; }
@@ -619,7 +622,8 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .goal-rule { margin: 0; color: var(--muted); font-size: var(--text-sm); }
 .goal-form { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-2); max-width: 100%; }
 .goal-form input { width: 8rem; max-width: 100%; }
-.goal-form .field-note { flex-basis: 100%; text-align: center; color: var(--muted); }
+.goal-form .field-note { flex-basis: 100%; text-align: center; }
+.field-note.field-hint { color: var(--muted); } /* a hint; without it a note is a problem, in the error color */
 .ring { position: relative; width: min(10rem, 100%); aspect-ratio: 1; }
 .ring svg { width: 100%; height: 100%; }
 .ring-track { fill: none; stroke: var(--surface-2); stroke-width: 10; }
@@ -685,7 +689,7 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
 .wrapped-lines li { padding-left: var(--space-3); border-left: 3px solid rgb(255 255 255 / 0.6); }
 .wrapped-foot { margin: auto 0 0; font-size: var(--text-xs); opacity: 0.9; }
 .wrapped-actions { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); flex: 1 1 14rem; min-width: 0; }
-.wrapped-actions .field-note { text-align: left; color: var(--muted); }
+.wrapped-actions .field-note { text-align: left; }
 .wrapped-reason { margin: 0; font-size: var(--text-sm); }
 
 /* --- insights: food and calendar (DT-57) ----------------------------------------------------------------------- */

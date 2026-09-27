@@ -71,6 +71,26 @@ async function watchDrawing(page: Page) {
     };
   });
 }
+/** A browser with no share sheet (desktop Firefox, Linux Chromium): Save only. */
+const noShareSheet = (page: Page) =>
+  page.addInitScript(() => {
+    delete (Navigator.prototype as Partial<Navigator>).share;
+    delete (Navigator.prototype as Partial<Navigator>).canShare;
+  });
+/** A share sheet that keeps what it was handed. */
+const shareSheet = (page: Page) =>
+  page.addInitScript(() => {
+    const shared: object[] = [];
+    (window as unknown as { shared: object[] }).shared = shared;
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: (data: ShareData) => Boolean(data.files?.length) });
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: async (data: ShareData) => {
+        const file = data.files![0];
+        shared.push({ name: file.name, type: file.type, title: data.title, head: [...new Uint8Array(await file.slice(0, 4).arrayBuffer())] });
+      },
+    });
+  });
 const seen = (page: Page) => page.evaluate(() => (window as unknown as { seen: { drawn: number; copiedHalfShown: number; copied: number } }).seen);
 
 test("the card is the hub's week, with the model's three lines", async ({ page }) => {
@@ -119,7 +139,7 @@ test("the week is in the address, and the arrows step through the weeks up to th
   expect(asked).toEqual(["2026-W38", "2026-W37", "2026-W38", "2026-W39", "2026-W38"]); // the hub keeps each week (cached), so asking again is cheap
 });
 
-for (const week of ["2026-W40", "2026-W54", "soon"]) {
+for (const week of ["2026-W40", "2026-W54", "2025-W53", "1970-W01", "soon"]) {
   test(`?week=${week} (a week to come, or none) shows the last whole week`, async ({ page }) => {
     const asked = await mockHub(page);
     await page.goto(`/wrapped?week=${week}`);
@@ -130,11 +150,13 @@ for (const week of ["2026-W40", "2026-W54", "soon"]) {
 
 test("Save as image downloads the card as a PNG, drawn once it is fully shown", async ({ page }) => {
   await watchDrawing(page);
+  await noShareSheet(page);
   await mockHub(page);
   await page.goto("/wrapped");
   const save = page.getByRole("button", { name: "Save as image" });
   await expect(save).toBeEnabled();
-  await expect.poll(async () => (await seen(page)).drawn).toBe(1); // drawn ahead, after the reveal
+  await page.waitForTimeout(500);
+  expect((await seen(page)).drawn).toBe(0); // with no share sheet waiting, nothing is drawn until it is asked for
   const download = page.waitForEvent("download");
   await save.click();
   const file = await download;
@@ -146,22 +168,16 @@ test("Save as image downloads the card as a PNG, drawn once it is fully shown", 
   expect(Math.abs(png.readUInt32BE(20) - 2 * box.height)).toBeLessThanOrEqual(2);
   await expect(page.locator(".wrapped-actions .field-note")).toHaveText("Saved as daytrace-wrapped-2026-W38.png.");
   expect(await seen(page)).toEqual({ drawn: 1, copied: 1, copiedHalfShown: 0 });
+  // The note is about that week: gone under the week before's card.
+  await page.getByRole("button", { name: "The week before" }).click();
+  await expect(page).toHaveURL("/wrapped?week=2026-W37");
+  await expect(page.getByRole("button", { name: "Save as image" })).toBeEnabled();
+  await expect(page.locator(".wrapped-actions .field-note")).toHaveText("");
 });
 
 test("Share hands the share sheet the PNG it drew before the tap", async ({ page }) => {
   await watchDrawing(page);
-  await page.addInitScript(() => {
-    const shared: object[] = [];
-    (window as unknown as { shared: object[] }).shared = shared;
-    Object.defineProperty(navigator, "canShare", { configurable: true, value: (data: ShareData) => Boolean(data.files?.length) });
-    Object.defineProperty(navigator, "share", {
-      configurable: true,
-      value: async (data: ShareData) => {
-        const file = data.files![0];
-        shared.push({ name: file.name, type: file.type, title: data.title, head: [...new Uint8Array(await file.slice(0, 4).arrayBuffer())] });
-      },
-    });
-  });
+  await shareSheet(page);
   await mockHub(page);
   await page.goto("/wrapped");
   await expect.poll(async () => (await seen(page)).drawn).toBe(1);
@@ -171,6 +187,22 @@ test("Share hands the share sheet the PNG it drew before the tap", async ({ page
   ]);
   expect((await seen(page)).drawn).toBe(1); // the share sheet didn't wait for a drawing
   await expect(page.locator(".wrapped-actions .field-note")).toHaveText("");
+});
+
+test("the image kept for sharing is drawn again when the card looks different", async ({ page }) => {
+  await watchDrawing(page);
+  await shareSheet(page);
+  await mockHub(page);
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/wrapped");
+  await expect.poll(async () => (await seen(page)).drawn).toBe(1);
+  await page.emulateMedia({ colorScheme: "dark" }); // a new theme
+  await expect.poll(async () => (await seen(page)).drawn).toBe(2);
+  await page.evaluate(() => (document.documentElement.style.fontSize = "125%")); // a new text size (and card size)
+  await expect.poll(async () => (await seen(page)).drawn).toBe(3);
+  await page.getByRole("button", { name: "Share" }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { shared: object[] }).shared.length)).toBe(1);
+  expect((await seen(page)).drawn).toBe(3); // the one kept, drawn in the new look
 });
 
 test("closing the share sheet says nothing, and a browser that can't share images says to save instead", async ({ page }) => {
@@ -192,14 +224,27 @@ test("closing the share sheet says nothing, and a browser that can't share image
 });
 
 test("without file sharing there is no Share button, only Save", async ({ page }) => {
-  await page.addInitScript(() => {
-    delete (Navigator.prototype as Partial<Navigator>).share;
-    delete (Navigator.prototype as Partial<Navigator>).canShare;
-  });
+  await noShareSheet(page);
   await mockHub(page);
   await page.goto("/wrapped");
   await expect(page.getByRole("button", { name: "Save as image" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Share" })).toHaveCount(0);
+});
+
+test("the first week the hub has is as far back as the arrows go", async ({ page }) => {
+  const asked = await mockHub(page, (week) => ({ ...FIXTURE, week, first: "1970-01-05", last: "1970-01-11" }));
+  await page.goto("/wrapped?week=1970-W02");
+  await expect(page.getByRole("article")).toBeVisible();
+  expect(asked).toEqual(["1970-W02"]);
+  await expect(page.getByRole("button", { name: "The week before" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "The week after" })).toBeEnabled();
+});
+
+test("a streak with one day of data that week says 1 of 1 day", async ({ page }) => {
+  const streaks = FIXTURE.streaks.map((streak, index) => (index === 0 ? { ...streak, met: 1, days_with_data: 1 } : streak));
+  await mockHub(page, () => ({ ...FIXTURE, streaks }));
+  await page.goto("/wrapped");
+  await expect(page.getByRole("region", { name: "Streaks this week" }).locator("li").first()).toHaveText(`${streaks[0].name}1 of 1 day`);
 });
 
 test("plain lines say so, and why", async ({ page }) => {

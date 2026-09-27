@@ -10,7 +10,7 @@
 //   own computer (http://localhost:<port>) needs none. A token the hub refuses (revoked) is forgotten and the call
 //   tried once without it, so a stale token never locks out the hub's own computer.
 // - toast() shows a short message, and useApi() loads data with loading and error states.
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { paths } from "./schema";
 
 export const API_BASE = "/api/v1";
@@ -317,6 +317,18 @@ export function useApi<P extends PathsWith<"get">>(
 }
 
 /** Calls `refresh` every `every` ms while the page is visible; null stops it. */
+/** For an answer about today (streaks, goals, badges): asked again as soon as the day changes, and every `every` ms
+ * while the page is shown (the hub works streaks out again at most once a minute). */
+export function useDaily(reload: () => void, today: string, every = 60_000) {
+  const day = useRef(today);
+  useEffect(() => {
+    if (day.current === today) return;
+    day.current = today;
+    reload();
+  }, [today, reload]);
+  usePolling(every, reload);
+}
+
 export function usePolling(every: number | null, refresh: () => void) {
   useEffect(() => {
     if (every === null) return;

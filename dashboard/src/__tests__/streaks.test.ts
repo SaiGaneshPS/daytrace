@@ -6,7 +6,7 @@ import { toCelebrate } from "../components/BadgeShelf";
 import { ringOffset } from "../components/ProgressRing";
 import { flameScale } from "../components/StreakFlame";
 import { amountWords, flameState, todayWords } from "../components/streakText";
-import { isoWeekOf, isWeek, shiftWeek, weekMonday } from "../pages/Wrapped";
+import { FIRST_WEEK, isoWeekOf, isWeek, shiftWeek, weekMonday } from "../pages/Wrapped";
 
 type Streak = components["schemas"]["Streak"];
 type Achievement = components["schemas"]["Achievement"];
@@ -46,6 +46,9 @@ describe("ISO weeks", () => {
     expect(isWeek("2026-W54")).toBe(false);
     expect(isWeek("2026-w38")).toBe(false);
     expect(isWeek("soon")).toBe(false);
+    expect(FIRST_WEEK).toBe("1970-W02"); // the hub's first: its Monday is on or after 1 January 1970
+    expect(isWeek("1970-W01")).toBe(false); // starts on 29 December 1969
+    expect(isWeek("1970-W02")).toBe(true);
   });
 });
 

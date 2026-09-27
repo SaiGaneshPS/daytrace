@@ -1,6 +1,7 @@
-// DT-54: the badges, earned and not yet. A badge seen unlocked for the first time pops and throws confetti once;
-// this browser remembers which it has celebrated (localStorage), so it never does again for the same badge. Without
-// storage (a private window) it remembers for as long as the page is open.
+// DT-54: the badges, earned and not yet. A badge seen unlocked for the first time pops and throws confetti once,
+// when its tile is on screen (the shelf is at the bottom of the page); this browser remembers which it has
+// celebrated (localStorage), so it never does again for the same badge. Without storage (a private window) it
+// remembers for as long as the page is open.
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { components } from "../api/schema";
 import { celebrate } from "../theme/motion";
@@ -57,13 +58,31 @@ export default function BadgeShelf({ achievements }: { achievements: Achievement
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const shelf = useRef<HTMLUListElement>(null);
   useEffect(() => {
-    const newly = toCelebrate(achievements, readCelebrated());
-    if (!newly.length) return;
-    markCelebrated(newly);
-    setFresh(new Set(newly));
-    const first = shelf.current?.querySelector<HTMLElement>(`[data-badge="${newly[0]}"]`);
-    const box = first?.getBoundingClientRect();
-    void celebrate(box ? { x: (box.left + box.width / 2) / window.innerWidth, y: (box.top + box.height / 2) / window.innerHeight } : undefined);
+    const waiting = new Set(toCelebrate(achievements, readCelebrated()));
+    if (!waiting.size) return;
+    const tiles = [...waiting].flatMap((id) => shelf.current?.querySelector<HTMLElement>(`[data-badge="${id}"]`) ?? []);
+    const cheer = (ids: string[], tile: HTMLElement | undefined) => {
+      markCelebrated(ids);
+      setFresh((shown) => new Set([...shown, ...ids]));
+      const box = tile?.getBoundingClientRect();
+      void celebrate(box ? { x: (box.left + box.width / 2) / window.innerWidth, y: (box.top + box.height / 2) / window.innerHeight } : undefined);
+    };
+    if (typeof IntersectionObserver === "undefined") {
+      cheer([...waiting], tiles[0]);
+      return;
+    }
+    // Each new badge waits until most of its tile is on screen: then it pops, and only then is it remembered.
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        const shown = entries.filter((entry) => entry.isIntersecting).map((entry) => entry.target as HTMLElement);
+        const ids = shown.map((tile) => tile.dataset.badge ?? "").filter((id) => waiting.delete(id));
+        for (const tile of shown) watcher.unobserve(tile);
+        if (ids.length) cheer(ids, shown[0]);
+      },
+      { threshold: 0.6 },
+    );
+    for (const tile of tiles) watcher.observe(tile);
+    return () => watcher.disconnect();
   }, [achievements]);
 
   return (

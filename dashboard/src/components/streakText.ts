@@ -6,6 +6,9 @@ import { formatMinutes } from "./StatCard";
 
 type Streak = components["schemas"]["Streak"];
 
+/** "1 day", "14 days". */
+export const dayCount = (count: number) => `${count} ${count === 1 ? "day" : "days"}`;
+
 /** An amount in a streak's or goal's unit: "45m" for minutes, "1 meal", "2 devices". */
 export function amountWords(value: number, unit: string): string {
   if (unit === "minutes") return formatMinutes(value);

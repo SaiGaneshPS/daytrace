@@ -37,11 +37,12 @@ function longDayIn(page: Page, day: string): Promise<string> {
 type Reply = object | "fail";
 type Answers = { streaks?: (days: string) => Reply; goals?: () => Reply; achievements?: () => Reply; put?: (id: string, body: { target: number | string }) => { status: number; json: object } };
 
-async function mockHub(page: Page, answers: Answers = {}) {
+async function mockHub(page: Page, answers: Answers = {}, { runningFrom }: { runningFrom?: string } = {}) {
   const asked: string[] = [];
   const reply = (found: Reply) =>
     found === "fail" ? { status: 500, json: { error: { code: "internal_error", message: "The hub had a problem", details: [] } } } : { json: found };
-  await page.clock.setFixedTime(new Date("2026-09-25T21:00:00-04:00"));
+  if (runningFrom) await page.clock.install({ time: new Date(runningFrom) }); // moved on by the test (runFor)
+  else await page.clock.setFixedTime(new Date("2026-09-25T21:00:00-04:00"));
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked" } } }));
   await page.route("**/api/v1/health", (route) => route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: true } }));
   await page.route("**/api/v1/streaks?**", (route) => {
@@ -153,14 +154,16 @@ test("goals are rings with the hub's numbers, and a target can be changed in pla
   await focus.getByRole("button", { name: "Change the target" }).click();
   const field = focus.getByLabel("Minutes");
   await expect(field).toHaveValue("240");
+  await expect(field).toBeFocused();
   await expect(focus.locator(".field-note")).toHaveText("From 10 to 720 minutes.");
   await field.fill("300");
   const before = asked.filter((item) => item.startsWith("streaks")).length;
   await focus.getByRole("button", { name: "Save" }).click();
   await expect(focus.getByRole("img")).toHaveAttribute("aria-label", "Focused time: 6h 25m against a target of 5h, done");
-  await expect(focus.getByRole("button", { name: "Change the target" })).toBeVisible();
+  await expect(focus.getByRole("button", { name: "Change the target" })).toBeFocused(); // focus back where the form was opened
   expect(asked).toContain('PUT focus_target {"target":300}');
   await expect.poll(() => asked.filter((item) => item.startsWith("streaks")).length).toBe(before + 1); // its streak is judged again
+  await expect.poll(() => asked.filter((item) => item === "achievements").length).toBe(2); // and the badges earned from it
 });
 
 test("a bedtime is set as a time, and the hub's reason shows when a target is refused", async ({ page }) => {
@@ -175,15 +178,24 @@ test("a bedtime is set as a time, and the hub's reason shows when a target is re
   await expect(bedtime.locator(".field-note")).toHaveText("Between 20:00 and 03:00.");
   await field.fill("19:00");
   await bedtime.getByRole("button", { name: "Save" }).click();
-  await expect(bedtime.locator(".field-note")).toHaveText("bedtime must be between 20:00 and 03:00");
+  const note = bedtime.locator(".field-note");
+  await expect(note).toHaveText("bedtime must be between 20:00 and 03:00");
+  await expect(note).not.toHaveClass(/field-hint/); // said as a problem, in the error color, not like the hint
+  const color = await note.evaluate((element) => getComputedStyle(element).color);
   expect(asked).toContain('PUT bedtime {"target":"19:00"}');
   await bedtime.getByRole("button", { name: "Cancel" }).click();
+  await expect(bedtime.getByRole("button", { name: "Change the limit" })).toBeFocused();
   await expect(bedtime.getByRole("img")).toHaveAttribute("aria-label", /against a limit of 23:30/); // unchanged
+  await bedtime.getByRole("button", { name: "Change the limit" }).click();
+  await expect(note).toHaveText("Between 20:00 and 03:00."); // the refusal doesn't greet the next try
+  await expect(note).toHaveClass(/field-hint/);
+  expect(await note.evaluate((element) => getComputedStyle(element).color)).not.toBe(color);
 });
 
-test("badges: earned ones say when, the rest how far, and each new one is celebrated once", async ({ page }) => {
+test("badges: earned ones say when, the rest how far, and each new one is celebrated once, on screen", async ({ page, viewport }) => {
   const badges = FIXTURE.achievements;
   let list = badges.achievements;
+  await page.setViewportSize({ width: viewport!.width, height: 500 }); // the shelf starts below the fold
   await mockHub(page, { achievements: () => ({ ...badges, unlocked: list.filter((badge) => badge.unlocked).length, achievements: list }) });
   await page.goto("/streaks");
   await expect(page.getByRole("heading", { name: `Badges (${badges.unlocked} of ${list.length})` })).toBeVisible();
@@ -196,7 +208,15 @@ test("badges: earned ones say when, the rest how far, and each new one is celebr
     else if (badge.progress) await expect(tile.locator(".badge-progress-words")).toHaveText(`${badge.progress.value} of ${badge.progress.target} ${badge.progress.unit}`);
     await expect(tile.locator(".visually-hidden")).toHaveText(badge.unlocked ? "Unlocked." : "Not yet.");
   }
-  // First visit: every unlocked badge pops, with confetti drawn on the page.
+  // First visit: nothing pops off screen, and nothing is remembered yet ...
+  await page.waitForTimeout(300);
+  await expect(page.locator(".badge-new")).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("daytrace.badges.celebrated"))).toBeNull();
+  // ... then each unlocked badge pops as it comes on screen, with confetti drawn on the page.
+  for (const index of list.flatMap((badge, at) => (badge.unlocked ? [at] : []))) {
+    await tiles.nth(index).scrollIntoViewIfNeeded();
+    await expect(tiles.nth(index)).toHaveClass(/badge-new/);
+  }
   await expect(page.locator(".badge-new")).toHaveCount(badges.unlocked);
   await expect.poll(() => page.evaluate(() => document.querySelectorAll("body > canvas").length)).toBeGreaterThan(0);
   const unlocked = list.filter((badge) => badge.unlocked).map((badge) => badge.id);
@@ -205,12 +225,14 @@ test("badges: earned ones say when, the rest how far, and each new one is celebr
   // Again: nothing pops.
   await page.reload();
   await expect(tiles).toHaveCount(list.length);
+  await tiles.last().scrollIntoViewIfNeeded();
   await expect(page.locator(".badge-tile.badge-unlocked")).toHaveCount(badges.unlocked);
   await expect(page.locator(".badge-new")).toHaveCount(0);
 
   // A badge earned since pops on its own.
   list = list.map((badge) => (badge.id === "perfect_week" ? { ...badge, unlocked: true, earned_on: "2026-09-25", progress: null } : badge));
   await page.reload();
+  await page.locator('[data-badge="perfect_week"]').scrollIntoViewIfNeeded();
   await expect(page.locator(".badge-new")).toHaveCount(1);
   await expect(page.locator(".badge-new")).toHaveAttribute("data-badge", "perfect_week");
 });
@@ -243,9 +265,62 @@ test("Today shows each streak at a glance, and leads to the rest", async ({ page
   }
   await expect(strip.locator(".streak-chip").filter({ hasText: "Balanced" })).toContainText("42m left under the limit today");
   expect(asked).toContain("streaks 1");
-  await strip.getByRole("link", { name: "All streaks and goals" }).click();
+  const link = strip.getByRole("link", { name: "All streaks and goals" });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44); // a thumb-sized target
+  await link.click();
   await expect(page).toHaveURL("/streaks");
   await expect(page.getByRole("heading", { name: "Streaks", level: 1 })).toBeVisible();
+});
+
+test("Today's strip is asked again each minute and as soon as the day changes", async ({ page }) => {
+  let after = false;
+  const later = { ...FIXTURE.streaks, streaks: FIXTURE.streaks.streaks.map((streak) => ({ ...streak, today: "no_data" as const, remaining: null })) };
+  const asked = await mockHub(page, { streaks: () => (after ? later : FIXTURE.streaks) }, { runningFrom: "2026-09-25T23:59:40-04:00" });
+  await page.goto("/");
+  const balanced = page.locator(".streak-chip").filter({ hasText: "Balanced" });
+  await expect(balanced).toContainText("42m left under the limit today");
+  const count = () => asked.filter((item) => item === "streaks 1").length;
+  const first = count();
+  after = true;
+  await page.clock.runFor(31_000); // past midnight: a new day, asked at once (not a minute later)
+  await expect.poll(count).toBe(first + 1);
+  await expect(balanced).toContainText("Nothing yet today");
+  await page.clock.runFor(60_000);
+  await expect.poll(count).toBe(first + 2); // and each minute
+});
+
+test("the Streaks page asks again each minute, and keeps its cards when an answer fails", async ({ page }) => {
+  let fail = false;
+  const asked = await mockHub(
+    page,
+    { streaks: () => (fail ? "fail" : FIXTURE.streaks), goals: () => (fail ? "fail" : FIXTURE.goals), achievements: () => (fail ? "fail" : FIXTURE.achievements) },
+    { runningFrom: "2026-09-25T21:00:00-04:00" },
+  );
+  await page.goto("/streaks");
+  await expect(page.locator(".streak-card")).toHaveCount(FIXTURE.streaks.streaks.length);
+  const counts = () => ["streaks 30", "goals", "achievements"].map((name) => asked.filter((item) => item === name).length);
+  const before = counts();
+  fail = true;
+  await page.clock.runFor(61_000);
+  await expect.poll(counts).toEqual(before.map((count) => count + 1));
+  await page.waitForTimeout(300);
+  // A failed reload keeps what is on screen.
+  await expect(page.locator(".streak-card")).toHaveCount(FIXTURE.streaks.streaks.length);
+  await expect(page.locator(".goal-card")).toHaveCount(FIXTURE.goals.goals.length);
+  await expect(page.locator(".badge-tile")).toHaveCount(FIXTURE.achievements.achievements.length);
+  await expect(page.getByText(/couldn't load/)).toHaveCount(0);
+});
+
+test("estimated numbers say so", async ({ page }) => {
+  await mockHub(page, {
+    goals: () => ({ ...FIXTURE.goals, goals: FIXTURE.goals.goals.map((goal) => (goal.id === "bedtime" ? { ...goal, today: { ...goal.today, estimated: true } } : goal)) }),
+    streaks: () => ({ ...FIXTURE.streaks, streaks: FIXTURE.streaks.streaks.map((streak) => (streak.id === "screens_down" ? { ...streak, estimated: true } : streak)) }),
+  });
+  await page.goto("/streaks");
+  await expect(page.getByRole("region", { name: "Bedtime" }).locator(".badge-estimated")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Focused time" }).locator(".badge-estimated")).toHaveCount(0);
+  await expect(card(page, "Screens down").locator(".badge-estimated")).toBeVisible();
+  await expect(card(page, "Focus flame").locator(".badge-estimated")).toHaveCount(0);
 });
 
 test("Today stays as it was when the hub has no streaks to show", async ({ page }) => {
