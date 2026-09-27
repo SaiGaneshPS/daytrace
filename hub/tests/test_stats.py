@@ -20,7 +20,8 @@ from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database, transaction
 from daytrace_hub.models import Event
 from daytrace_hub.seed import seed
-from daytrace_hub.stats import Stats
+from daytrace_hub.sessions import Session
+from daytrace_hub.stats import Stats, is_meeting
 
 TORONTO = "America/Toronto"
 ZONE = ZoneInfo(TORONTO)
@@ -628,3 +629,21 @@ def test_a_correlation_with_nothing_to_compare_says_why(db: Database) -> None:
         result = s.correlation(first, first + timedelta(days=3))
     assert (result["rho"], result["n"]) == (None, 3)
     assert result["reason"] == "Every night had the same late-night screen time, so there is nothing to compare."
+
+
+
+@pytest.mark.parametrize(("app", "app_id", "meeting"), [
+    ("Zoom Workplace", "Zoom.exe", True),
+    ("Microsoft Teams", "ms-teams.exe", True),
+    ("Meet", "com.google.android.apps.tachyon", True),  # Google Meet on a phone
+    ("meet.google.com", "msedge.exe", True),  # in a browser
+    ("Webex", "com.cisco.webexmeetingsapp", True),
+    ("GoTo Meeting", None, True),
+    ("TeamSpeak", "ts3client_win64.exe", False),  # not Teams
+    ("ZoomIt", "ZoomIt64.exe", False),  # not Zoom
+    ("Meetup", "com.meetup", False),
+    ("Slack", "slack.exe", False),
+])
+def test_meeting_apps_are_known_by_whole_words(app: str, app_id: str | None, meeting: bool) -> None:
+    session = Session(device_id="d", start=LATER, end=LATER, app=app, app_id=app_id, title=None, category=None, kind="app", event_ids=())
+    assert is_meeting(session) is meeting

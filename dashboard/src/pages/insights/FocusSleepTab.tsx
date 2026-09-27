@@ -10,7 +10,7 @@ import { longDay, shiftDay, shortDay } from "../../components/DayPicker";
 import StatCard, { formatMinutes } from "../../components/StatCard";
 import { type ChartOption, escapeHTML, useEChart } from "../../theme/charts";
 import { clock, hourAxis, nightWords } from "./clock";
-import { Failed, SeriesCard, WeekdayHoursHeatmap, minutesText } from "./parts";
+import { Failed, Gauge, SeriesCard, WeekdayHoursHeatmap, minutesText } from "./parts";
 import { type Series, metric, rangeWords, useInsights, valueOf } from "./shared";
 
 type Props = { range: string; tz: string; today: string };
@@ -66,38 +66,6 @@ function FocusCalendar({ days, values }: { days: string[]; values: (number | nul
       </p>
     </div>
   );
-}
-
-function ScoreGauge({ series }: { series: Series }) {
-  const option = useMemo<ChartOption>(
-    () => ({
-      series: [
-        {
-          id: "score",
-          type: "gauge",
-          min: 0,
-          max: series.max ?? 100,
-          startAngle: 210,
-          endAngle: -30,
-          radius: "92%",
-          center: ["50%", "58%"],
-          progress: { show: true, width: 16, roundCap: true, itemStyle: { color: "var(--cat-study)", decal: SOLID } },
-          axisLine: { roundCap: true, lineStyle: { width: 16, color: [[1, "var(--surface-2)"]] } },
-          axisTick: { show: false },
-          splitLine: { show: false },
-          axisLabel: { show: false },
-          pointer: { show: false },
-          anchor: { show: false },
-          title: { show: false },
-          detail: { valueAnimation: true, offsetCenter: [0, "0%"], fontSize: 40, fontWeight: 800, color: "var(--text)", formatter: "{value}" },
-          data: [{ value: series.value ?? 0, name: series.title, itemStyle: { decal: SOLID } }],
-        },
-      ],
-    }),
-    [series],
-  );
-  const chart = useEChart(option, `${series.title}: ${series.value ?? "no data"} out of ${series.max ?? 100}`);
-  return <div ref={chart} className="chart" style={{ height: 220 }} />;
 }
 
 function SwitchesByDay({ series }: { series: Series }) {
@@ -316,7 +284,13 @@ export default function FocusSleepTab({ range, tz, today }: Props) {
         )}
         {!focus.error && (
           <SeriesCard data={focusData} name="score" title="Focus score" unit="score" words={words} empty="No focus score in this range.">
-            {(found) => (found.value === null || found.value === undefined ? <p className="muted">No focus score in this range.</p> : <ScoreGauge series={found} />)}
+            {(found) =>
+              found.value === null || found.value === undefined ? (
+                <p className="muted">No focus score in this range.</p>
+              ) : (
+                <Gauge value={found.value} max={found.max ?? 100} color="var(--cat-study)" label={found.title} />
+              )
+            }
           </SeriesCard>
         )}
         {!focus.error && (

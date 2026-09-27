@@ -27,6 +27,8 @@ from ..stats import (
     DESK_TYPES,
     DISTRACTING,
     FOCUS_JOIN,
+    LATE_MEAL_FROM,
+    LATE_MEAL_UNTIL,
     PHONE_TYPES,
     PRODUCTIVE,
     GroupBy,
@@ -205,6 +207,7 @@ class Point(BaseModel):
     x: float
     y: float
     label: str
+    group: str | None = Field(default=None, description="The point's group: a meal's type (breakfast, lunch, dinner, snack, other).")
 
 
 class Series(BaseModel):
@@ -929,7 +932,7 @@ class TabBuilder:
                 items[item.strip().lower()] += 1
             when = datetime.fromisoformat(meal["time"])
             points.append(Point(x=float(self.labels.index(meal["day"])), y=round(when.hour + when.minute / 60, 2),
-                                label=", ".join(meal["items"]) or meal["text"] or kind))
+                                label=", ".join(meal["items"]) or meal["text"] or kind, group=kind))
         ranked = sorted(items.items(), key=lambda kv: (-kv[1], kv[0]))
         observed = self.observed_days
         metrics = [
@@ -938,6 +941,9 @@ class TabBuilder:
             Metric(id="days_with_meals", label="Days with a meal logged", value=len(by_day) if observed else None, unit="days",
                    explain="Days in the range with at least one meal."),
             Metric(id="top_item", label="Most logged", value=ranked[0][0] if ranked else None, unit="item", explain="The food logged most often."),
+            Metric(id="late_meals", label="Late-night meals", value=len(self.stats.late_meals(self.span.first, self.span.last)) if observed else None,
+                   unit="meals", explain=(f"Meals logged from {LATE_MEAL_FROM}:00 to {LATE_MEAL_UNTIL:02d}:00, each counted for its night "
+                                          "(a snack at 01:00 is the night before's).")),
         ]
         series = {
             "meals_by_day": Series(kind="stacked", title="Meals by day", unit="meals", x=self.labels,
@@ -946,7 +952,8 @@ class TabBuilder:
                                                values=[float(by_day.get(day, {}).get(kind, 0)) if day in observed else None for day in self.labels])
                                           for kind in MEAL_TYPES if any(day.get(kind) for day in by_day.values())]),
             "meal_times": Series(kind="scatter", title="When you ate", unit="hour of the day", x=self.labels,
-                                 explain="Each meal at its time of day (0 to 24), by day.", points=points),
+                                 explain="Each meal at its time of day (0 to 24), by day, with its type in `group`.", points=points,
+                                 stats={"late_from": LATE_MEAL_FROM, "late_until": LATE_MEAL_UNTIL}),
             "top_items": Series(kind="bars", title="Most logged foods", unit="times",
                                 explain="Foods by how often they were logged.",
                                 items=[Item(name=name, value=float(count)) for name, count in ranked[:10]]),
@@ -982,14 +989,37 @@ class TabBuilder:
         ]
         lines = [Line(name=label, key=key, values=[minutes(plan["totals_seconds"][key]) if not plan.get("missing") else None for plan in plans])
                  for key, label in PLAN_PARTS]
+        if any(plan.get("missing") and plan["totals_seconds"]["planned"] for plan in plans):
+            # Planned time on a day no device sent screen data: known to be planned, unknown what it went to.
+            lines.append(Line(name="No screen data that day", key="unknown",
+                              values=[minutes(plan["totals_seconds"]["planned"]) if plan.get("missing") else 0.0 for plan in plans]))
         ranked = sorted(blocks, key=lambda pair: (-pair[0]["planned_seconds"], pair[0]["start"]))[:10]
+        meetings: list[float | None] = [stats.meeting_minutes(day)["value"] for day in self.days]
+        known_meetings = [value for value in meetings if value is not None]
+        metrics.append(Metric(id="meetings", label="In meetings", value=_rounded(sum(known_meetings), 2) if known_meetings else None, unit="minutes",
+                              explain=("Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once, "
+                                       "and time listening without touching anything included.")))
+
+        def parts(block: dict[str, Any]) -> list[Item] | None:
+            """The event's minutes on plan, off plan, on other screens and with no screen: they add up to its length.
+            None on a day no device sent screen data (what it went to is unknown)."""
+            if block["on_plan_seconds"] is None:
+                return None
+            return [Item(name=label, key=key, value=minutes(block[f"{key}_seconds"])) for key, label in PLAN_PARTS]
+
         series = {
             "plan_by_day": Series(kind="stacked", title="Planned time and where it went", unit="minutes", x=self.labels, lines=lines,
-                                  explain="Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen."),
+                                  explain=("Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen "
+                                           "time, or no screen; on a day no device sent screen data, what it went to is unknown.")),
             "blocks": Series(kind="bars", title="Longest events", unit="minutes",
-                             explain="The longest calendar events, with the share spent as planned.",
-                             items=[Item(name=block["title"] or "(no title)", key=day.isoformat(), value=minutes(block["planned_seconds"]), share=block["on_plan_pct"])
+                             explain=("The longest calendar events, each split into what the time went to (on plan, off plan, other screen "
+                                      "time, no screen), which adds up to the event's length, with the share spent as planned."),
+                             items=[Item(name=block["title"] or "(no title)", key=day.isoformat(), value=minutes(block["planned_seconds"]),
+                                         share=block["on_plan_pct"], children=parts(block))
                                     for block, day in ranked]),
+            "meetings_by_day": Series(kind="bars", title="Meetings each day", unit="minutes", x=self.labels,
+                                      explain="Time in meeting apps each day, on any device (a call on two at once counted once).",
+                                      lines=[Line(name="In meetings", key="meetings", values=meetings)]),
             "hours": Series(kind="heatmap", title="When your calendar is busy", unit="minutes", x=HOURS, y=WEEKDAYS,
                             explain="Planned time by weekday and hour of the day, the whole range added up (overlaps counted once).",
                             cells=[Cell(x=hour, y=weekday, value=minutes(seconds)) for (hour, weekday), seconds in sorted(grid.items())]),

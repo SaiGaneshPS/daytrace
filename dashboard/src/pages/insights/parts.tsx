@@ -62,6 +62,39 @@ export function Failed({ what, message, retry }: { what: string; message: string
   );
 }
 
+/** A number out of `max` on an arc (the focus score, the share of plans kept), in `color` (a token). */
+export function Gauge({ value, max, color, label, suffix = "" }: { value: number; max: number; color: string; label: string; suffix?: string }) {
+  const option = useMemo<ChartOption>(
+    () => ({
+      series: [
+        {
+          id: "gauge",
+          type: "gauge",
+          min: 0,
+          max,
+          startAngle: 210,
+          endAngle: -30,
+          radius: "92%",
+          center: ["50%", "58%"],
+          progress: { show: true, width: 16, roundCap: true, itemStyle: { color, decal: { symbol: "none" } } },
+          axisLine: { roundCap: true, lineStyle: { width: 16, color: [[1, "var(--surface-2)"]] } },
+          axisTick: { show: false },
+          splitLine: { show: false },
+          axisLabel: { show: false },
+          pointer: { show: false },
+          anchor: { show: false },
+          title: { show: false },
+          detail: { valueAnimation: true, offsetCenter: [0, "0%"], fontSize: 40, fontWeight: 800, color: "var(--text)", formatter: `{value}${suffix}` },
+          data: [{ value, name: label, itemStyle: { decal: { symbol: "none" } } }],
+        },
+      ],
+    }),
+    [value, max, color, label, suffix],
+  );
+  const chart = useEChart(option, `${label}: ${value}${suffix} out of ${max}${suffix}`);
+  return <div ref={chart} className="chart" style={{ height: 220 }} />;
+}
+
 /** Minutes by weekday and hour of the day, shaded from the card's gray to `color` (a token). */
 export function WeekdayHoursHeatmap({ series, color, label }: { series: Series; color: string; label: string }) {
   const option = useMemo<ChartOption>(() => {

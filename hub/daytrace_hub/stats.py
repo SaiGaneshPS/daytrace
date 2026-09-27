@@ -56,7 +56,10 @@ BROWSER_APP_IDS = frozenset({
     "company.thebrowser.browser",
 })
 # Meeting apps and sites: a calendar block spent in one is kept (unlike chatting in other comms apps).
-MEETING_MARKERS = ("zoom", "teams", "meet.google.com", "webex", "facetime", "skype", "gotomeeting", "whereby")
+# Meeting apps, by whole words of their name or id (TeamSpeak isn't Teams, ZoomIt isn't Zoom), and ids no word gives.
+MEETING_WORDS = frozenset({"zoom", "teams", "meet", "webex", "facetime", "skype", "gotomeeting", "whereby", "tachyon"})
+MEETING_IDS = frozenset({"com.cisco.webexmeetingsapp", "com.logmein.gotomeeting"})
+LATE_MEAL_FROM, LATE_MEAL_UNTIL = 22, 4  # a meal from 22:00 to 04:00 is late-night eating, counted for its night
 FOCUS_BLOCK = timedelta(minutes=10)  # the shortest stretch of work that counts as focus
 FOCUS_JOIN = timedelta(seconds=60)  # a gap this short (switching windows) does not end a block
 SWITCH_GAP = timedelta(minutes=5)  # coming back to the screen later is not a switch
@@ -133,8 +136,11 @@ def app_key(piece: Session) -> str:
 
 
 def is_meeting(session: Session) -> bool:
-    text = f"{session.app or ''} {session.app_id or ''}".lower()
-    return any(marker in text for marker in MEETING_MARKERS)
+    """A meeting app or site: Zoom, Teams, Google Meet (meet.google.com, and the phone app, id tachyon), Webex,
+    FaceTime, Skype, GoTo Meeting, Whereby. By whole words, so TeamSpeak and ZoomIt are not."""
+    app_id = (session.app_id or "").lower()
+    words = set(re.findall(r"[a-z0-9]+", f"{session.app or ''} {app_id}".lower()))
+    return bool(words & MEETING_WORDS) or app_id in MEETING_IDS or {"goto", "meeting"} <= words
 
 
 def attribute_browser_time(sessions: Sequence[Session], web: Sequence[Session], device_types: dict[str, str]) -> list[Session]:
@@ -533,6 +539,35 @@ class Stats:
                     "meal_type": meal_type if isinstance(meal_type, str) else None, "device_id": event.device_id,
                 })
         return found
+
+    def late_meals(self, first: date, last: date) -> list[dict[str, Any]]:
+        """Meals eaten late at night (22:00 to 04:00) on the nights of `first` to `last`, each with its `night`: a snack
+        at 01:00 is the night before's, as late_night_minutes counts a night for the day it started on."""
+        found = []
+        for meal in self.meals(first, last + timedelta(days=1)):
+            when = datetime.fromisoformat(meal["time"])
+            if when.hour >= LATE_MEAL_FROM:
+                night = when.date()
+            elif when.hour < LATE_MEAL_UNTIL:
+                night = when.date() - timedelta(days=1)
+            else:
+                continue
+            if first <= night <= last:
+                found.append({**meal, "night": night.isoformat()})
+        return found
+
+    def meeting_minutes(self, day: date) -> dict[str, Any]:
+        """Time in meeting apps and sites (is_meeting) on any device, a call on two at once counted once. Away time is
+        not cut out, as it is from screen time: listening to a call without touching anything is still the call.
+        None when no device sent screen data that day."""
+        window = self.day(day)
+        if not window.counted_devices_with_data:
+            return self._missing(window)
+        present = [event for event in window.events if event.kind != "afk"]
+        sessions = build_sessions(present, window.start, window.until) if window.until > window.start else []
+        seconds = union_seconds([(s.start, s.end) for s in sessions if is_meeting(s)])
+        return {"value": minutes(seconds), "seconds": seconds, "missing": False,
+                **self._meta(window.start, window.end, [window], False)}
 
     def steps(self, day: date) -> int | None:
         """The day's steps: per device, the step counts that started on `day` added up (each span once); the largest
