@@ -330,6 +330,16 @@ def test_a_handoff_is_within_5_minutes(db: Database) -> None:
         assert s.handoffs(NEXT)["value"] is None  # no screen data that day: unknown, not 0
 
 
+def test_a_switch_over_midnight_counts_for_the_day_it_lands_in(db: Database) -> None:
+    add(db, "windows-1", "windows", [span("window", at("23:30:00"), at("23:59:30"), **CODE)])
+    add(db, "android-1", "android", [phone_app(at("00:00:30", NEXT), at("00:10:00", NEXT), "Instagram", "com.instagram.android", 1)])
+    with stats(db) as s:
+        assert s.handoffs(DAY)["value"] == 0  # the phone came after midnight: not this day's
+        after = s.handoffs(NEXT)
+    assert after["value"] == 1
+    assert after["pairs"] == [{"from_device": "windows-1", "from_category": "work", "to_device": "android-1", "to_category": "social", "count": 1}]
+
+
 def test_the_foreground_is_the_piece_started_last(day: Database) -> None:
     with stats(day) as s:
         stretches = s.foreground(s.day(DAY).pieces)

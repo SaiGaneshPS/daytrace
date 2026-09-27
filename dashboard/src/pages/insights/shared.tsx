@@ -1,7 +1,7 @@
 // DT-34: what every Insights tab shares: the hub's answer for a tab and range, the range's words, and the
 // week-over-week chips. Every number is the hub's (GET /insights/{tab}); nothing is added up here.
 import { useEffect, useRef } from "react";
-import { useApi, usePolling } from "../../api/client";
+import { type Loaded, useApi, usePolling } from "../../api/client";
 import type { components } from "../../api/schema";
 import { dayMonth, daysBetween, isRealDay, shiftDay } from "../../components/DayPicker";
 import { formatMinutes } from "../../components/StatCard";
@@ -72,36 +72,31 @@ export function valueOf(data: WithMetrics | undefined, id: string): number | nul
   return typeof found.value === "number" ? found.value : null;
 }
 
-/** The hub's answer for one tab and range, shown only once it answers this tab and range (a slower answer for the
- * range picked before never shows under the new one). The hub works out which days a range is, so a new day asks
- * again ("7d" moves at midnight), and so does a minute passing while the range has today in it. */
-export function useInsights(tab: HubTab, range: string, tz: string, today: string) {
-  const loaded = useApi("/api/v1/insights/{tab}", { path: { tab }, query: { range, tz }, quiet: true });
+/** What both kinds of answer do once asked for: shown only once it answers these options, asked for again when the
+ * day changes ("7d" moves at midnight), and every minute while its range has today in it. */
+function useLive<T extends { in_progress: boolean }>(loaded: Loaded<T>, today: string, enabled = true) {
   const { reload } = loaded;
-  const data = loaded.current ? loaded.data : undefined;
+  const data = enabled && loaded.current ? loaded.data : undefined;
   const day = useRef(today);
   useEffect(() => {
     if (day.current === today) return;
     day.current = today;
-    reload();
-  }, [today, reload]);
+    if (enabled) reload();
+  }, [today, reload, enabled]);
   usePolling(data?.in_progress ? REFRESH_MS : null, reload);
   return { data, error: data ? undefined : loaded.error, reload };
 }
 
-/** One app's range (DT-55), for the detail drawer: asked for only while an app is open, and shown only once it
- * answers this app and range. */
+/** The hub's answer for one tab and range (a slower answer for the range picked before never shows under the new
+ * one). The hub works out which days a range is. */
+export function useInsights(tab: HubTab, range: string, tz: string, today: string) {
+  return useLive(useApi("/api/v1/insights/{tab}", { path: { tab }, query: { range, tz }, quiet: true }), today);
+}
+
+/** One app's range (DT-55), for the detail drawer: asked for only while an app is open. */
 export function useAppDetail(app: string | null, range: string, tz: string, today: string) {
   const loaded = useApi("/api/v1/insights/apps/detail", { query: { app: app ?? "", range, tz }, enabled: app !== null, quiet: true });
-  const { reload } = loaded;
-  const data = loaded.current && app !== null ? loaded.data : undefined;
-  const day = useRef(today);
-  useEffect(() => {
-    if (day.current === today) return;
-    day.current = today;
-    if (app !== null) reload();
-  }, [today, reload, app]);
-  return { data, error: data ? undefined : loaded.error, reload };
+  return useLive(loaded, today, app !== null);
 }
 
 /** An amount in a change's unit: "9h 25m", "64", "5 pickups". */

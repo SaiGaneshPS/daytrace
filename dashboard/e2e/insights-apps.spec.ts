@@ -14,7 +14,8 @@ type Tab = {
   range: { first: string; last: string; days: number; label: string };
   metrics: { id: string; label: string; value: number | string | null }[];
   series: Record<string, { x?: string[] | null; y?: string[] | null; items?: Item[] | null; cells?: { x: number; y: number; value: number }[] | null;
-    links?: { source: string; target: string; value: number }[] | null; lines?: { key?: string | null; values: (number | null)[] }[] | null }>;
+    links?: { source: string; target: string; value: number }[] | null; lines?: { key?: string | null; values: (number | null)[] }[] | null;
+    nodes?: string[] | null; node_categories?: (string | null)[] | null }>;
 };
 const read = (name: string) => JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", name), "utf-8"));
 const APPS = read("insights-apps-devices.json") as { apps: Record<string, Tab>; devices: Record<string, Tab>; detail: Record<string, Tab & { app: string }> };
@@ -34,12 +35,12 @@ function minutes(value: number): string {
 
 type Answers = { apps?: (range: string) => object | "fail"; devices?: (range: string) => object | "fail"; detail?: (app: string, range: string) => object | "fail" };
 
-async function mockHub(page: Page, answers: Answers = {}) {
+async function mockHub(page: Page, answers: Answers = {}, { fixedClock = true } = {}) {
   const asked: string[] = [];
   const pick = (table: Record<string, Tab>, range: string) => table[range] ?? table["7d"];
   const reply = (found: object | "fail") =>
     found === "fail" ? { status: 500, json: { error: { code: "internal_error", message: "The hub had a problem", details: [] } } } : { json: found };
-  await page.clock.setFixedTime(new Date("2026-09-25T21:00:00-04:00"));
+  if (fixedClock) await page.clock.setFixedTime(new Date("2026-09-25T21:00:00-04:00"));
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked" } } }));
   await page.route("**/api/v1/health", (route) => route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: true } }));
   await page.route("**/api/v1/insights/apps?**", (route) => {
@@ -237,6 +238,109 @@ test("when the apps can't load, the devices still show, and Try again asks again
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("region", { name: "Top apps and sites" }).locator(".leader")).toHaveCount(10);
   expect(asked.filter((item) => item === "apps 7d")).toHaveLength(2);
+});
+
+const MARKUP = `<img src=x onerror="window.__owned = true">`; // a name a device could send
+
+test("names in the tooltips are text, never markup", async ({ page }) => {
+  const apps = APPS.apps["7d"];
+  const treemap = (apps.series.treemap.items ?? []).map((group) => ({
+    ...group,
+    children: (group.children ?? []).map((child) => (child.name === "Visual Studio Code" ? { ...child, name: MARKUP } : child)),
+  }));
+  const devices = APPS.devices["7d"];
+  const flow = devices.series.handoffs;
+  const devicesNamed = ["Desk PC (demo)", "MacBook (demo)", "Galaxy phone (demo)", "iPhone (demo)"];
+  const rename = (name: string) => devicesNamed.reduce((text, device, index) => text.replace(device, `${MARKUP} ${index}`), name); // each unique
+  const handoffs = { ...flow, nodes: (flow.nodes ?? []).map(rename), links: (flow.links ?? []).map((link) => ({ ...link, source: rename(link.source), target: rename(link.target) })) };
+  await mockHub(page, {
+    apps: () => ({ ...apps, series: { ...apps.series, treemap: { ...apps.series.treemap, items: treemap } } }),
+    devices: () => ({ ...devices, series: { ...devices.series, handoffs } }),
+  });
+  await page.goto("/insights?tab=apps&range=7d");
+  await page.waitForFunction(chartsDrawn);
+  const boxes = page.getByRole("region", { name: "Categories and their apps" }).locator(".chart");
+  const box = await boxes.boundingBox();
+  if (!box) throw new Error("no treemap");
+  await boxes.hover({ position: { x: box.width * 0.12, y: box.height * 0.4 } });
+  await expect(boxes.getByText("<img src=x")).toBeVisible(); // shown as the text it is
+  const flows = page.getByRole("region", { name: "Switching between devices" }).locator(".chart");
+  await flows.hover({ position: { x: 14, y: 14 } }); // the first node on the left
+  await expect(flows.getByText("<img src=x").first()).toBeVisible();
+  expect(await page.evaluate(() => (window as { __owned?: boolean }).__owned ?? false)).toBe(false);
+  await expect(page.locator('img[src="x"]')).toHaveCount(0);
+});
+
+test("Back closes the detail, and Forward opens it again", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/insights?tab=apps&range=7d");
+  await page.getByRole("button", { name: "Details for netflix.com" }).click();
+  await expect(page.getByRole("dialog", { name: "netflix.com" })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page).not.toHaveURL(/app=/);
+  await page.goForward(); // closing because the address changed added no step of its own
+  await expect(page.getByRole("dialog", { name: "netflix.com" })).toBeVisible();
+});
+
+test("an open detail is asked for again every minute while its range has today in it", async ({ page }) => {
+  const asked = await mockHub(page, {}, { fixedClock: false });
+  await page.clock.install({ time: new Date("2026-09-25T14:00:00-04:00") });
+  await page.goto("/insights?tab=apps&range=7d&app=TikTok");
+  await expect(page.getByRole("dialog", { name: "TikTok" }).getByRole("region", { name: "In the range" }).locator(".stat-value")).toBeVisible();
+  await page.clock.runFor(61_000);
+  await expect.poll(() => asked.filter((item) => item === "detail TikTok").length).toBe(2);
+});
+
+test("the detail counts days used against the days with data, and names its category as the dashboard does", async ({ page }) => {
+  const base = APPS.detail["7d"];
+  const daily = base.series.daily;
+  const values = (daily.lines ?? [])[0].values.map((value, index) => (index < 2 ? null : value)); // two days nobody sent anything
+  await mockHub(page, {
+    detail: (app) => ({
+      ...base, app, category: "comms",
+      metrics: base.metrics.map((item) => (item.id === "days_used" ? { ...item, value: 5 } : item)),
+      series: { ...base.series, daily: { ...daily, lines: [{ ...(daily.lines ?? [])[0], values }] } },
+    }),
+  });
+  await page.goto("/insights?tab=apps&range=7d&app=WhatsApp");
+  const drawer = page.getByRole("dialog", { name: "WhatsApp" });
+  await expect(drawer.getByRole("region", { name: "Days used" })).toContainText("of 5 with data"); // not "of 7"
+  await expect(drawer.locator(".chip")).toHaveText("Chat and calls");
+});
+
+test("every app in the treemap can be opened from the keyboard", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/insights?tab=apps&range=7d");
+  const leaders = new Set((APPS.apps["7d"].series.leaderboard.items ?? []).map((item) => item.name));
+  const extra = (APPS.apps["7d"].series.treemap.items ?? []).flatMap((group) => group.children ?? []).find((child) => !leaders.has(child.name) && child.name !== "Other apps");
+  if (!extra) throw new Error("every treemap app is on the leaderboard");
+  const list = page.getByRole("region", { name: "Categories and their apps" }).locator("summary");
+  await list.focus();
+  await page.keyboard.press("Enter");
+  const open = page.getByRole("button", { name: `Details for ${extra.name}` });
+  await open.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: extra.name })).toBeVisible();
+});
+
+test("the switches list takes each move's color from its category, not its name", async ({ page }) => {
+  // A move from chat: its name says "Chat and calls", its category is comms (a name is for people, not a key).
+  const base = APPS.devices["7d"];
+  const flow = base.series.handoffs;
+  const source = "Galaxy phone (demo) · Chat and calls";
+  const target = "then Desk PC (demo) · Work";
+  const handoffs = {
+    ...flow,
+    nodes: [source, target, ...(flow.nodes ?? [])],
+    node_categories: ["comms", "work", ...(flow.node_categories ?? [])],
+    links: [{ source, target, value: 99 }, ...(flow.links ?? [])],
+  };
+  await mockHub(page, { devices: () => ({ ...base, series: { ...base.series, handoffs } }) });
+  await page.goto("/insights?tab=apps&range=7d");
+  const first = page.getByRole("region", { name: "Switching between devices" }).locator(".handoff-list li").first();
+  await expect(first).toContainText(`${source}, ${target}`);
+  await expect(first.locator(".swatch")).toHaveAttribute("style", "--c: var(--cat-comms);");
 });
 
 for (const scheme of ["light", "dark"] as const) {

@@ -8,7 +8,7 @@ import ChartCard from "../../components/ChartCard";
 import { shortDay } from "../../components/DayPicker";
 import Skeleton from "../../components/Skeleton";
 import StatCard, { formatMinutes } from "../../components/StatCard";
-import { type ChartOption, categoryStyle, useEChart } from "../../theme/charts";
+import { CATEGORY_LABELS, type ChartOption, asCategory, categoryStyle, escapeHTML, useEChart } from "../../theme/charts";
 import { deviceColors } from "../../theme/devices";
 import { useMediaQuery } from "../../theme/motion";
 import { ChangeChip, type InsightsData, type Item, type Series, metric, rangeWords, useAppDetail, useInsights, valueOf } from "./shared";
@@ -16,16 +16,9 @@ import { ChangeChip, type InsightsData, type Item, type Series, metric, rangeWor
 type Props = { range: string; tz: string; today: string; app: string | null; onApp: (app: string | null) => void };
 
 const OTHER_APPS = "Other apps"; // the treemap's box for a category's smaller apps: not one app, so not opened
-const KNOWN = new Set(["social", "video", "work", "study", "comms", "games", "health", "other"]);
-const category = (key: string | null | undefined) => (key && KNOWN.has(key) ? key : "other");
+const category = asCategory;
 const minutesText = (value: unknown) => (value === null || value === undefined || value === "-" ? "no data" : formatMinutes(Number(value)));
 const WIDE = "(min-width: 40rem)";
-
-/** "Galaxy phone · Social" (or "then Galaxy phone · Social") to the category's key, for its color. */
-function nodeCategory(node: string): string {
-  const label = node.slice(node.lastIndexOf(" · ") + 3).toLowerCase();
-  return category(label);
-}
 
 // --- the leaderboard -------------------------------------------------------------------------------------------
 
@@ -108,10 +101,12 @@ function Treemap({ series, onApp }: { series: Series; onApp: (app: string) => vo
     () => ({
       tooltip: {
         formatter: (params: { value: number; treePathInfo: { name: string }[] }) =>
-          `${params.treePathInfo
-            .map((part) => part.name)
-            .filter(Boolean)
-            .join(": ")} ${formatMinutes(params.value)}`,
+          escapeHTML(
+            `${params.treePathInfo
+              .map((part) => part.name)
+              .filter(Boolean)
+              .join(": ")} ${formatMinutes(params.value)}`,
+          ),
       },
       series: [
         {
@@ -155,7 +150,34 @@ function Treemap({ series, onApp }: { series: Series; onApp: (app: string) => vo
       },
     },
   });
-  return <div ref={chart} className="chart treemap" style={{ height: 340 }} data-no-swipe />;
+  const apps = (series.items ?? []).flatMap((group) =>
+    (group.children ?? []).filter((child) => child.name !== OTHER_APPS).map((child) => ({ ...child, group: group.name })),
+  );
+  return (
+    <>
+      <div ref={chart} className="chart treemap" style={{ height: 340 }} data-no-swipe />
+      {/* The chart is a picture: every app in it, as a list anyone can reach and open (a keyboard, a screen reader). */}
+      <details className="tree-list">
+        <summary>Every app in it, as a list</summary>
+        <ul>
+          {apps.map((app) => (
+            <li key={`${app.group}|${app.name}`}>
+              <span className="swatch" style={{ "--c": `var(--cat-${category(app.category)})` } as CSSProperties} aria-hidden="true" />
+              <span className="tree-list-app">
+                {app.name} <span className="muted">{app.group}</span>
+              </span>
+              <strong>{formatMinutes(app.value)}</strong>
+              <button type="button" className="icon-button" aria-label={`Details for ${app.name}`} onClick={() => onApp(app.name)}>
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </>
+  );
 }
 
 // --- devices ---------------------------------------------------------------------------------------------------
@@ -187,12 +209,15 @@ function DevicesByDay({ series }: { series: Series }) {
 function Handoffs({ series }: { series: Series }) {
   const wide = useMediaQuery(WIDE); // names beside the flows only where there is room; the list below has them all
   const links = series.links ?? [];
-  const option = useMemo<ChartOption>(
-    () => ({
+  const nodes = series.nodes ?? [];
+  const categoryOf = new Map(nodes.map((name, index) => [name, category(series.node_categories?.[index])]));
+  const option = useMemo<ChartOption>(() => {
+    const targets = new Set(links.map((link) => link.target)); // the right side: what was taken up
+    return {
       tooltip: {
         trigger: "item",
         formatter: (params: { dataType?: string; name: string; value: number; data: { source?: string; target?: string } }) =>
-          params.dataType === "edge" ? `${params.data.source}, ${params.data.target}: ${params.value} times` : `${params.name}: ${params.value} times`,
+          escapeHTML(params.dataType === "edge" ? `${params.data.source}, ${params.data.target}: ${params.value} times` : `${params.name}: ${params.value} times`),
       },
       series: [
         {
@@ -208,17 +233,16 @@ function Handoffs({ series }: { series: Series }) {
           emphasis: { focus: "adjacency" },
           lineStyle: { color: "gradient", opacity: 0.35, curveness: 0.5 },
           label: { show: wide, color: "var(--text)", overflow: "truncate", width: 170 },
-          data: (series.nodes ?? []).map((name) => ({
+          data: nodes.map((name, index) => ({
             name,
-            itemStyle: { color: `var(--cat-${nodeCategory(name)})` },
-            label: { position: name.startsWith("then ") ? "left" : "right" },
+            itemStyle: { color: `var(--cat-${category(series.node_categories?.[index])})` },
+            label: { position: targets.has(name) ? "left" : "right" },
           })),
           links: links.map((link) => ({ source: link.source, target: link.target, value: link.value })),
         },
       ],
-    }),
-    [series, wide],
-  );
+    };
+  }, [series, wide, links, nodes]);
   const chart = useEChart(option, `${series.title}: from what you left to what you took up on another device`);
   return (
     <>
@@ -226,7 +250,7 @@ function Handoffs({ series }: { series: Series }) {
       <ol className="handoff-list">
         {links.slice(0, 5).map((link) => (
           <li key={`${link.source}|${link.target}`}>
-            <span className="swatch" style={{ "--c": `var(--cat-${nodeCategory(link.source)})` } as CSSProperties} aria-hidden="true" />
+            <span className="swatch" style={{ "--c": `var(--cat-${categoryOf.get(link.source) ?? "other"})` } as CSSProperties} aria-hidden="true" />
             <span>
               {link.source}, {link.target}
             </span>
@@ -325,8 +349,11 @@ function AppDrawer({ app, range, tz, today, onClose }: { app: string | null; ran
   }, [app]);
   const longest = data?.longest;
   const tone = category(data?.category);
+  const withData = (data?.series.daily?.lines?.[0]?.values ?? []).filter((value) => value !== null).length; // unknown days aren't unused
   return (
-    <dialog ref={dialog} className="dialog drawer" aria-labelledby={title} onClose={onClose}>
+    // Closing by Escape or the button removes the app from the address; closing because the address lost it
+    // (Back) must not add it again as a new step.
+    <dialog ref={dialog} className="dialog drawer" aria-labelledby={title} onClose={() => app !== null && onClose()}>
       {app !== null && (
         <div className="drawer-body">
           <header className="drawer-head">
@@ -335,7 +362,7 @@ function AppDrawer({ app, range, tz, today, onClose }: { app: string | null; ran
               <h2 id={title}>{app}</h2>
               {data?.category && (
                 <span className="chip" style={{ "--c": `var(--cat-${tone})`, "--c-ink": `var(--cat-${tone}-ink)` } as CSSProperties}>
-                  {data.category[0].toUpperCase() + data.category.slice(1)}
+                  {CATEGORY_LABELS[tone]}
                 </span>
               )}
             </div>
@@ -358,7 +385,7 @@ function AppDrawer({ app, range, tz, today, onClose }: { app: string | null; ran
             <div className="stack">
               <div className="grid stat-grid">
                 <StatCard label="In the range" value={valueOf(data, "total")} format={formatMinutes} tone={tone} />
-                <StatCard label="Days used" value={valueOf(data, "days_used")} format={String} tone={tone} hint={`of ${data.range.days}`} />
+                <StatCard label="Days used" value={valueOf(data, "days_used")} format={String} tone={tone} hint={`of ${withData} with data`} />
                 <StatCard label="A day, when used" value={valueOf(data, "a_day_used")} format={formatMinutes} tone={tone} />
                 <StatCard
                   label="Longest stretch"

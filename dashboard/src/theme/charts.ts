@@ -67,8 +67,15 @@ export const CATEGORY_DECALS: Record<Category, Record<string, unknown>> = {
   other: { symbol: "none" },
 };
 
-function asCategory(category: string | null | undefined): Category {
+/** A category key the dashboard knows, or "other". */
+export function asCategory(category: string | null | undefined): Category {
   return (CATEGORIES as readonly string[]).includes(category ?? "") ? (category as Category) : "other";
+}
+
+/** Text made safe for a tooltip: ECharts shows a formatter's string as HTML, and names (apps, sites, devices) come
+ * from what devices send. */
+export function escapeHTML(text: string | number): string {
+  return echarts.format.encodeHTML(String(text));
 }
 
 /** A token's current value (it changes with the color scheme). */

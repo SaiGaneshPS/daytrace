@@ -127,6 +127,11 @@ def app_matches(needle: str, piece: Session) -> bool:
     return needle in words or (len(needle) >= 4 and any(w.startswith(needle) for w in words))
 
 
+def app_key(piece: Session) -> str:
+    """The name an app or site goes by in every split and tab (a site by its domain)."""
+    return piece.app or piece.app_id or "unknown"
+
+
 def is_meeting(session: Session) -> bool:
     text = f"{session.app or ''} {session.app_id or ''}".lower()
     return any(marker in text for marker in MEETING_MARKERS)
@@ -432,7 +437,7 @@ class Stats:
 
     def _keys(self, piece: Session, group_by: str, day: date) -> list[tuple[str, int]]:
         if group_by == "app":
-            return [(piece.app or piece.app_id or "unknown", piece.seconds)]
+            return [(app_key(piece), piece.seconds)]
         if group_by == "category":
             return [(piece.category or "other", piece.seconds)]
         if group_by == "device":
@@ -664,13 +669,16 @@ class Stats:
         """Moves from one device to another: what was in front of you (foreground()) changing device, with at most
         5 minutes between (coming back to a screen later is not a hand-off, as with switches). Each is counted from
         the device and category left to the device and category taken up ("the PC's work, then the phone's
-        social"), in `pairs`, most first. None when no device sent screen data that day."""
+        social"), in `pairs`, most first. A switch counts for the day it lands in: the computer until 23:59, then
+        the phone at 00:01, is the next day's (the evening before is read for it). None when no device sent screen
+        data that day."""
         window = self.day(day)
         if not window.counted_devices_with_data:
             return self._missing(window, unit="switches", pairs=[])
+        evening = [piece for piece in self.day(day - timedelta(days=1)).pieces if piece.end > window.start - SWITCH_GAP]
         pairs: dict[tuple[str, str, str, str], int] = defaultdict(int)
-        for (_, left_at, left), (taken_at, _, taken) in itertools.pairwise(self.foreground(window.pieces)):
-            if taken.device_id != left.device_id and taken_at - left_at <= SWITCH_GAP:
+        for (_, left_at, left), (taken_at, _, taken) in itertools.pairwise(self.foreground([*evening, *window.pieces])):
+            if taken_at >= window.start and taken.device_id != left.device_id and taken_at - left_at <= SWITCH_GAP:
                 pairs[(left.device_id, left.category or "other", taken.device_id, taken.category or "other")] += 1
         ranked = sorted(pairs.items(), key=lambda kv: (-kv[1], kv[0]))
         return {"value": sum(pairs.values()), "missing": False,

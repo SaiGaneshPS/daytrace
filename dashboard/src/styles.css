@@ -578,6 +578,12 @@ main:focus-visible { outline: none; } /* focused by the skip link: no ring aroun
   .leader-meta { justify-content: flex-end; }
 }
 .spark { display: block; overflow: visible; }
+.tree-list { margin-top: var(--space-3); font-size: var(--text-sm); }
+.tree-list summary { min-height: var(--touch); display: flex; align-items: center; cursor: pointer; font-weight: 700; }
+.tree-list ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.tree-list li { display: flex; align-items: center; gap: var(--space-2); border-bottom: 1px solid var(--border); }
+.tree-list li:last-child { border-bottom: 0; }
+.tree-list-app { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .handoff-list { margin: var(--space-3) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-sm); }
 .handoff-list li { display: flex; align-items: baseline; gap: var(--space-2); }
 .handoff-list li span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }

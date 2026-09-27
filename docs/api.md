@@ -468,6 +468,7 @@ days); anything else is `400`.
   for it in the range (missing, not zero). Counts that need no screen (meals, calendar events, nights) are 0 only
   on days the hub could have heard about: a device sent something for the day, or one was paired then. Before
   recording began, and on days still to come, they are null.
+- Categories are named as the dashboard names them (`comms` is "Chat and calls"; the rest are the key, capitalized).
 - A series has a `kind` and what that kind needs:
   - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
     device, also where that device sent nothing that day). A device's line has its `device_type`.
@@ -493,9 +494,10 @@ days); anything else is `400`.
     down for social, video and games, up for work and study, and `neutral` otherwise.
   - **devices:** each device's share, by day, by hour, and device to category (Sankey). DT-55 adds switching between
     devices (`handoffs`, a Sankey from what you left on one device to what you took up on another within 5 minutes:
-    `Galaxy phone · Social` to `then Desk PC · Comms`, the 12 most common), when each device sent data (`sync`, a
+    `Galaxy phone · Social` to `then Desk PC · Chat and calls`, the 12 most common, with each node's category key in
+    `node_categories`; a switch over midnight counts for the day it lands in), when each device sent data (`sync`, a
     strip), and the metrics `handoffs` (the count), `top_handoff` and `last_seen:<device>` (when the hub last heard
-    from it, UTC, or null).
+    from it, UTC, or null: read fresh for every answer, a cached one too).
   - **focus:** the average score (gauge); focused, other work or study, and distracted time by day; switches by hour;
     late nights against the next day's focus (scatter, with Spearman's rho and "correlation, not cause").
   - **sleep:** each night, measured or estimated; bedtime and wake time (minutes after 18:00 the evening before);
@@ -521,8 +523,8 @@ days); anything else is `400`.
 range, as the Apps tab names it (a site by its domain): `{ app, category, tz, range, in_progress, metrics, series,
 longest, meta, cached }`. Metrics: `total`, `days_used`, `a_day_used` and `longest` (minutes). Series: `daily` (bars,
 null on a day no device sent screen data, 0 on one it wasn't used), `hours` (minutes by hour of the day, the range
-added up) and `devices` (a donut). `longest` is its longest stretch on one device, breaks under a minute joined:
-`{ start, end, minutes, device_id, device }`, or null. It is cut from the same pieces as the tabs, so its total is
+added up; null when no day had data) and `devices` (a donut). `longest` is its longest stretch on one device, breaks
+under a minute joined and over midnight too: `{ start, end, minutes, device_id, device }`, or null. It is cut from the same pieces as the tabs, so its total is
 the leaderboard's. An app with no time is 200 with zeros; `app` must be 1 to 300 characters (else 422).
 
 `GET /wrapped?week=2026-W38&tz=America/Toronto` (DT-41, viewer) is the week in review, Monday to Sunday. Without

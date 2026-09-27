@@ -754,6 +754,7 @@ def test_an_app_with_no_time_and_days_with_no_data(hub: TestClient) -> None:
     assert body["series"]["daily"]["lines"][0]["values"] == [0] * 7  # days with data: 0 for it
     before = detail(hub, "An app nobody uses", "2026-09-01..2026-09-05")  # before recording began: unknown
     assert before["series"]["daily"]["lines"][0]["values"] == [None] * 5 and metric(before, "total") is None
+    assert before["series"]["hours"]["lines"][0]["values"] == [None] * 24  # unknown hours too, not 24 zeros
     assert hub.get("/api/v1/insights/apps/detail", params={"app": "", "range": "7d"}).status_code == 422
 
 
@@ -764,3 +765,49 @@ def test_an_apps_detail_is_cached_until_the_data_changes(hub: TestClient, demo: 
     add_event(demo, datetime(2026, 9, 22, 13, 0, tzinfo=TZ), minutes=30, app="TikTok")
     third = detail(hub, "TikTok", span)
     assert third["cached"] is False and metric(third, "total") > metric(first, "total")
+
+
+def test_the_longest_stretch_runs_over_midnight(hub: TestClient, demo: Settings) -> None:
+    # 23:00 on the 22nd to 01:30 on the 23rd on one phone: one stretch of 2h 30m, not a day's 1h and the next day's 1h 30m.
+    add_event(demo, datetime(2026, 9, 22, 23, 0, tzinfo=TZ), minutes=150, app="Night owl", category="video")
+    body = detail(hub, "Night owl")
+    assert metric(body, "longest") == 150 and body["longest"]["minutes"] == 150
+    assert body["longest"]["start"].startswith("2026-09-23T03:00") and body["longest"]["device_id"] == "seed-android"  # 23:00 Toronto
+    assert body["series"]["daily"]["lines"][0]["values"][3:5] == [60, 90]  # each day still has its own part
+
+
+def test_last_heard_from_is_fresh_on_a_cached_answer(hub: TestClient, demo: Settings) -> None:
+    span = f"{FIRST.isoformat()}..{(TODAY - timedelta(days=1)).isoformat()}"  # over, so kept until the data changes
+    first = tab(hub, "devices", span)
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        conn.execute("UPDATE devices SET last_seen = '2026-09-25T20:59:00.000000Z' WHERE device_id = 'seed-android'")
+    second = tab(hub, "devices", span)
+    assert (first["cached"], second["cached"]) == (False, True)  # contact alone doesn't change the data
+    assert metric(first, "last_seen:seed-android") is None and metric(second, "last_seen:seed-android") == "2026-09-25T20:59:00.000000Z"
+
+
+def test_the_sankey_says_each_nodes_category(hub: TestClient) -> None:
+    flow = tab(hub, "devices")["series"]["handoffs"]
+    assert len(flow["node_categories"]) == len(flow["nodes"])
+    names = {"comms": "Chat and calls"}
+    for node, category in zip(flow["nodes"], flow["node_categories"], strict=True):
+        assert node.endswith(f" · {names.get(category, category.capitalize())}")
+    assert any(item["name"] == "Chat and calls" for item in tab(hub, "apps")["series"]["treemap"]["items"])  # as the dashboard says
+
+
+def test_the_leaderboard_reads_the_ranges_own_split(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[date, date, str, str]] = []
+    real = Stats.crosstab
+
+    def counting(self: Stats, first: date, last: date | None, row: Any, column: Any) -> dict[str, Any]:
+        calls.append((first, last or first, row, column))
+        return real(self, first, last, row, column)
+
+    monkeypatch.setattr(Stats, "crosstab", counting)
+    tab(hub, "apps", "14d")
+    by_day = [call for call in calls if call[2:] == ("day", "app") and call[1] == TODAY]
+    assert by_day == [(FIRST, TODAY, "day", "app")]  # once, for the range: the sparklines' week is inside it
+    calls.clear()
+    insights_api._cache.clear()
+    tab(hub, "apps", "today")
+    assert (TODAY - timedelta(days=6), TODAY, "day", "app") in calls  # a range shorter than the week reads the days before

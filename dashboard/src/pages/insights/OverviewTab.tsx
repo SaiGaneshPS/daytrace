@@ -6,7 +6,7 @@ import { type ReactNode, useMemo } from "react";
 import ChartCard from "../../components/ChartCard";
 import { longDay, shortDay } from "../../components/DayPicker";
 import StatCard, { formatMinutes } from "../../components/StatCard";
-import { type ChartOption, categoryStyle, useEChart } from "../../theme/charts";
+import { type ChartOption, categoryStyle, escapeHTML, useEChart } from "../../theme/charts";
 import { deviceColors } from "../../theme/devices";
 import { ChangeChip, type InsightsData, type Series, metric, rangeWords, useInsights, valueOf } from "./shared";
 
@@ -56,7 +56,8 @@ function Categories({ series, total }: { series: Series; total: number | null })
     () => ({
       tooltip: {
         trigger: "item",
-        formatter: (params: { name: string; value: number; percent: number }) => `${params.name}: ${formatMinutes(params.value)} (${params.percent}%)`,
+        formatter: (params: { name: string; value: number; percent: number }) =>
+          `${escapeHTML(params.name)}: ${formatMinutes(params.value)} (${params.percent}%)`,
       },
       legend: { bottom: 0, type: "scroll" },
       series: [
@@ -121,7 +122,7 @@ function Hours({ series }: { series: Series }) {
         position: "top",
         formatter: (params: { value: [number, number, number] }) => {
           const [hour, weekday, value] = params.value;
-          return `${WEEKDAYS[weekdays[weekday]] ?? weekdays[weekday]}, ${hours[hour]}:00 to ${next(hours[hour])}:00: ${formatMinutes(value)}`;
+          return escapeHTML(`${WEEKDAYS[weekdays[weekday]] ?? weekdays[weekday]}, ${hours[hour]}:00 to ${next(hours[hour])}:00: ${formatMinutes(value)}`);
         },
       },
       grid: { left: 8, right: 8, top: 8, bottom: 56, containLabel: true },

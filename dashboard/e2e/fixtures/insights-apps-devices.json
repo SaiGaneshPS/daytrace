@@ -208,6 +208,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -451,7 +452,7 @@
        "change": null
       },
       {
-       "name": "Comms",
+       "name": "Chat and calls",
        "value": 352.02,
        "key": "comms",
        "category": "comms",
@@ -546,6 +547,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -688,7 +690,7 @@
        ]
       },
       {
-       "name": "Comms",
+       "name": "Chat and calls",
        "key": "comms",
        "category": "comms",
        "device_type": null,
@@ -757,6 +759,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -814,6 +817,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -1022,6 +1026,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -1251,6 +1256,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -1494,7 +1500,7 @@
        "change": null
       },
       {
-       "name": "Comms",
+       "name": "Chat and calls",
        "value": 152.57,
        "key": "comms",
        "category": "comms",
@@ -1589,6 +1595,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -1689,7 +1696,7 @@
        ]
       },
       {
-       "name": "Comms",
+       "name": "Chat and calls",
        "key": "comms",
        "category": "comms",
        "device_type": null,
@@ -1737,6 +1744,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -1780,6 +1788,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -2098,6 +2107,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -2183,7 +2193,7 @@
     {
      "id": "top_handoff",
      "label": "Most common switch",
-     "value": "Galaxy phone (demo) \u00b7 Social, then Desk PC (demo) \u00b7 Comms",
+     "value": "Galaxy phone (demo) \u00b7 Social, then Desk PC (demo) \u00b7 Chat and calls",
      "unit": "text",
      "explain": "The move between devices you made most often in the range.",
      "estimated": false
@@ -2193,7 +2203,7 @@
      "label": "Desk PC (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     },
     {
@@ -2201,7 +2211,7 @@
      "label": "Galaxy phone (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     },
     {
@@ -2209,7 +2219,7 @@
      "label": "MacBook (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     },
     {
@@ -2217,7 +2227,7 @@
      "label": "iPhone (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     }
    ],
@@ -2275,6 +2285,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -2398,6 +2409,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -2593,6 +2605,7 @@
       }
      ],
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -2616,7 +2629,7 @@
       "Galaxy phone (demo)",
       "MacBook (demo)",
       "iPhone (demo)",
-      "Comms",
+      "Chat and calls",
       "Games",
       "Health",
       "Other",
@@ -2625,10 +2638,11 @@
       "Video",
       "Work"
      ],
+     "node_categories": null,
      "links": [
       {
        "source": "Desk PC (demo)",
-       "target": "Comms",
+       "target": "Chat and calls",
        "value": 151.32
       },
       {
@@ -2653,7 +2667,7 @@
       },
       {
        "source": "Galaxy phone (demo)",
-       "target": "Comms",
+       "target": "Chat and calls",
        "value": 200.7
       },
       {
@@ -2711,9 +2725,9 @@
      "cells": null,
      "nodes": [
       "Galaxy phone (demo) \u00b7 Social",
-      "then Desk PC (demo) \u00b7 Comms",
+      "then Desk PC (demo) \u00b7 Chat and calls",
       "iPhone (demo) \u00b7 Social",
-      "then Galaxy phone (demo) \u00b7 Comms",
+      "then Galaxy phone (demo) \u00b7 Chat and calls",
       "Desk PC (demo) \u00b7 Video",
       "then Galaxy phone (demo) \u00b7 Social",
       "then Desk PC (demo) \u00b7 Games",
@@ -2724,15 +2738,30 @@
       "then MacBook (demo) \u00b7 Study",
       "MacBook (demo) \u00b7 Study"
      ],
+     "node_categories": [
+      "social",
+      "comms",
+      "social",
+      "comms",
+      "video",
+      "social",
+      "games",
+      "video",
+      "games",
+      "social",
+      "social",
+      "study",
+      "study"
+     ],
      "links": [
       {
        "source": "Galaxy phone (demo) \u00b7 Social",
-       "target": "then Desk PC (demo) \u00b7 Comms",
+       "target": "then Desk PC (demo) \u00b7 Chat and calls",
        "value": 14.0
       },
       {
        "source": "iPhone (demo) \u00b7 Social",
-       "target": "then Galaxy phone (demo) \u00b7 Comms",
+       "target": "then Galaxy phone (demo) \u00b7 Chat and calls",
        "value": 12.0
       },
       {
@@ -3095,6 +3124,7 @@
       }
      ],
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -3178,7 +3208,7 @@
     {
      "id": "top_handoff",
      "label": "Most common switch",
-     "value": "iPhone (demo) \u00b7 Social, then Galaxy phone (demo) \u00b7 Comms",
+     "value": "iPhone (demo) \u00b7 Social, then Galaxy phone (demo) \u00b7 Chat and calls",
      "unit": "text",
      "explain": "The move between devices you made most often in the range.",
      "estimated": false
@@ -3188,7 +3218,7 @@
      "label": "Desk PC (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     },
     {
@@ -3196,7 +3226,7 @@
      "label": "MacBook (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     },
     {
@@ -3204,7 +3234,7 @@
      "label": "Galaxy phone (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     },
     {
@@ -3212,7 +3242,7 @@
      "label": "iPhone (demo)",
      "value": null,
      "unit": "time",
-     "explain": "When the hub last heard from it (UTC).",
+     "explain": "When the hub last heard from it (UTC); filled in fresh for each answer.",
      "estimated": false
     }
    ],
@@ -3270,6 +3300,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -3358,6 +3389,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -3543,6 +3575,7 @@
       }
      ],
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -3566,7 +3599,7 @@
       "MacBook (demo)",
       "Galaxy phone (demo)",
       "iPhone (demo)",
-      "Comms",
+      "Chat and calls",
       "Games",
       "Health",
       "Other",
@@ -3575,10 +3608,11 @@
       "Video",
       "Work"
      ],
+     "node_categories": null,
      "links": [
       {
        "source": "Desk PC (demo)",
-       "target": "Comms",
+       "target": "Chat and calls",
        "value": 54.83
       },
       {
@@ -3618,7 +3652,7 @@
       },
       {
        "source": "Galaxy phone (demo)",
-       "target": "Comms",
+       "target": "Chat and calls",
        "value": 97.73
       },
       {
@@ -3661,9 +3695,9 @@
      "cells": null,
      "nodes": [
       "iPhone (demo) \u00b7 Social",
-      "then Galaxy phone (demo) \u00b7 Comms",
+      "then Galaxy phone (demo) \u00b7 Chat and calls",
       "Galaxy phone (demo) \u00b7 Social",
-      "then Desk PC (demo) \u00b7 Comms",
+      "then Desk PC (demo) \u00b7 Chat and calls",
       "then Desk PC (demo) \u00b7 Video",
       "Desk PC (demo) \u00b7 Video",
       "then iPhone (demo) \u00b7 Social",
@@ -3674,15 +3708,30 @@
       "then MacBook (demo) \u00b7 Study",
       "MacBook (demo) \u00b7 Study"
      ],
+     "node_categories": [
+      "social",
+      "comms",
+      "social",
+      "comms",
+      "video",
+      "video",
+      "social",
+      "games",
+      "games",
+      "social",
+      "social",
+      "study",
+      "study"
+     ],
      "links": [
       {
        "source": "iPhone (demo) \u00b7 Social",
-       "target": "then Galaxy phone (demo) \u00b7 Comms",
+       "target": "then Galaxy phone (demo) \u00b7 Chat and calls",
        "value": 6.0
       },
       {
        "source": "Galaxy phone (demo) \u00b7 Social",
-       "target": "then Desk PC (demo) \u00b7 Comms",
+       "target": "then Desk PC (demo) \u00b7 Chat and calls",
        "value": 4.0
       },
       {
@@ -3898,6 +3947,7 @@
       }
      ],
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -4003,6 +4053,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -4014,7 +4065,7 @@
      "kind": "bars",
      "title": "When in the day",
      "unit": "minutes",
-     "explain": "Its minutes by hour of the day, the whole range added up.",
+     "explain": "Its minutes by hour of the day, the whole range added up; unknown when no day had data.",
      "estimated": false,
      "x": [
       "00",
@@ -4080,6 +4131,7 @@
      "items": null,
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,
@@ -4110,6 +4162,7 @@
      ],
      "cells": null,
      "nodes": null,
+     "node_categories": null,
      "links": null,
      "points": null,
      "value": null,

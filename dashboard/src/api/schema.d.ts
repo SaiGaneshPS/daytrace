@@ -1666,6 +1666,11 @@ export interface components {
              */
             nodes?: string[] | null;
             /**
+             * Node Categories
+             * @description sankey: each node's category key, in the nodes' order.
+             */
+            node_categories?: (string | null)[] | null;
+            /**
              * Links
              * @description sankey.
              */
