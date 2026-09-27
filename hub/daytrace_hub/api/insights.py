@@ -71,6 +71,7 @@ class DaySummary(BaseModel):
     steps: int | None = Field(description="The day's steps; the largest total when two phones sent one.")
     top_apps: list[AppMinutes] = Field(description=f"Up to {TOP_APPS} apps and sites with the most time, most first.")
     estimated: bool = Field(description="True when any of this was inferred (an iPhone app without a close, a guessed night).")
+    meta: Meta
 
 
 def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
@@ -83,6 +84,7 @@ def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
     pickups, switches = stats.pickups(day), stats.switches_per_hour(day)
     sleep = stats.sleep_estimate(day)
     window = stats.day(day)
+    estimated = bool(totals["estimated"] or (sleep["value"] is not None and not sleep.get("measured", False)))
     return DaySummary(
         date=day,
         tz=tz_name,
@@ -102,7 +104,8 @@ def summarize(stats: Stats, day: date, tz_name: str) -> DaySummary:
         sleep_estimated=bool(sleep["value"] is not None and not sleep.get("measured", False)),
         steps=stats.steps(day),
         top_apps=[AppMinutes(**app) for app in stats.top_apps(day, limit=TOP_APPS)] if has_screen else [],
-        estimated=bool(totals["estimated"] or (sleep["value"] is not None and not sleep.get("measured", False))),
+        estimated=estimated,
+        meta=Meta(**stats.meta(day, day, estimated)),
     )
 
 

@@ -6,6 +6,7 @@ local midnight. Every number is whole seconds first; minutes are rounded from th
 """
 from __future__ import annotations
 
+import sqlite3
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import lru_cache
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import Reader, get_database
 from ..categories import Categorizer
-from ..db import Database
+from ..db import Database, utc_text
 from ..sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
 from . import API_PREFIX, ApiError
 
@@ -99,10 +100,12 @@ class TimeRange(BaseModel):
 
 
 class Meta(BaseModel):
-    unit: Literal["minutes"] = "minutes"
+    """What every answer about a range of time says about its numbers (DT-59 checks each carries it)."""
+
+    unit: str = Field(default="minutes", description="The unit of the answer's numbers: minutes, days, score, ...")
     range: TimeRange
-    source: Literal["real", "seed", "mixed"]
-    estimated: bool
+    source: Literal["real", "seed", "mixed"] = Field(description="Your devices' data, the demo seed's, or both.")
+    estimated: bool = Field(description="True when some of it was inferred (an app with no close seen, a night guessed from the phone).")
 
 
 class Timeline(BaseModel):
@@ -147,6 +150,22 @@ def day_window(day: date, tz: tzinfo) -> tuple[datetime, datetime]:
     start = datetime.combine(day, time(0), tzinfo=tz).astimezone(UTC)
     end = datetime.combine(day + timedelta(days=1), time(0), tzinfo=tz).astimezone(UTC)
     return start, end
+
+
+def range_meta(conn: sqlite3.Connection, tz: tzinfo, tz_name: str, first: date, last: date, now: datetime, *,
+               unit: str, estimated: bool) -> Meta:
+    """The meta for local days `first` to `last` without loading them: the range, and where the data came from (the
+    sources of the events in it, up to now), as Stats.meta says for what it has loaded."""
+    start, _ = day_window(first, tz)
+    _, end = day_window(last, tz)
+    until = max(start, min(end, now.astimezone(UTC)))
+    rows = conn.execute(
+        "SELECT DISTINCT source FROM events WHERE start_utc < ? AND ((end_utc IS NOT NULL AND end_utc > ?) OR (end_utc IS NULL AND start_utc >= ?))",
+        (utc_text(until), utc_text(start), utc_text(start)),
+    ).fetchall()
+    sources = {row[0] for row in rows}
+    return Meta(unit=unit, range=TimeRange(start=start.astimezone(tz), end=end.astimezone(tz), tz=tz_name),
+                source="seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real", estimated=estimated)
 
 
 def union_seconds(intervals: list[tuple[datetime, datetime]]) -> int:

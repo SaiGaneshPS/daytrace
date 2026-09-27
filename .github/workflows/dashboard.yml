@@ -1,5 +1,6 @@
 # DT-6: dashboard type-check and production build. DT-52: Playwright end-to-end tests of the build (desktop and
-# phone screens, accessibility with axe), with the hub's API mocked.
+# phone screens, accessibility with axe), with the hub's API mocked. DT-59: Vitest unit tests (every Insights chart
+# draws the hub's fixture numbers exactly).
 # Runs on every PR (no path filter) so the required "dashboard" check always reports.
 name: dashboard
 
@@ -39,6 +40,8 @@ jobs:
         run: npm ci
       - name: Type-check and build
         run: npm run build
+      - name: Unit tests (Vitest)
+        run: npm test
       - name: Install Playwright's Chromium
         run: npx playwright install --with-deps chromium
       - name: End-to-end tests (Playwright)

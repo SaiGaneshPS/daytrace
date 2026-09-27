@@ -242,6 +242,7 @@ class Reading:
     final: bool  # what it measures is over: only new data can change it now
     target: float | None = None  # a target of its own that day (the devices paired then, for Synced)
     grows: bool = True  # it can only go up until final (minutes, meals), so past a limit is past it for good
+    estimated: bool = False  # some of it was inferred (a night guessed from the phone, an app with no close seen)
 
 
 def _phones_with_data(stats: Stats, start: datetime, end: datetime) -> set[str]:
@@ -253,7 +254,8 @@ def _focused_minutes(stats: Stats, day: date) -> Reading:
     window = stats.day(day)
     if not any(window.device_types.get(device) in DESK_TYPES for device in window.counted_devices_with_data):
         return Reading(None, window.over)  # no computer: nothing to focus on, which says nothing either way
-    return Reading(stats.focused_minutes(day)["value"] or 0.0, window.over)
+    focused = stats.focused_minutes(day)
+    return Reading(focused["value"] or 0.0, window.over, estimated=bool(focused.get("estimated")))
 
 
 def _social_minutes(stats: Stats, day: date) -> Reading:
@@ -261,7 +263,7 @@ def _social_minutes(stats: Stats, day: date) -> Reading:
     totals = stats.totals(day, category="social")
     if window.until <= window.start or day.isoformat() in totals["missing_days"]:
         return Reading(None, window.over)
-    return Reading(totals["total_minutes"], window.over)
+    return Reading(totals["total_minutes"], window.over, estimated=totals["estimated"])
 
 
 def _late_phone_minutes(stats: Stats, day: date) -> Reading:
@@ -277,7 +279,7 @@ def _late_phone_minutes(stats: Stats, day: date) -> Reading:
     if not evening & after:
         return Reading(None, window.over)
     totals = stats.totals(night, between=(LATE_FROM, LATE_UNTIL), device_types=PHONE_TYPES)
-    return Reading(totals["total_minutes"], stats.now >= stats.at(day, LATE_UNTIL))
+    return Reading(totals["total_minutes"], stats.now >= stats.at(day, LATE_UNTIL), estimated=totals["estimated"])
 
 
 def _meals(stats: Stats, day: date) -> Reading:
@@ -312,7 +314,8 @@ def _bedtime(stats: Stats, day: date) -> Reading:
         return Reading(None, stats.now >= stats.at(day, SLEEP_UNTIL))
     start = datetime.fromisoformat(night["start"])  # local, so its clock reading is the wall clock (DST included)
     value = float(clock_minutes(f"{start.hour:02d}:{start.minute:02d}"))
-    return Reading(value, night.get("method") == "health" or stats.now >= stats.at(day, SLEEP_UNTIL), grows=False)
+    return Reading(value, night.get("method") == "health" or stats.now >= stats.at(day, SLEEP_UNTIL), grows=False,
+                   estimated=bool(night.get("estimated")))
 
 
 MEASURES: dict[str, Callable[[Stats, date], Reading]] = {
@@ -352,6 +355,7 @@ class DayResult:
     value: float | None
     target: float | None
     remaining: float | None
+    estimated: bool = False  # the day's reading was partly inferred
 
 
 @dataclass
@@ -478,7 +482,8 @@ def evaluate(conn: sqlite3.Connection, tz: tzinfo, tz_name: str, now: datetime, 
         for day in days:
             reading = readings.get((measure, day)) or known[(measure, day)]
             status, remaining = judge(kind, reading, target)
-            out.append(DayResult(day, status, reading.value, reading.target if reading.target is not None else target, remaining))
+            out.append(DayResult(day, status, reading.value, reading.target if reading.target is not None else target, remaining,
+                                 reading.estimated))
         return out
 
     goals = {
