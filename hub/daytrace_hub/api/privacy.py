@@ -8,14 +8,19 @@ or the dashboard on the hub computer), as categories and goals do. A change appl
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+import time
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import Editor, Reader, get_database, require_local
@@ -34,6 +39,7 @@ from ..redaction import (
     save_choices,
     stored_matches,
 )
+from ..redaction import SETTINGS_KEY as REDACTION_KEY
 from . import API_PREFIX, ApiError
 
 router = APIRouter(prefix=API_PREFIX, tags=["privacy"])
@@ -192,7 +198,7 @@ def network_status(_: Reader) -> NetworkStatus:
 # --- export and delete everything (DT-46) --------------------------------------------------------------------------
 
 # The database's own bookkeeping, not your data: which migrations ran, and the change counter.
-INTERNAL_TABLES = frozenset({"schema_migrations", "data_changes", "sqlite_sequence"})
+INTERNAL_TABLES = frozenset({"schema_migrations", "data_changes"})
 # Columns that hold JSON: exported as JSON, not as a string of it.
 JSON_COLUMNS = frozenset({("events", "data"), ("sessions", "source_event_ids"), ("settings", "value"), ("goals", "target"),
                           ("achievements", "dates"), ("story_cache", "facts"), ("wrapped_cache", "lines"),
@@ -201,13 +207,32 @@ JSON_COLUMNS = frozenset({("events", "data"), ("sessions", "source_event_ids"), 
 SECRET_COLUMNS = frozenset({("devices", "token_hash")})
 DELETE_PHRASE = "delete all my daytrace data"
 EXPORT_CHUNK = 64 * 1024  # characters gathered before a piece of the export is sent
+SNAPSHOT_PREFIX = ".daytrace-export-"  # the copy an export is read from, next to the database; removed afterwards
+STALE_SNAPSHOT_SECONDS = 3600.0  # a copy left behind (the hub stopped mid-export) is removed after this
 
 
-def data_tables(conn: sqlite3.Connection) -> list[str]:
-    """Every table that holds the profile's data (so a table a later migration adds is exported and deleted too),
-    in name order."""
-    names = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-    return [name for name in names if name not in INTERNAL_TABLES]
+def data_tables(conn: sqlite3.Connection) -> list[tuple[str, bool]]:
+    """Every table that holds the profile's data, with whether it can be read in rowid order: ordinary tables (a
+    later migration's too, WITHOUT ROWID ones included) and virtual tables (a full-text index holds its own rows),
+    never a virtual table's shadow tables (its internals, read and emptied through it) or SQLite's own."""
+    if sqlite3.sqlite_version_info >= (3, 37):
+        rows = [(row["name"], row["type"], row["wr"]) for row in conn.execute("PRAGMA main.table_list")]
+    else:  # pragma: no cover (older SQLite: no shadow tables to tell apart, no WITHOUT ROWID check)
+        rows = [(row["name"], "table", 0) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+    found = [(name, kind == "table" and not without_rowid) for name, kind, without_rowid in rows
+             if kind in ("table", "virtual") and not name.startswith("sqlite_") and name not in INTERNAL_TABLES]
+    return sorted(found)
+
+
+def _finite(value: Any) -> Any:
+    """JSON has no NaN or Infinity: a value that isn't a finite number is exported as null."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _finite(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_finite(item) for item in value]
+    return value
 
 
 def _row(table: str, row: sqlite3.Row) -> dict[str, Any]:
@@ -221,79 +246,149 @@ def _row(table: str, row: sqlite3.Row) -> dict[str, Any]:
                 value = json.loads(value)
             except ValueError:
                 pass  # kept as it was stored
-        item[key] = value
+        item[key] = _finite(value)
     return item
 
 
-def export_chunks(database: Database, profile: str, now: datetime | None = None) -> Iterator[str]:
-    """The profile's data as one JSON document, in pieces: every data table's rows (device tokens left out), read
-    in one snapshot, so the export is consistent even while devices keep syncing."""
+def remove_file(path: Path) -> None:
+    for leftover in (path, Path(f"{path}-journal"), Path(f"{path}-wal"), Path(f"{path}-shm")):
+        leftover.unlink(missing_ok=True)
+
+
+def take_snapshot(database: Database) -> Path:
+    """A copy of the database as of now (VACUUM INTO), next to it, for an export to read at its own pace: the live
+    database is never held while a download runs, and a delete-all isn't kept waiting. Copies an earlier export left
+    behind are removed first."""
+    folder = database.path.parent
+    for old in folder.glob(f"{SNAPSHOT_PREFIX}*.db"):
+        if time.time() - old.stat().st_mtime > STALE_SNAPSHOT_SECONDS:
+            remove_file(old)
+    path = folder / f"{SNAPSHOT_PREFIX}{uuid.uuid4().hex}.db"
     with database.connect() as conn:
-        conn.execute("BEGIN")  # a read transaction: every table as of one moment
-        try:
-            header = {"daytrace_export": 1, "profile": profile, "exported_at": (now or datetime.now(UTC)).isoformat(),
-                      "schema_version": current_version(conn), "note": "Device tokens are never exported."}
-            buffer = json.dumps(header, ensure_ascii=False)[:-1] + ', "tables": {'
-            tables = data_tables(conn)
-            for number, table in enumerate(tables):
-                buffer += json.dumps(table) + ": ["
-                first = True
-                cursor = conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid')
-                while rows := cursor.fetchmany(500):
-                    for row in rows:
-                        buffer += ("" if first else ", ") + json.dumps(_row(table, row), ensure_ascii=False, default=str)
-                        first = False
-                        if len(buffer) >= EXPORT_CHUNK:
-                            yield buffer
-                            buffer = ""
-                buffer += "]" + (", " if number < len(tables) - 1 else "")
-            yield buffer + "}}"
-        finally:
-            if conn.in_transaction:
-                conn.execute("COMMIT")
+        conn.execute("VACUUM INTO ?", (str(path),))
+    return path
 
 
-@router.get("/privacy/export", summary="Everything the profile holds, as one JSON file (the hub computer only)",
-            dependencies=[Depends(require_local)], response_class=StreamingResponse)
+def export_chunks(snapshot: Path, profile: str, now: datetime | None = None) -> Iterator[str]:
+    """The profile's data as one JSON document, in pieces, from a snapshot: every data table's rows (device tokens
+    left out), all as of the moment the snapshot was taken."""
+    conn = sqlite3.connect(f"file:{snapshot.as_posix()}?mode=ro", uri=True, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        header = {"daytrace_export": 1, "profile": profile, "exported_at": (now or datetime.now(UTC)).isoformat(),
+                  "schema_version": current_version(conn), "note": "Device tokens are never exported."}
+        buffer = json.dumps(header, ensure_ascii=False)[:-1] + ', "tables": {'
+        tables = data_tables(conn)
+        for number, (table, by_rowid) in enumerate(tables):
+            buffer += json.dumps(table) + ": ["
+            first = True
+            cursor = conn.execute(f'SELECT * FROM "{table}"' + (" ORDER BY rowid" if by_rowid else ""))
+            while rows := cursor.fetchmany(500):
+                for row in rows:
+                    buffer += ("" if first else ", ") + json.dumps(_row(table, row), ensure_ascii=False, allow_nan=False, default=str)
+                    first = False
+                    if len(buffer) >= EXPORT_CHUNK:
+                        yield buffer
+                        buffer = ""
+            buffer += "]" + (", " if number < len(tables) - 1 else "")
+        yield buffer + "}}"
+    finally:
+        conn.close()
+
+
+class ErrorInfo(BaseModel):
+    code: str
+    message: str
+    details: list[Any] = Field(default_factory=list)
+
+
+class ErrorOut(BaseModel):
+    error: ErrorInfo
+
+
+@router.get(
+    "/privacy/export", summary="Everything the profile holds, as one JSON file (the hub computer only)",
+    dependencies=[Depends(require_local)], response_class=StreamingResponse,
+    responses={200: {"description": "The export, as a download.", "content": {"application/json": {"schema": {"type": "object"}}}},
+               403: {"model": ErrorOut, "description": "Not from the hub computer (local_only)."}},
+)
 def export_all(request: Request, database: Annotated[Database, Depends(get_database)]) -> StreamingResponse:
+    from .timeline import resolve_tz
+
     profile = request.app.state.settings.profile.name
-    filename = f"daytrace-{profile}-{datetime.now(UTC).date().isoformat()}.json"
-    return StreamingResponse(export_chunks(database, profile), media_type="application/json",
-                             headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+    zone, _ = resolve_tz(None)
+    filename = f"daytrace-{profile}-{datetime.now(zone).date().isoformat()}.json"  # the hub's own day
+    snapshot = take_snapshot(database)
+    return StreamingResponse(export_chunks(snapshot, profile), media_type="application/json",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+                             background=BackgroundTask(remove_file, snapshot))
 
 
 class DeleteAll(BaseModel):
     confirm: str = Field(description=f'Exactly "{DELETE_PHRASE}", on every call.')
+    keep_redaction_rules: bool = Field(default=True, description="Keep your own redaction words and the built-in rules "
+                                       "you switched off, so what is recorded next stays protected (default).")
 
 
 class Deleted(BaseModel):
     deleted: dict[str, int] = Field(description="Rows deleted from each table.")
     wiped: bool = Field(description="True when the deleted rows are gone from the file too (overwritten, the file "
-                                    "compacted). False when another connection kept that from finishing just now; the "
-                                    "rows are deleted either way, and SQLite overwrites them as the file is used.")
+                                    "compacted and its log folded back). False when another connection kept that from "
+                                    "finishing just now; the rows are deleted and overwritten either way.")
 
 
-def delete_everything(database: Database) -> Deleted:
-    """Empty every data table, keeping the schema (the hub keeps working, and devices pair again). With
-    secure_delete on, the deleted rows are overwritten with zeros; then the write-ahead log is folded back and the
-    file compacted, so nothing deleted stays on the disk."""
+def delete_everything(database: Database, keep_redaction_rules: bool = True) -> Deleted:
+    """Empty every data table, keeping the schema (the hub keeps working, and devices pair again). Every connection
+    overwrites what it deletes (secure_delete); then the file is compacted and its write-ahead log folded back, so
+    the deleted rows are gone from the file, not just unlinked."""
     with database.connect() as conn:
-        conn.execute("PRAGMA secure_delete = ON")
         with transaction(conn):
-            tables = sorted(data_tables(conn), key=lambda name: name == "devices")  # devices last: events point at them
-            counts = {table: conn.execute(f'DELETE FROM "{table}"').rowcount for table in tables}
+            conn.execute("PRAGMA defer_foreign_keys = ON")  # checked at the end: any order empties them
+            counts = {}
+            for table, _ in data_tables(conn):
+                if table == "settings" and keep_redaction_rules:
+                    counts[table] = conn.execute('DELETE FROM "settings" WHERE key != ?', (REDACTION_KEY,)).rowcount
+                else:
+                    counts[table] = conn.execute(f'DELETE FROM "{table}"').rowcount
         try:
-            busy = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
-            conn.execute("VACUUM")
+            conn.execute("VACUUM")  # a compacted copy, written through the log
+            busy = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]  # the log folded into the file
             wiped = busy == 0
         except sqlite3.OperationalError:
             wiped = False
     return Deleted(deleted=counts, wiped=wiped)
 
 
-@router.post("/privacy/delete", response_model=Deleted, summary="Delete everything the profile holds (the hub computer only)",
-             dependencies=[Depends(require_local)])
-def delete_all(body: DeleteAll, database: Annotated[Database, Depends(get_database)]) -> Deleted:
+def forget_in_memory(app: Any) -> None:
+    """What the hub process still held of the deleted data: cached answers and redaction rules, and the pairing
+    code (a code shown before the delete must not pair a device after it)."""
+    from .. import redaction, streaks
+    from . import devices as devices_api
+    from . import insights as insights_api
+
+    for cached in (insights_api._cache, streaks._cache, streaks._readings):
+        cached.clear()
+    redaction._parse_choices.cache_clear()
+    redaction._redactor.cache_clear()
+    app.state.pairing = devices_api.PairingCodes()
+
+
+@router.post(
+    "/privacy/delete", response_model=Deleted, summary="Delete everything the profile holds (the hub computer only)",
+    dependencies=[Depends(require_local)],
+    responses={400: {"model": ErrorOut, "description": "The phrase was not exactly right: nothing was deleted."},
+               403: {"model": ErrorOut, "description": "Not from the hub computer (local_only)."}},
+)
+def delete_all(body: DeleteAll, request: Request, database: Annotated[Database, Depends(get_database)]) -> Deleted:
     if body.confirm != DELETE_PHRASE:
         raise ApiError(400, "bad_request", f'to delete everything, confirm with exactly "{DELETE_PHRASE}"; nothing was deleted')
-    return delete_everything(database)
+    tracker = getattr(request.app.state, "tracker", None)
+    if tracker is not None:
+        tracker.stop()  # it writes what it holds (deleted next), and starts afresh after
+    try:
+        result = delete_everything(database, body.keep_redaction_rules)
+        forget_in_memory(request.app)
+    finally:
+        if tracker is not None:
+            tracker.restart()
+    return result

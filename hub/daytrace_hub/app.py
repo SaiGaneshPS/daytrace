@@ -294,6 +294,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, dashboa
         if advertiser is not None:
             advertiser.start()  # in the background: the hub serves right away
         tracker = desktop_tracker(settings, database) if settings.track_desktop else None
+        app.state.tracker = tracker  # DT-46: delete-all pauses it, so nothing it held comes back
         if tracker is not None:
             tracker.start()  # DT-16: this computer's own screen, in a background thread
         try:

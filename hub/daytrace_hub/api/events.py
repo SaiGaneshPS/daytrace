@@ -242,8 +242,15 @@ def ingest(database: Database, device: AuthenticatedDevice, payload: Any) -> Ing
     rejected_indexes = {r.index for r in rejected}
     good_indexes = [i for i in range(len(events) + len(rejected)) if i not in rejected_indexes]
     with database.connect() as conn:
-        with transaction(conn):
-            stored = store_events(conn, device.device_id, list(zip(good_indexes, events, strict=True)))
+        try:
+            with transaction(conn):
+                stored = store_events(conn, device.device_id, list(zip(good_indexes, events, strict=True)))
+        except sqlite3.IntegrityError:
+            # The device was deleted after it was let in (delete-all, DT-46): pair again, as a revoked one does.
+            if conn.execute("SELECT 1 FROM devices WHERE device_id = ?", (device.device_id,)).fetchone() is None:
+                raise ApiError(401, "unauthorized", "this device isn't paired any more; pair it again",
+                               headers={"WWW-Authenticate": "Bearer"}) from None
+            raise
         highest = last_seq(conn, device.device_id)
         nudge = pick_nudge(conn, device, stored.changed_events)
     return IngestResult(

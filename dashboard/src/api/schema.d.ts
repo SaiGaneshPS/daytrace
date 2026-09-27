@@ -878,6 +878,12 @@ export interface components {
              * @description Exactly "delete all my daytrace data", on every call.
              */
             confirm: string;
+            /**
+             * Keep Redaction Rules
+             * @description Keep your own redaction words and the built-in rules you switched off, so what is recorded next stays protected (default).
+             * @default true
+             */
+            keep_redaction_rules: boolean;
         };
         /** Deleted */
         Deleted: {
@@ -890,7 +896,7 @@ export interface components {
             };
             /**
              * Wiped
-             * @description True when the deleted rows are gone from the file too (overwritten, the file compacted). False when another connection kept that from finishing just now; the rows are deleted either way, and SQLite overwrites them as the file is used.
+             * @description True when the deleted rows are gone from the file too (overwritten, the file compacted and its log folded back). False when another connection kept that from finishing just now; the rows are deleted and overwritten either way.
              */
             wiped: boolean;
         };
@@ -927,6 +933,19 @@ export interface components {
         DeviceList: {
             /** Devices */
             devices: components["schemas"]["DeviceInfo"][];
+        };
+        /** ErrorInfo */
+        ErrorInfo: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Details */
+            details?: unknown[];
+        };
+        /** ErrorOut */
+        ErrorOut: {
+            error: components["schemas"]["ErrorInfo"];
         };
         /** FactOut */
         FactOut: {
@@ -2906,12 +2925,23 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description The export, as a download. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Not from the hub computer (local_only). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
             };
         };
     };
@@ -2935,6 +2965,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description The phrase was not exactly right: nothing was deleted. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Not from the hub computer (local_only). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
                 };
             };
             /** @description Validation Error */

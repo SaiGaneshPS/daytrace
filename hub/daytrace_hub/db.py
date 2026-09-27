@@ -102,6 +102,9 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        # DT-46: whatever a connection deletes or replaces (a span the tracker rewrites, a title redacted) is
+        # overwritten with zeros, not left in the file's free space.
+        conn.execute("PRAGMA secure_delete = ON")
         return conn
 
     @contextmanager

@@ -79,12 +79,17 @@ TODO (DT-44 / DT-45 / DT-47)
 ## Export and delete
 
 Everything the hub holds is yours to take or to erase (DT-46). Both only work from the hub computer itself, never
-from a phone.
+from a phone. The Privacy page (DT-36) will put them behind buttons; until then they are
+`GET /api/v1/privacy/export` and `POST /api/v1/privacy/delete`.
 
-- **Export:** the Privacy page's "Export all" downloads one JSON file with every table: events, devices (without
-  their tokens), categories, goals, badges, stories and settings, as of one moment.
-- **Delete all:** type the exact phrase **delete all my daytrace data**, every time. The hub then empties every
-  table, overwrites what it deleted, and compacts the file, so nothing deleted stays on the disk. The hub keeps
-  running; phones and browsers pair again, and the desktop tracker starts afresh. The built-in redaction rules
-  still apply. Your own words and goals are deleted too, since they can say something about you.
+- **Export:** one JSON file with every table: events, devices (without their tokens), categories, goals, badges,
+  stories and settings, as of one moment.
+- **Delete all:** send the exact phrase **delete all my daytrace data**, every time.
+  - The hub empties every table and compacts the file. Every connection overwrites what it deletes, so the deleted
+    rows (and older versions of rows it replaced) aren't left in the file.
+  - Copies outside the hub are beyond it: a backup of your computer, or a disk's own spare blocks.
+  - The hub keeps running: phones and browsers pair again, and the desktop tracker starts afresh with nothing from
+    before.
+  - Your own redaction words are kept by default, so what is recorded next stays protected. Ask for them to go too
+    (`keep_redaction_rules: false`) if the words themselves are what you want gone.
 
