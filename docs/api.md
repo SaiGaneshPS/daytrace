@@ -705,7 +705,8 @@ name or id, or a site (docs/privacy.md has the rules).
   in force would hide, as `{ "matches": 12 }`. `POST /privacy/redaction/apply` (the dashboard) with
   `{ "confirm": true }` hides them, returning `{ "redacted": 12 }`. It can't be undone, and without `confirm: true` it
   is `400`. It works a batch at a time, so collectors keep writing meanwhile. An event from a stateless collector is
-  keyed again from its redacted form, and two that then match in everything are kept once.
+  keyed again from its redacted form, and two that then match in everything are kept once. Logged nudges whose words
+  the rules would hide keep only their rule (DT-43).
 
 - `GET /privacy/network` (viewer, DT-45) is the proof behind "no internet": every connection since the hub started,
   by the kind of network at the other end.
