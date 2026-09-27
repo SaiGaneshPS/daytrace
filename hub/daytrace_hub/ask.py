@@ -232,11 +232,22 @@ def get_totals(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     if not counted:  # missing is not zero: no total to give
         out.notes.append("no screen data on any of those days, so there is nothing to count")
         return out
-    out.facts.append(Fact(f"{subject}, {when}", round(result["total_minutes"]), "minutes"))
-    if len(days) > 1:
-        out.facts.append(Fact(f"daily average of {subject} over the {len(counted)} days with data, {when}",
-                              round(result["total_minutes"] / len(counted)), "minutes"))
     used = [item for item in result["items"] if item["seconds"]]
+    # An app filter can match several apps and sites (YouTube, youtube.com): the total and its average are all of
+    # them together, and each one's time is said to be a part of that total, so an answer can't pair one app's time
+    # with the average of them all.
+    parts = group_by == "app" and bool(filters.app) and len(used) > 1
+    if parts:
+        names = ", ".join(item["key"] for item in used[:MAX_ITEMS]) + (f" and {len(used) - MAX_ITEMS} more" if len(used) > MAX_ITEMS else "")
+        together = f", all {len(used)} together ({names})"
+        out.notes.append(f"the total and its daily average count all {len(used)} apps and sites matching {filters.app} together; "
+                         "each line starting \"of that total\" is one part of it")
+    else:
+        together = ""
+    out.facts.append(Fact(f"{subject}{together}, {when}", round(result["total_minutes"]), "minutes"))
+    if len(days) > 1:
+        out.facts.append(Fact(f"daily average of {subject}{', all together' if parts else ''} over the {len(counted)} days with data, {when}",
+                              round(result["total_minutes"] / len(counted)), "minutes"))
     if group_by in NOUNS:
         out.facts.append(Fact(f"number of {NOUNS[group_by]} used{filters.scope(app=group_by != 'app')}, {when}",
                               len(used), NOUNS[group_by]))
@@ -245,7 +256,7 @@ def get_totals(stats: Stats, args: dict[str, Any]) -> ToolOutput:
     for item in items:
         key = item["key"]
         if group_by == "app":
-            label, point = f"time in {key}{filters.scope(app=False)}, {when}", key
+            label, point = f"{'of that total, ' if parts else ''}time in {key}{filters.scope(app=False)}, {when}", key
         elif group_by in ("category", "device"):
             label, point = f"time on {key}{filters.scope(category=group_by != 'category')}, {when}", key
         elif group_by == "hour":

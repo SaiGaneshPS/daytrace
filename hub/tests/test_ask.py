@@ -229,7 +229,7 @@ def test_wrong_numbers_twice_show_the_facts_instead(week: Database, fake_llm: Fa
     result = asked(week, fake_llm)
     assert result.fallback is True and result.model is None and "3 hours" in (result.reason or "")
     assert result.answer.startswith("Here is what I found: time in apps matching YouTube between 23:00 and 03:00, "
-                                    "from Monday 2026-09-21 to Sunday 2026-09-27: 1 hour 50 minutes;")
+                                    "from Monday 2026-09-21 to Sunday 2026-09-27: 1 hour 50 minutes;")  # by day: no parts
     assert unsupported_numbers(result.answer, result.facts, WEEK_DAYS) == []  # the facts never fail their own check
 
 
@@ -355,8 +355,24 @@ def test_labels_never_repeat_with_different_values(week: Database) -> None:
     out = tool(week, "get_totals", {**YOUTUBE_AFTER_11, "group_by": "app"})
     assert len({f.label for f in out.facts}) == len(out.facts)
     assert [(f.label.split(" between")[0], f.value) for f in out.facts[2:]] == [("number of apps used", 2),
-                                                                                 ("time in YouTube", 95),
-                                                                                 ("time in youtube.com", 15)]
+                                                                                 ("of that total, time in YouTube", 95),
+                                                                                 ("of that total, time in youtube.com", 15)]
+
+
+def test_an_app_and_its_site_are_parts_of_one_total_that_can_not_be_mixed_up(week: Database) -> None:
+    # The demo's question (DT-48): the total and the daily average are of the app and the site together, and each
+    # one's time is said to be part of it, so "275 minutes, 43 a day" (the app's total, the average of both) can't be
+    # read off the facts.
+    out = tool(week, "get_totals", {**LAST_WEEK, "app": "YouTube"})
+    total, average = out.facts[0], out.facts[1]
+    assert total.label.startswith("time in apps matching YouTube, all 2 together (YouTube, youtube.com), from ")
+    assert average.label.startswith("daily average of time in apps matching YouTube, all together over the ")
+    parts = [f for f in out.facts if f.label.startswith("of that total, time in ")]
+    assert [f.label.split(",")[1].strip() for f in parts] == ["time in YouTube", "time in youtube.com"]
+    assert sum(f.value for f in parts) == total.value  # the parts add up to the total
+    assert any("each line starting \"of that total\" is one part of it" in note for note in out.notes)
+    one_app = tool(week, "get_totals", {**LAST_WEEK, "app": "edge"})  # one match: no parts to tell apart
+    assert not any("together" in f.label or f.label.startswith("of that total") for f in one_app.facts)
 
 
 def test_the_calendar_shows_what_is_still_ahead(db: Database) -> None:
