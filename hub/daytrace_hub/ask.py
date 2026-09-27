@@ -609,6 +609,7 @@ class AskResult:
     fallback: bool = False
     declined: bool = False
     reason: str | None = None
+    meta: dict[str, Any] | None = None  # the days the tools read: their range, source and whether any was inferred
 
 
 def _unique(facts: Iterable[Fact]) -> list[Fact]:
@@ -631,9 +632,16 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
     called: list[str] = []
     chart: dict[str, Any] | None = None
     retried = False
+    read: set[date] = set()  # the days the tools looked at: what the answer's numbers are about
+
+    def meta() -> dict[str, Any] | None:
+        known = sorted(day for day in read if day <= today)
+        if not known:
+            return None
+        return stats.meta(known[0], known[-1], any(stats.day_estimated(day) for day in known), unit=None)
 
     def fallback(reason: str) -> AskResult:
-        return AskResult(facts_answer(_unique(facts)), _unique(facts), called, chart, None, True, False, reason)
+        return AskResult(facts_answer(_unique(facts)), _unique(facts), called, chart, None, True, False, reason, meta())
 
     started = monotonic()
     with database.connect() as conn:
@@ -675,6 +683,7 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
                         else:
                             facts += output.facts
                             days |= output.days
+                            read |= output.days
                             chart = output.chart or chart
                             content = output.content()
                     messages.append({"role": "tool", "tool_call_id": call_id,
@@ -685,7 +694,7 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
                 return AskResult(DECLINED, [], called, None, model, False, True)
             problems = answer_problems(answer, facts, days, cut_off=getattr(choice, "finish_reason", None) == "length")
             if not problems:
-                return AskResult(answer, _unique(facts), called, chart, model)
+                return AskResult(answer, _unique(facts), called, chart, model, meta=meta())
             if retried:
                 return fallback(f"the answer from {model} could not be used, even after a retry: {'; '.join(problems)}")
             retried = True

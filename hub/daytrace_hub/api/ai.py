@@ -16,9 +16,10 @@ from ..ask import MAX_QUESTION_CHARS, ask
 from ..auth import Reader, get_database
 from ..db import Database
 from ..llm import LLM, LLMError
+from ..stats import Stats
 from ..story import day_story
 from . import API_PREFIX, ApiError
-from .timeline import EARLIEST, LATEST, current_time, resolve_tz
+from .timeline import EARLIEST, LATEST, Meta, current_time, resolve_tz
 
 router = APIRouter(prefix=API_PREFIX, tags=["ai"])
 
@@ -58,6 +59,7 @@ class Story(BaseModel):
     fallback: bool = Field(description="True when the template story was used (model away, or unusable twice).")
     reason: str | None = Field(description="Why the template story was used.")
     in_progress: bool = Field(description="True while the day is not over: the story is of the day so far.")
+    meta: Meta
 
 
 @router.get("/story", response_model=Story, summary="A short story of one day, every number checked")
@@ -74,10 +76,13 @@ def get_story(
     if not EARLIEST <= day <= LATEST:
         raise ApiError(400, "bad_request", f"date must be between {EARLIEST} and {LATEST}")
     result = day_story(database, llm, day, zone, zone_name, now)
+    with database.connect() as conn:
+        stats = Stats(conn, zone, zone_name, now)
+        meta = Meta(**stats.meta(day, day, stats.day_estimated(day), unit=None))  # the day's facts have their own units
     return Story(
         date=day, tz=zone_name, story=result.story, facts_used=[FactOut(**f.as_dict()) for f in result.facts],
         model=result.model, cached=result.cached, fallback=result.fallback, reason=result.reason,
-        in_progress=result.in_progress,
+        in_progress=result.in_progress, meta=meta,
     )
 
 
@@ -107,6 +112,7 @@ class Answer(BaseModel):
     fallback: bool = Field(description="True when the model's answer failed the number check twice: the facts are shown.")
     declined: bool = Field(description="True when the question was not about your day.")
     reason: str | None = Field(description="Why the facts are shown instead of an answer.")
+    meta: Meta | None = Field(description="The days the answer's tools read (their range, source, and whether any was inferred); null when none was read.")
 
 
 @router.post("/ask", response_model=Answer, summary="Ask about your day: answered from your data through tool calls")
@@ -127,5 +133,5 @@ def post_ask(
     return Answer(
         answer=result.answer, facts_used=[FactOut(**f.as_dict()) for f in result.facts], tools_called=result.tools_called,
         chart=Chart(**result.chart) if result.chart else None, model=result.model, fallback=result.fallback,
-        declined=result.declined, reason=result.reason,
+        declined=result.declined, reason=result.reason, meta=Meta(**result.meta) if result.meta else None,
     )

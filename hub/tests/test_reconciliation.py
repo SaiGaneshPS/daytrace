@@ -73,8 +73,8 @@ def metric(body: dict[str, Any], metric_id: str) -> Any:
 
 
 def close(total: float, parts: list[float | None], rounded: int) -> bool:
-    """Parts rounded to hundredths on their own add up to the total within half a hundredth each."""
-    return abs(total - sum(part or 0 for part in parts)) <= 0.005 * max(rounded, 1) + 1e-9
+    """Parts rounded to hundredths on their own add up to the total (rounded too) within half a hundredth each."""
+    return abs(total - sum(part or 0 for part in parts)) <= 0.005 * (rounded + 1) + 1e-9
 
 
 # --- screen time, every way ------------------------------------------------------------------------------------
@@ -122,20 +122,19 @@ def test_the_range_total_is_every_charts_total(hub: TestClient, stats_of: Callab
         assert close(total, phone_and_computer, len(phone_and_computer)), span  # the seed has only phones and computers
 
 
-def test_category_shares_add_up_to_100(hub: TestClient) -> None:
+def test_category_shares_of_the_screen_time_add_up_to_100(hub: TestClient) -> None:
     for span in ("14d", "7d", "today"):
         overview = get(hub, "/insights/overview", range=span)
-        items = overview["series"]["categories"]["items"]
-        total = sum(item["value"] for item in items)
-        shares = [round(100 * item["value"] / total, 1) for item in items]  # as a chart would show them
-        assert abs(sum(shares) - 100) <= 0.1 * len(shares) / 2 + 1e-9 and abs(sum(100 * item["value"] / total for item in items) - 100) < 0.1, span
+        total = metric(overview, "screen_time")  # the hero number, not the donut's own sum
+        shares = [100 * item["value"] / total for item in overview["series"]["categories"]["items"]]
+        assert abs(sum(shares) - 100) <= 0.1, (span, sum(shares))
 
 
 # --- streaks and goals -----------------------------------------------------------------------------------------
 
 
 def test_each_streak_day_is_the_stats_engines_reading(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
-    body = get(hub, "/streaks", days=14)
+    body = get(hub, "/streaks", days=366)  # every day judged, so a run can be counted from the days
     stats = stats_of()
     readings: dict[str, Callable[[Any], float | None]] = {
         "focus_flame": lambda day: stats.focused_minutes(day)["value"],
@@ -156,6 +155,8 @@ def test_each_streak_day_is_the_stats_engines_reading(hub: TestClient, stats_of:
         assert set(streak["counted"]) <= set(met) and streak["current"] == len(streak["counted"])
         run = 0
         for entry in reversed(streak["days"][:-1] if streak["today"] == "at_risk" else streak["days"]):
+            if entry["status"] == "no_data":
+                continue  # a day without data neither extends nor breaks a run
             if entry["status"] != "met":
                 break
             run += 1
@@ -185,8 +186,11 @@ def test_a_night_guessed_from_the_phone_is_estimated_everywhere(hub: TestClient,
     sleep = get(hub, "/insights/sleep", range="7d")
     assert metric(sleep, "estimated_nights") == 1 and sleep["series"]["sleep_by_night"]["estimated"]
     assert sleep["series"]["sleep_by_night"]["lines"][1]["values"][-1] is not None  # drawn on the "Estimated" line
-    bedtime = next(goal for goal in get(hub, "/goals")["goals"] if goal["id"] == "bedtime")
-    assert bedtime["today"]["estimated"]  # the bedtime goal is judged on a guessed night
+    goals = get(hub, "/goals")
+    bedtime = next(goal for goal in goals["goals"] if goal["id"] == "bedtime")
+    assert bedtime["today"]["estimated"] and goals["meta"]["estimated"]  # the bedtime goal is judged on a guessed night
+    story = get(hub, "/story", date=TODAY.isoformat())
+    assert story["meta"]["estimated"]
 
 
 def test_measured_nights_are_not_estimated(hub: TestClient) -> None:
@@ -198,6 +202,7 @@ def test_measured_nights_are_not_estimated(hub: TestClient) -> None:
 # --- every range answer says what its numbers are --------------------------------------------------------------
 
 RANGE_ANSWERS: list[tuple[str, str, dict[str, Any]]] = [
+    ("story", "/story", {"date": TODAY.isoformat()}),
     ("timeline", "/timeline", {"date": TODAY.isoformat()}),
     ("day summary", "/insights/day", {"date": TODAY.isoformat()}),
     *[(f"{tab} tab", f"/insights/{tab}", {"range": "7d"}) for tab in TABS],
@@ -213,7 +218,8 @@ RANGE_ANSWERS: list[tuple[str, str, dict[str, Any]]] = [
 def test_every_range_answer_says_its_unit_range_source_and_estimated(hub: TestClient, name: str, path: str, params: dict[str, Any]) -> None:
     meta = get(hub, path, **params)["meta"]
     assert set(meta) >= {"unit", "range", "source", "estimated"}, name
-    assert isinstance(meta["unit"], str) and meta["unit"]
+    # A unit for the headline numbers; none only where each number has its own (the goals, the day's story facts).
+    assert (meta["unit"] is None) if name in {"goals", "story"} else (isinstance(meta["unit"], str) and meta["unit"]), (name, meta["unit"])
     assert set(meta["range"]) == {"start", "end", "tz"} and meta["range"]["tz"] == TZ_NAME
     assert datetime.fromisoformat(meta["range"]["start"]) < datetime.fromisoformat(meta["range"]["end"])
     assert meta["source"] == "seed"  # the seed's data only
@@ -229,3 +235,84 @@ def test_the_schema_promises_the_meta_on_every_range_answer(hub: TestClient) -> 
         response = spec["paths"][f"/api/v1{path}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
         model = spec["components"]["schemas"][response["$ref"].rsplit("/", 1)[1]]
         assert model["properties"]["meta"] == {"$ref": "#/components/schemas/Meta"} and "meta" in model["required"], path
+
+
+def test_an_answer_says_which_days_its_tools_read(hub: TestClient, fake_llm: FakeModelServer) -> None:
+    fake_llm.reply_tool_call("get_totals", {"first_day": "2026-09-19", "last_day": "2026-09-24", "group_by": "day"})
+    fake_llm.reply_text("You were on a screen every one of those days.")
+    response = hub.post("/api/v1/ask", json={"question": "How much screen time did I have this week?", "tz": TZ_NAME})
+    assert response.status_code == 200, response.text
+    meta = response.json()["meta"]
+    assert (meta["range"]["start"][:10], meta["range"]["end"][:10]) == ("2026-09-19", "2026-09-25") and meta["source"] == "seed"
+    fake_llm.reply_text("OFF_TOPIC")
+    declined = hub.post("/api/v1/ask", json={"question": "What is the capital of France?", "tz": TZ_NAME}).json()
+    assert declined["declined"] and declined["meta"] is None  # nothing was read
+
+
+def test_the_ranges_behind_streaks_and_goals_start_the_evening_before(hub: TestClient) -> None:
+    goals = get(hub, "/goals")["meta"]["range"]
+    assert goals["start"].startswith((TODAY - timedelta(days=1)).isoformat())  # last night's bedtime began yesterday
+    streaks = get(hub, "/streaks", days=3)
+    assert streaks["meta"]["range"]["start"].startswith((datetime.fromisoformat(streaks["since"]).date() - timedelta(days=1)).isoformat())
+
+
+def open_without_close(settings: Settings, when: datetime, app: str, category: str) -> None:
+    """An iPhone app seen opening and never closing: its time is inferred (estimated)."""
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute(
+            "INSERT INTO events (device_id, dedup_key, seq, kind, source, start_utc, end_utc, utc_offset_min, app, app_id, title, category, data, received_at)"
+            " VALUES ('seed-iphone', ?, NULL, 'app_open', 'seed', ?, NULL, -240, ?, ?, NULL, ?, '{}', ?)",
+            (f"content:open-{app}-{when.isoformat()}", when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000Z"), app,
+             f"app.{app.lower()}", category, "2026-09-25T20:00:00.000000Z"),
+        )
+
+
+def test_a_streak_is_estimated_by_the_days_behind_its_numbers(hub: TestClient, demo: Settings) -> None:
+    # Study on the iPhone with no close seen on the 18th, a day of Focus flame's best run (17 to 21 September), and
+    # not among the 3 days listed: the streak's numbers rest on it, so the streak is estimated.
+    open_without_close(demo, datetime(2026, 9, 18, 12, 0, tzinfo=TZ), "Anki", "study")
+    body = get(hub, "/streaks", days=3)
+    flame = next(streak for streak in body["streaks"] if streak["id"] == "focus_flame")
+    assert "2026-09-18" in flame["best_dates"]
+    assert not any(day["estimated"] for day in flame["days"])  # the listed days were all measured ...
+    assert flame["estimated"] and body["meta"]["estimated"]  # ... but the best run wasn't
+    history = get(hub, "/streaks", days=366)
+    estimated_days = {day["date"] for streak in history["streaks"] for day in streak["days"] if day["estimated"]}
+    badges = get(hub, "/achievements")
+    earned = {day for badge in badges["achievements"] for day in badge["dates"]}
+    assert badges["meta"]["estimated"] == bool(estimated_days & earned)  # badges rest on the same days
+
+
+def test_one_clock_per_request(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr(streaks_api, "current_time", lambda: calls.append(1) or NOW.astimezone(UTC))
+    for path in ("/streaks", "/goals", "/achievements"):
+        calls.clear()
+        get(hub, path)
+        assert len(calls) == 1, path  # the meta is of the same moment as the numbers
+
+
+def test_range_sources_are_read_by_index(demo: Settings) -> None:
+    with Database(demo.database_path).connect() as conn:
+        for query in (timeline_api.RANGE_SPAN_SOURCES, timeline_api.RANGE_POINT_SOURCES):
+            plan = " ".join(row[3] for row in conn.execute(f"EXPLAIN QUERY PLAN {query}", ("2026-09-20", "2026-09-21")))
+            assert "USING INDEX" in plan and ">" in plan and "end_utc=?" not in plan, plan  # a range, not every point event
+
+
+def test_focus_is_estimated_only_by_what_it_is_made_of(demo: Settings, stats_of: Callable[[], Stats]) -> None:
+    # An iPhone map opened and never seen closing: screen time is estimated that day, focused time isn't.
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        conn.execute(
+            "INSERT INTO events (device_id, dedup_key, seq, kind, source, start_utc, end_utc, utc_offset_min, app, app_id, title, category, data, received_at)"
+            " VALUES ('seed-iphone', 'content:map-open', NULL, 'app_open', 'seed', ?, NULL, -240, 'Maps', 'com.apple.maps', NULL, 'other', '{}', ?)",
+            ("2026-09-22T18:00:00.000000Z", "2026-09-25T20:00:00.000000Z"),
+        )
+    stats = stats_of()
+    day = TODAY - timedelta(days=3)  # the 22nd
+    assert stats.totals(day)["estimated"] and stats.day_estimated(day)
+    assert not stats.focused_minutes(day)["estimated"]
+
+
+@pytest.mark.parametrize(("sources", "said"), [({"seed"}, "seed"), ({"seed", "tracker"}, "mixed"), ({"tracker"}, "real"), (set(), "real")])
+def test_one_rule_for_where_the_data_came_from(sources: set[str], said: str) -> None:
+    assert timeline_api.source_of(sources) == said

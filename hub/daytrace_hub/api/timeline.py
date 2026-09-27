@@ -102,7 +102,9 @@ class TimeRange(BaseModel):
 class Meta(BaseModel):
     """What every answer about a range of time says about its numbers (DT-59 checks each carries it)."""
 
-    unit: str = Field(default="minutes", description="The unit of the answer's numbers: minutes, days, score, ...")
+    unit: str | None = Field(default="minutes", description=(
+        "The unit of the answer's headline numbers (minutes, days, badges); null when they differ (the goals), and each "
+        "metric, series or goal still states its own."))
     range: TimeRange
     source: Literal["real", "seed", "mixed"] = Field(description="Your devices' data, the demo seed's, or both.")
     estimated: bool = Field(description="True when some of it was inferred (an app with no close seen, a night guessed from the phone).")
@@ -152,20 +154,23 @@ def day_window(day: date, tz: tzinfo) -> tuple[datetime, datetime]:
     return start, end
 
 
+# Where a range's events came from, by index: spans by their end (events_by_end), points by their start
+# (events_by_start), so neither walks the rest of the history.
+RANGE_SPAN_SOURCES = "SELECT DISTINCT source FROM events WHERE end_utc > ? AND start_utc < ?"
+RANGE_POINT_SOURCES = "SELECT DISTINCT source FROM events INDEXED BY events_by_start WHERE start_utc >= ? AND start_utc < ? AND end_utc IS NULL"
+
+
 def range_meta(conn: sqlite3.Connection, tz: tzinfo, tz_name: str, first: date, last: date, now: datetime, *,
-               unit: str, estimated: bool) -> Meta:
+               unit: str | None, estimated: bool) -> Meta:
     """The meta for local days `first` to `last` without loading them: the range, and where the data came from (the
     sources of the events in it, up to now), as Stats.meta says for what it has loaded."""
     start, _ = day_window(first, tz)
     _, end = day_window(last, tz)
     until = max(start, min(end, now.astimezone(UTC)))
-    rows = conn.execute(
-        "SELECT DISTINCT source FROM events WHERE start_utc < ? AND ((end_utc IS NOT NULL AND end_utc > ?) OR (end_utc IS NULL AND start_utc >= ?))",
-        (utc_text(until), utc_text(start), utc_text(start)),
-    ).fetchall()
-    sources = {row[0] for row in rows}
+    window = (utc_text(start), utc_text(until))
+    sources = {row[0] for row in conn.execute(RANGE_SPAN_SOURCES, window)} | {row[0] for row in conn.execute(RANGE_POINT_SOURCES, window)}
     return Meta(unit=unit, range=TimeRange(start=start.astimezone(tz), end=end.astimezone(tz), tz=tz_name),
-                source="seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real", estimated=estimated)
+                source=source_of(sources), estimated=estimated)
 
 
 def union_seconds(intervals: list[tuple[datetime, datetime]]) -> int:
@@ -258,6 +263,11 @@ def _lane(device_id: str, sessions: list[Session], device: object, tz: tzinfo) -
     )
 
 
+def source_of(sources: set[str]) -> Literal["real", "seed", "mixed"]:
+    """What a set of event sources makes an answer: the demo seed's, your devices', or both."""
+    return "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real"
+
+
 def _source(
     events: list[StoredEvent], sessions: list[Session], lane_events: list[StoredEvent], start: datetime, end: datetime
 ) -> Literal["real", "seed", "mixed"]:
@@ -265,8 +275,7 @@ def _source(
     by_id = {e.id: e for e in events}
     used = {i for s in sessions for i in s.event_ids} | {e.id for e in lane_events}
     used |= {e.id for e in events if e.kind == "afk" and e.end is not None and e.start < end and e.end > start}
-    sources = {by_id[i].source for i in used if i in by_id}
-    return "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real"
+    return source_of({by_id[i].source for i in used if i in by_id})
 
 
 def _shown(session: Session, tz: tzinfo) -> TimelineSession:

@@ -8,7 +8,6 @@ import appsDevices from "../../e2e/fixtures/insights-apps-devices.json";
 import foodCalendar from "../../e2e/fixtures/insights-food-calendar.json";
 import focusSleep from "../../e2e/fixtures/insights-focus-sleep.json";
 import overview from "../../e2e/fixtures/insights-overview.json";
-import { formatMinutes } from "../components/StatCard";
 import AppsDevicesTab from "../pages/insights/AppsDevicesTab";
 import FocusSleepTab from "../pages/insights/FocusSleepTab";
 import FoodCalendarTab from "../pages/insights/FoodCalendarTab";
@@ -42,6 +41,14 @@ vi.mock("../theme/charts", async (importOriginal) => {
 });
 
 const PROPS = { range: "7d", tz: "America/Toronto", today: "2026-09-25" };
+/** Minutes as the page should write them ("2h 35m", "45m"), worked out here rather than with the page's own
+ * formatter, so a bug in that formatter can't hide on both sides of a check. */
+function formatMinutes(value: number): string {
+  const whole = Math.round(value);
+  const hours = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return !hours ? `${rest}m` : rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
 type Metrics = { metrics: { id: string; value: unknown; estimated?: boolean }[] };
 const metric = (data: Metrics, id: string) => data.metrics.find((item) => item.id === id)?.value as number;
 /** The chart whose label starts so (labels name what a chart shows). */
@@ -51,8 +58,8 @@ function chart(start: string): Option {
   return found[1];
 }
 const sum = (values: (number | null | undefined)[]) => values.reduce<number>((total, value) => total + (value ?? 0), 0);
-/** Parts rounded to hundredths on their own add up to a total within half a hundredth each. */
-const addsUp = (total: number, parts: (number | null | undefined)[]) => expect(Math.abs(total - sum(parts))).toBeLessThanOrEqual(0.005 * parts.length + 1e-9);
+/** Parts rounded to hundredths on their own add up to a total (rounded too) within half a hundredth each. */
+const addsUp = (total: number, parts: (number | null | undefined)[]) => expect(Math.abs(total - sum(parts))).toBeLessThanOrEqual(0.005 * (parts.length + 1) + 1e-9);
 const hero = (name: string) => within(screen.getByRole("region", { name })).getByText((_, element) => !!element?.classList.contains("visually-hidden") && !!element.closest(".stat-value")).textContent;
 
 beforeEach(() => {
@@ -68,6 +75,7 @@ describe("the Overview tab", () => {
     render(<OverviewTab {...PROPS} />);
     const total = metric(data, "screen_time");
     expect(hero("Screen time")).toBe(formatMinutes(total));
+    expect(hero("Screen time")).toBe("63h 38m"); // 3818.32 minutes, written out by hand
     const donut = chart("By category");
     expect(donut.series[0].data.map((item: Option) => [item.name, item.value])).toEqual(data.series.categories.items.map((item) => [item.name, item.value]));
     addsUp(total, donut.series[0].data.map((item: Option) => item.value));

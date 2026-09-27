@@ -61,7 +61,7 @@ class Streak(BaseModel):
     counted: list[dt.date] = Field(description="The days in the current streak.")
     best_dates: list[dt.date] = Field(description="The days in the best run.")
     days: list[StreakDay] = Field(description="The last days, oldest first, today last.")
-    estimated: bool = Field(default=False, description="Some of the listed days' readings were inferred.")
+    estimated: bool = Field(default=False, description="Some of the days behind its numbers (the current run, the best, the days listed) were inferred.")
 
 
 class StreakList(BaseModel):
@@ -138,26 +138,39 @@ class WeekStreakOut(BaseModel):
     dates: list[dt.date]
 
 
+class Found:
+    """One evaluation, with the zone and the moment it was made for, so its meta describes the same moment."""
+
+    def __init__(self, database: Database, tz: str | None) -> None:
+        self.database = database
+        self.zone, self.zone_name = resolve_tz(tz)
+        self.now = current_time()
+        self.evaluation = evaluation(database, self.zone, self.zone_name, self.now)
+
+    def meta(self, first: dt.date, unit: str | None, estimated: bool) -> Meta:
+        """The meta for `first` to today. A night is read from the evening before its day (bedtime, Screens down), so
+        callers start a day earlier than the first day they judge."""
+        with self.database.connect() as conn:
+            return range_meta(conn, self.zone, self.zone_name, first, self.evaluation.today, self.now, unit=unit, estimated=estimated)
+
+
 def _found(database: Database, tz: str | None) -> tuple[Evaluation, str]:
-    zone, zone_name = resolve_tz(tz)
-    return evaluation(database, zone, zone_name, current_time()), zone_name
-
-
-def _meta(database: Database, tz: str | None, found: Evaluation, first: dt.date, unit: str, estimated: bool) -> Meta:
-    zone, zone_name = resolve_tz(tz)
-    with database.connect() as conn:
-        return range_meta(conn, zone, zone_name, first, found.today, current_time(), unit=unit, estimated=estimated)
+    found = Found(database, tz)
+    return found.evaluation, found.zone_name
 
 
 def _streak(track: Track, history: int) -> Streak:
     today = track.today
+    listed = track.days[-history:]
+    behind = {*track.current, *track.best}  # the days behind current and best, listed or not
+    estimated = any(day.estimated for day in listed) or any(day.estimated for day in track.days if day.day in behind)
     return Streak(
         id=track.id, name=track.name, rule=track.rule, needs=track.needs, unit=track.unit, target=track.target,
         current=len(track.current), best=len(track.best), today=today.status, value=today.value,
         remaining=Amount(value=today.remaining, unit=track.unit) if today.remaining is not None else None,
         counted=track.current, best_dates=track.best,
-        days=[StreakDay(date=day.day, status=day.status, value=day.value, estimated=day.estimated) for day in track.days[-history:]],
-        estimated=any(day.estimated for day in track.days[-history:]),
+        days=[StreakDay(date=day.day, status=day.status, value=day.value, estimated=day.estimated) for day in listed],
+        estimated=estimated,
     )
 
 
@@ -168,11 +181,12 @@ def get_streaks(
     tz: TzQuery = None,
     days: Annotated[int, Query(ge=1, le=HISTORY_DAYS, description="How many recent days to list for each streak")] = 30,
 ) -> StreakList:
-    found, zone_name = _found(database, tz)
-    streaks = [_streak(track, days) for track in found.streaks]
-    first = found.today - dt.timedelta(days=min(days, (found.today - found.first).days + 1) - 1)  # the days listed
-    return StreakList(tz=zone_name, date=found.today, since=found.first, streaks=streaks,
-                      meta=_meta(database, tz, found, first, "days", any(streak.estimated for streak in streaks)))
+    found = Found(database, tz)
+    judged = found.evaluation
+    streaks = [_streak(track, days) for track in judged.streaks]
+    # Current and best run over the whole history, from the evening before its first day (a night's streak).
+    return StreakList(tz=found.zone_name, date=judged.today, since=judged.first, streaks=streaks,
+                      meta=found.meta(judged.first - dt.timedelta(days=1), "days", any(streak.estimated for streak in streaks)))
 
 
 def _goal(rule: GoalRule, track: Track) -> Goal:
@@ -191,11 +205,13 @@ def _goal(rule: GoalRule, track: Track) -> Goal:
 
 @router.get("/goals", response_model=GoalList, summary="The daily goals, with today's progress")
 def get_goals(_: Reader, database: Annotated[Database, Depends(get_database)], tz: TzQuery = None) -> GoalList:
-    found, zone_name = _found(database, tz)
+    found = Found(database, tz)
+    judged = found.evaluation
     rules = load_rules()
-    goals = [_goal(rules.goals[key], track) for key, track in found.goals.items()]
-    return GoalList(tz=zone_name, date=found.today, goals=goals,
-                    meta=_meta(database, tz, found, found.today, "each goal's own", any(goal.today.estimated for goal in goals)))
+    goals = [_goal(rules.goals[key], track) for key, track in judged.goals.items()]
+    # Today, and yesterday evening, where last night's bedtime comes from. Each goal has its own unit.
+    return GoalList(tz=found.zone_name, date=judged.today, goals=goals,
+                    meta=found.meta(judged.today - dt.timedelta(days=1), None, any(goal.today.estimated for goal in goals)))
 
 
 @router.put("/goals/{goal_id}", response_model=Goal, summary="Set a goal's target")
@@ -223,7 +239,8 @@ def put_goal(
 
 @router.get("/achievements", response_model=AchievementList, summary="Every badge, earned or not, with its rule")
 def get_achievements(_: Reader, database: Annotated[Database, Depends(get_database)], tz: TzQuery = None) -> AchievementList:
-    found, zone_name = _found(database, tz)
+    context = Found(database, tz)
+    found, zone_name = context.evaluation, context.zone_name
     items = [
         Achievement(
             id=result.rule.id, name=result.rule.name, rule=result.rule.rule, unlocked=result.earned is not None,
@@ -231,10 +248,13 @@ def get_achievements(_: Reader, database: Annotated[Database, Depends(get_databa
             dates=result.earned.dates if result.earned else [],
             progress=Progress(value=result.progress.value, target=result.progress.target, unit=result.progress.unit) if result.progress else None,
         )
-        for result in achievements(database, found, current_time())
+        for result in achievements(database, found, context.now)
     ]
+    # Badges are earned from the streaks' and goals' days: estimated when any day behind an earned one was.
+    earned = {day for item in items for day in item.dates}
+    estimated = any(day.estimated for track in [*found.streaks, *found.goals.values()] for day in track.days if day.day in earned)
     return AchievementList(tz=zone_name, unlocked=sum(item.unlocked for item in items), achievements=items,
-                           meta=_meta(database, tz, found, found.first, "badges", False))
+                           meta=context.meta(found.first - dt.timedelta(days=1), "badges", estimated))
 
 
 def week_streak_highlights(database: Database, zone: tzinfo, zone_name: str, now: dt.datetime, first: dt.date, last: dt.date) -> list[WeekStreakOut]:

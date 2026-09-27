@@ -618,6 +618,8 @@ export interface components {
              * @description Why the facts are shown instead of an answer.
              */
             reason: string | null;
+            /** @description The days the answer's tools read (their range, source, and whether any was inferred); null when none was read. */
+            meta: components["schemas"]["Meta"] | null;
         };
         /** AppCategory */
         AppCategory: {
@@ -1332,10 +1334,10 @@ export interface components {
         Meta: {
             /**
              * Unit
-             * @description The unit of the answer's numbers: minutes, days, score, ...
+             * @description The unit of the answer's headline numbers (minutes, days, badges); null when they differ (the goals), and each metric, series or goal still states its own.
              * @default minutes
              */
-            unit: string;
+            unit: string | null;
             range: components["schemas"]["TimeRange"];
             /**
              * Source
@@ -1793,6 +1795,7 @@ export interface components {
              * @description True while the day is not over: the story is of the day so far.
              */
             in_progress: boolean;
+            meta: components["schemas"]["Meta"];
         };
         /** Streak */
         Streak: {
@@ -1857,7 +1860,7 @@ export interface components {
             days: components["schemas"]["StreakDay"][];
             /**
              * Estimated
-             * @description Some of the listed days' readings were inferred.
+             * @description Some of the days behind its numbers (the current run, the best, the days listed) were inferred.
              * @default false
              */
             estimated: boolean;
