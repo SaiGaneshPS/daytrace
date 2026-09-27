@@ -313,6 +313,7 @@ class HubClient(
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
         const val MAX_TEXT = 200 // the hub's limit for app and app_id
+        const val MAX_TITLE = 500 // and for a title (DT-23)
         private const val ZERO_WIDTH_JOINER = 0x200D
 
         /**
@@ -398,6 +399,8 @@ class HubClient(
                 .putOpt("end", endMs?.let { PhoneEvent.iso(it, zone) })
                 .putOpt("app", app?.let { cleanText(it) })
                 .putOpt("app_id", appId?.let { cleanText(it) })
+                .putOpt("title", title?.let { cleanText(it, MAX_TITLE) }) // DT-23: a calendar event's
+                .putOpt("data", data?.let { runCatching { JSONObject(it) }.getOrNull() })
         }
     }
 }

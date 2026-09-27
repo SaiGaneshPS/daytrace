@@ -62,8 +62,8 @@ Eight steps in three minutes, each with a fallback ([demo-script.md](demo-script
 8. **Close:** your devices, your network, your AI.
 
 **What is live today:** the hub, the dashboard and the local model are all real. The phone's part (steps 2 and 3)
-is played by `daytrace_hub demo live` and `demo nudge` on the PC, because the Android app can't pair until PR #16
-merges and showing nudges on the phone is DT-24. The nudge shows as a desktop notification. The Mac, iPhone and
+is played by `daytrace_hub demo live` and `demo nudge` on the PC: the Android app pairs and syncs, but sends
+within seconds and shows nudges only with live mode (DT-24). The nudge shows as a desktop notification. The Mac, iPhone and
 browser lanes are seeded demo data.
 
 **The backup recording**, if the live demo fails: [docs/img/demo.webm](img/demo.webm), about 2 minutes, captioned,
@@ -75,9 +75,9 @@ The slides follow the sections of this page, and are kept outside the repo.
 
 ## How it works
 
-- **Collectors** send events to the **hub** over your Wi-Fi. Today the Windows desktop tracker records real data.
-  The Android app records and keeps app use, and waits for pairing (PR #16). iPhone Shortcuts, a Mac bridge, a
-  macOS tracker and a browser extension are planned.
+- **Collectors** send events to the **hub** over your Wi-Fi. Today the Windows desktop tracker and the Android app
+  record real data: the phone sends app use, sleep, steps, meals and the calendar. iPhone Shortcuts, a Mac bridge,
+  a macOS tracker and a browser extension are planned.
 - **The hub** (Python and SQLite on any computer) turns events into sessions, and plain code works out every number:
   totals, focused time, pickups, sleep, streaks.
 - **A local model** puts those numbers into words: the day's story, answers to your questions, Wrapped's lines.
@@ -106,9 +106,8 @@ The details: [privacy.md](privacy.md).
 
 ## What's next
 
-- **Every device:** pairing the Android app on real home networks (PR #16), then health and calendar from the phone
-  (DT-23), live mode and nudges on the phone (DT-24), iPhone Shortcuts and the Mac bridge (DT-26 to DT-29), the
-  macOS tracker (DT-17) and the browser extension (DT-18).
+- **Every device:** live mode and nudges on the phone (DT-24), iPhone Shortcuts and the Mac bridge (DT-26 to
+  DT-29), the macOS tracker (DT-17) and the browser extension (DT-18).
 - **HTTPS at home** (DT-47): encrypted traffic on the home network, and a dashboard that installs and works offline
   on phones (DT-35). Then a signed Android app on GitHub Releases (DT-25).
 - **Tighter tokens:** collectors that can send events but can't read them back.

@@ -89,6 +89,7 @@ import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.daytrace.android.health.HealthCollector
 import app.daytrace.android.ui.theme.Blush
 import app.daytrace.android.ui.theme.DaytraceIcons
 import app.daytrace.android.ui.theme.LocalDaytraceExtras
@@ -155,6 +156,15 @@ object Permissions {
         HealthPermission.getReadPermission(NutritionRecord::class),
     )
     const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
+
+
+    /**
+     * What the Health Connect step asks for: [HEALTH], and reading while the app is closed where the phone offers
+     * it (DT-23: syncs run in the background, so without it health data arrives only with the app open). The step
+     * is done once all of them are granted.
+     */
+    fun healthRequest(context: Context): Set<String> = HEALTH + setOfNotNull(HealthCollector.backgroundPermission(context))
+
     private const val PREFS = "daytrace"
     private const val HEALTH_BLOCKED = "blocked_health"
 
@@ -183,7 +193,7 @@ object Permissions {
         when (HealthConnectClient.getSdkStatus(context, HEALTH_CONNECT_PACKAGE)) {
             HealthConnectClient.SDK_AVAILABLE -> {
                 val granted = HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
-                if (granted.containsAll(HEALTH)) Status.GRANTED else Status.NEEDED
+                if (granted.containsAll(healthRequest(context))) Status.GRANTED else Status.NEEDED
             }
             HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> Status.INSTALL
             else -> Status.UNAVAILABLE
@@ -322,7 +332,7 @@ fun rememberPermissionRequester(onChanged: () -> Unit): (StepState) -> Unit {
         onRuntimeResult(Manifest.permission.READ_CALENDAR, granted, listOf(Permissions.appSettingsIntent(context)))
     }
     val healthLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-        val blocked = !granted.containsAll(Permissions.HEALTH) && answeredWithoutDialog()
+        val blocked = !granted.containsAll(Permissions.healthRequest(context)) && answeredWithoutDialog()
         Permissions.setHealthBlocked(context, blocked)
         if (blocked) openFirst(context, activity, Permissions.manageHealthPermissionsIntents(context))
         onChanged()
@@ -360,7 +370,7 @@ fun rememberPermissionRequester(onChanged: () -> Unit): (StepState) -> Unit {
                 Permissions.healthBlocked(context) -> openFirst(context, activity, Permissions.manageHealthPermissionsIntents(context))
                 else -> {
                     askedAt = SystemClock.elapsedRealtime()
-                    healthLauncher.launch(Permissions.HEALTH)
+                    healthLauncher.launch(Permissions.healthRequest(context))
                 }
             }
         }

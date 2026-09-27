@@ -18,9 +18,24 @@ data class PhoneEvent(
     val endMs: Long? = null,
     val app: String? = null,
     val appId: String? = null,
+    /** DT-23: a calendar event's title. */
+    val title: String? = null,
+    /** DT-23: the event's data as compact JSON, or null. */
+    val data: String? = null,
+    /**
+     * DT-23: the record's own id (a Health Connect record, a day's step total, a calendar event), when it has one.
+     * It is the key: read again, the same record is the same event, and a changed record replaces its copy
+     * (on the phone and, as the same external_id, on the hub).
+     */
+    val id: String? = null,
 ) {
     /** The same moment collected twice gives the same key, so a repeated collection never adds time twice. */
-    val key: String get() = "$kind|$startMs|${appId ?: app.orEmpty()}"
+    val key: String get() = id ?: "$kind|$startMs|${appId ?: app.orEmpty()}"
+
+    /** Whether [other] (the stored copy of the same record) says something else: a record that changed. */
+    fun differsFrom(other: EventEntity): Boolean =
+        startMs != other.startMs || endMs != other.endMs || title != other.title || data != other.data ||
+            app != other.app || appId != other.appId || kind != other.kind
 
     /** The JSON-lines format of the store before DT-21 (read once to move old events into the database). */
     fun toStoredJson(): JSONObject = JSONObject()
@@ -37,6 +52,11 @@ data class PhoneEvent(
     fun isoEnd(zone: ZoneId = ZoneId.systemDefault()): String? = endMs?.let { iso(it, zone) }
 
     companion object {
+        /** DT-23: the prefixes of record ids ([id]); a usage event's key never starts with one. */
+        val RECORD_PREFIXES = listOf("hc:", "steps:", "meal:", "cal:")
+
+        fun isRecordKey(key: String): Boolean = RECORD_PREFIXES.any(key::startsWith)
+
         fun iso(epochMs: Long, zone: ZoneId): String =
             OffsetDateTime.ofInstant(Instant.ofEpochMilli(epochMs), zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 
@@ -128,10 +148,24 @@ class EventStore(private val db: AppDatabase, private val legacyFile: File? = nu
                 dao.insert(
                     EventEntity(
                         seq = next++, key = event.key, kind = event.kind, source = event.source, startMs = event.startMs,
-                        endMs = event.endMs, app = event.app, appId = event.appId, zone = zone,
+                        endMs = event.endMs, app = event.app, appId = event.appId, zone = zone, title = event.title,
+                        data = event.data,
                     ),
                 )
                 changed++
+            } else if (event.id != null) {
+                // DT-23: a record read again (a step total that grew, an edited sleep or calendar event) replaces
+                // its copy whatever changed, and goes to the hub again under a new seq; the same record adds nothing.
+                if (event.differsFrom(stored)) {
+                    dao.update(
+                        stored.copy(
+                            seq = next++, kind = event.kind, source = event.source, startMs = event.startMs, endMs = event.endMs,
+                            app = event.app, appId = event.appId, title = event.title, data = event.data,
+                            state = SyncState.PENDING, rejectReason = null,
+                        ),
+                    )
+                    changed++
+                }
             } else if ((event.endMs ?: Long.MIN_VALUE) > (stored.endMs ?: Long.MIN_VALUE)) {
                 // The zone stays the one from the first collection, the closest to when the event happened.
                 dao.update(

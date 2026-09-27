@@ -43,7 +43,7 @@ instead of Robolectric's default `~/.m2`.
 3. `adb install -r app/build/outputs/apk/debug/app-debug.apk` (adb is in `$ANDROID_HOME/platform-tools`).
 
 Without a cable, copy the APK to the phone and open it (allow "Install unknown apps" for your file manager);
-`docs/install-android.md` (DT-25) has the Samsung steps.
+`docs/install-android.md` has the Samsung steps, including sharing Samsung Health with Health Connect.
 
 ## Permissions (DT-19)
 
@@ -54,7 +54,7 @@ The onboarding screen walks through each one and the status screen shows them af
 | Usage access (`PACKAGE_USAGE_STATS`, granted in Settings) | which apps you used and for how long | yes |
 | Notifications | nudges (DT-24) and the live-mode notice | no |
 | Calendar (read) | today's events on the timeline (DT-23) | no |
-| Health Connect (read sleep, steps, nutrition) | sleep, steps and meals on the timeline (DT-23) | no |
+| Health Connect (read sleep, steps, nutrition, and in the background where offered) | sleep, steps and meals on the timeline (DT-23) | no |
 
 `QUERY_ALL_PACKAGES` resolves app names from package IDs; it is fine because the app is not on the Play Store.
 

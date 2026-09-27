@@ -8,7 +8,7 @@ out, and the **dashboard** shows it. All of it runs on your own devices, and the
 ```mermaid
 flowchart LR
   subgraph phones["Phones"]
-    android["Android app<br/>app use, screen on and off<br/>(pairing in PR #16)"]
+    android["Android app<br/>app use, screen on and off,<br/>sleep, steps, meals, calendar"]
     iphone["iPhone Shortcuts<br/>(not built yet)"]
   end
   subgraph pc["The hub computer"]
@@ -20,7 +20,7 @@ flowchart LR
   ext["Browser extension<br/>(not built yet)"]
   dash["Dashboard PWA<br/>any browser"]
 
-  android -. "POST /api/v1/events<br/>device token, Wi-Fi" .-> hub
+  android -- "POST /api/v1/events<br/>device token, Wi-Fi" --> hub
   iphone -.-> hub
   ext -.-> hub
   tracker -- "same ingest path, in process" --> hub
@@ -30,8 +30,7 @@ flowchart LR
   dash -- "GET /api/v1/..." --> hub
 ```
 
-Dashed arrows are paths that don't work yet: the collector isn't built, or (Android) it can't pair until PR #16
-merges.
+Dashed arrows are paths that don't work yet: the collector isn't built.
 
 - **One hub per profile.** `personal` (port 8765) holds your real data, `shared-dev` (8766) holds test data a
   teammate may reach over Tailscale, and `demo` (8767) holds seeded data. Each has its own SQLite file, so a demo
@@ -113,8 +112,8 @@ All collectors speak one contract: `POST /api/v1/events` with a batch of up to 5
 | Collector | How it works | Status |
 |---|---|---|
 | Windows desktop tracker | Reads the foreground window every 2 s. One span per app and title, growing while it lasts. Away after 3 minutes without input, or at once when locked. Runs inside the hub and writes through the same ingest code. | Built |
-| Android app | Reads `UsageStatsManager` into a Room database on the phone. A WorkManager job syncs every 15 minutes on an unmetered network, and "Sync now" syncs at once. Sends only to private addresses. | Built, but it can't pair (and so sends nothing) until PR #16 merges |
-| Health and calendar on Android | Health Connect and the phone's calendar | DT-23 |
+| Android app | Reads `UsageStatsManager` into a Room database on the phone. A WorkManager job syncs every 15 minutes on Wi-Fi, and "Sync now" syncs at once. Sends only to the hub that paired it, on the same Wi-Fi. | Built |
+| Health and calendar on Android | Each sync first reads Health Connect (sleep stages, daily steps, meals: 30 days the first time, then the last 3 days) and the calendar (yesterday to tomorrow). Each record keeps its own key, so reading it again replaces its copy. | Built |
 | macOS desktop tracker | The same tracker on the Mac | DT-17 |
 | Browser extension | The active tab's domain, never the full address | DT-18 |
 | iPhone Shortcuts | App opens and closes, health, meals by voice | DT-26 to DT-28 |
@@ -196,7 +195,7 @@ sequenceDiagram
 ```
 
 - A code works once, and wrong guesses are limited per client and per code.
-- The Android app finds the hub over mDNS or from the QR code (PR #16). A phone's browser scans the "Phone
+- The Android app finds the hub over mDNS or from the QR code. A phone's browser scans the "Phone
   browser" QR code, which opens the Devices page with the code and pairs the browser as a viewer.
 - Revoking a device (on the hub computer) stops its token working at once.
 

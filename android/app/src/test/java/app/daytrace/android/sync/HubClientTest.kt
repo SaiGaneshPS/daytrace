@@ -178,6 +178,28 @@ class HubClientTest {
     }
 
     @Test
+    fun aRecordGoesWithItsTitleItsDataAndItsOwnId() {
+        server.enqueue(reply(200, """{"accepted": 2, "replaced": 0, "duplicates": 0, "rejected": [], "last_seq": 2}"""))
+        val meeting = event(1).copy(
+            key = "cal:9:2026-09-28", kind = "calendar_event", source = "calendar", app = null, appId = null,
+            title = "Study ".repeat(100), data = """{"all_day":false}""",
+        )
+        val meal = event(2).copy(id = 3, key = "meal:1790307924094:2", kind = "meal", source = "health_connect", endMs = null, app = null, appId = null,
+            data = """{"items":["Roti","Dal"],"meal_type":"lunch"}""")
+        client().send(listOf(meeting, meal))
+
+        val sent = JSONObject(server.takeRequest().body!!.utf8()).getJSONArray("events")
+        val first = sent.getJSONObject(0)
+        assertEquals("cal:9:2026-09-28", first.getString("external_id"))
+        assertEquals(500, first.getString("title").length) // cut to the hub's limit for titles, not the 200 for app names
+        assertFalse(first.getJSONObject("data").getBoolean("all_day")) // an object, not a string
+        assertFalse(first.has("app"))
+        val second = sent.getJSONObject(1)
+        assertFalse(second.has("end")) // a meal is a moment
+        assertEquals("Dal", second.getJSONObject("data").getJSONArray("items").getString(1))
+    }
+
+    @Test
     fun refusedEventsComeBackWithTheirPlaceInTheBatch() {
         server.enqueue(
             reply(200, """{"accepted": 1, "rejected": [{"index": 1, "code": "invalid", "seq": 2, "external_id": null, "reason": "bad end"}], "last_seq": 1}"""),

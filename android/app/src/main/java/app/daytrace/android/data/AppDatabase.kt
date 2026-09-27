@@ -7,9 +7,18 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [EventEntity::class, MetaEntry::class], version = 1, exportSchema = false)
+/** DT-23: health and calendar events carry a title and data. Every event already queued stays. */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE events ADD COLUMN title TEXT")
+        db.execSQL("ALTER TABLE events ADD COLUMN data TEXT")
+    }
+}
+
+@Database(entities = [EventEntity::class, MetaEntry::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun events(): EventDao
 
@@ -18,6 +27,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "daytrace.db")
+                .addMigrations(MIGRATION_1_2)
                 .addCallback(DurableCommits)
                 .build()
                 .also { instance = it }

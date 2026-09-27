@@ -118,7 +118,7 @@ ever replaces demo data.
 | **Windows desktop tracker** | Works: foreground app, window title and away time, using about 0.5% of one CPU core. |
 | **Local AI** (LM Studio or Ollama) | Works with any OpenAI-compatible server on this computer or your LAN. Tested with Gemma 4 E4B. |
 | **Nudges** | Work. Shown as a desktop notification (tried on Windows; the macOS and Linux paths are written but untried), and returned to the phone that triggered them. |
-| **Android app** | Records app use and screen on and off, and keeps every event on the phone until the hub has it. The sync code is built, but on `development` the app can't pair yet, so it sends nothing. Finding the hub and pairing by QR code are built and reviewed, and wait for a test on a network that lets the phone reach the PC (PR #16). Not built yet: sleep, steps, meals and calendar (DT-23), live mode and showing nudges (DT-24). |
+| **Android app** | Works on a Galaxy S25 Ultra: finds the hub on the Wi-Fi, pairs by QR code or typed code, and sends app use, screen on and off, sleep, steps and meals (from Health Connect) and the calendar. Every event waits on the phone until the hub has it. Not built yet: live mode and showing nudges (DT-24). See [install-android.md](docs/install-android.md). |
 | **iPhone** | The dashboard works in Safari once the browser is paired. The Shortcuts that send app use, health and meals aren't built yet (DT-26 to DT-28). |
 | **macOS desktop tracker** | Not built yet (DT-17). |
 | **Mac bridge** for full iPhone Screen Time | Not built yet (DT-29). |
@@ -150,7 +150,7 @@ The details, and how to check each one: [docs/privacy.md](docs/privacy.md).
 
 ```mermaid
 flowchart LR
-  android["Android app<br/>(pairing in PR #16)"] -. "events over Wi-Fi" .-> hub
+  android["Android app"] -- "events over Wi-Fi" --> hub
   tracker["Desktop tracker"] -- "same path, in process" --> hub
   hub["Hub: FastAPI + SQLite"] -- "facts in, words out" --> llm["Local model"]
   hub -- "serves" --> dash["Dashboard in any browser"]
@@ -158,8 +158,7 @@ flowchart LR
 ```
 
 - **Collectors** send events (an app used from one time to another, a night's sleep, a meal) to
-  `POST /api/v1/events`, each with its own token. Sending the same event twice never stores it twice. The Android
-  arrow is dashed because the app can't pair until PR #16 merges; the desktop tracker works today.
+  `POST /api/v1/events`, each with its own token. Sending the same event twice never stores it twice.
 - **The hub** turns events into sessions and works out every number in plain Python (`stats.py`): totals, focused
   time, pickups, sleep, streaks. The AI only puts those numbers into words.
 - **The dashboard** is a React app the hub serves itself, so it has one address and needs nothing else.

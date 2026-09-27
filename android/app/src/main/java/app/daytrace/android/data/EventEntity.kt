@@ -45,8 +45,12 @@ data class EventEntity(
     val zone: String,
     val state: Int = SyncState.PENDING,
     @ColumnInfo(name = "reject_reason") val rejectReason: String? = null,
+    /** DT-23: a calendar event's title (the hub's redaction rules apply to it). */
+    val title: String? = null,
+    /** DT-23: the event's data as compact JSON (a sleep stage, a step count, a meal's items, all-day). */
+    val data: String? = null,
 ) {
-    fun toPhoneEvent() = PhoneEvent(kind, source, startMs, endMs, app, appId)
+    fun toPhoneEvent() = PhoneEvent(kind, source, startMs, endMs, app, appId, title = title, data = data, id = key.takeIf { PhoneEvent.isRecordKey(it) })
 }
 
 /** Named numbers kept next to the events and changed in the same transactions (the lowest free seq, say). */
