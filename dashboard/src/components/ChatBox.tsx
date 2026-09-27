@@ -12,6 +12,7 @@ import { AI_TIMEOUT_MS, ApiError, api, useApi } from "../api/client";
 import type { components } from "../api/schema";
 import { type ChartOption, useEChart } from "../theme/charts";
 import { useMediaQuery, useReducedMotionPreference } from "../theme/motion";
+import { shortDay } from "./DayPicker";
 import { formatMinutes } from "./StatCard";
 
 type Answer = components["schemas"]["Answer"];
@@ -230,12 +231,6 @@ export function ModelBadge({ model, fallback = false, reason = null, label = "Ge
   );
 }
 
-function shortLabel(label: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(label)) return label;
-  const [year, month, day] = label.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString([], { weekday: "short", day: "numeric" });
-}
-
 /** The small series the hub sent with an answer, as bars. */
 export function AnswerChart({ chart }: { chart: Chart }) {
   const minutes = chart.unit === "minutes";
@@ -243,7 +238,7 @@ export function AnswerChart({ chart }: { chart: Chart }) {
     () => ({
       grid: { left: 8, right: 8, top: 24, bottom: 8, containLabel: true },
       tooltip: { trigger: "axis", valueFormatter: (value: unknown) => `${Number(value).toLocaleString()} ${chart.unit}` },
-      xAxis: { type: "category", data: chart.points.map((point) => shortLabel(point.label)), axisLabel: { hideOverlap: true } },
+      xAxis: { type: "category", data: chart.points.map((point) => shortDay(point.label)), axisLabel: { hideOverlap: true } },
       yAxis: { type: "value", axisLabel: { formatter: (value: number) => (minutes ? formatMinutes(value) : value.toLocaleString()) } },
       series: [
         {

@@ -253,11 +253,13 @@ export type Loaded<T> = {
   data: T | undefined;
   /** The error of the last load of these same options (never one left over from other options). */
   error: ApiError | undefined;
+  /** Whether `data` is the answer to these same options (while other options load, the last data stays). */
+  current: boolean;
   loading: boolean;
   reload: () => void;
 };
 
-type LoadState<T> = { data: T | undefined; error: ApiError | undefined; errorKey: string | null; loading: boolean };
+type LoadState<T> = { data: T | undefined; dataKey: string | null; error: ApiError | undefined; errorKey: string | null; loading: boolean };
 
 /** GET `path` when the component shows (and again when the options change or reload() is called). While it
  * reloads, the last data stays; a reply equal to the last one keeps the same object, so a refresh that changed
@@ -271,6 +273,7 @@ export function useApi<P extends PathsWith<"get">>(
   const key = JSON.stringify([path, options.query ?? null, options.path ?? null]);
   const [state, setState] = useState<LoadState<GetReply<P>>>({
     data: undefined,
+    dataKey: null,
     error: undefined,
     errorKey: null,
     loading: enabled,
@@ -290,6 +293,7 @@ export function useApi<P extends PathsWith<"get">>(
       .then((data) =>
         setState((previous) => ({
           data: previous.data !== undefined && JSON.stringify(previous.data) === JSON.stringify(data) ? previous.data : data,
+          dataKey: key,
           error: undefined,
           errorKey: null,
           loading: false,
@@ -299,13 +303,14 @@ export function useApi<P extends PathsWith<"get">>(
         if (controller.signal.aborted) return;
         const failure = error instanceof ApiError ? error : new ApiError(0, "unexpected", String(error));
         if (!quiet) toast(failure.message);
-        setState((previous) => ({ data: previous.data, error: failure, errorKey: key, loading: false }));
+        setState((previous) => ({ ...previous, error: failure, errorKey: key, loading: false }));
       });
     return () => controller.abort();
   }, [key, attempt, enabled, quiet, timeout]);
   return {
     data: state.data,
     error: state.errorKey === key ? state.error : undefined,
+    current: state.data !== undefined && state.dataKey === key,
     loading: state.loading,
     reload,
   };

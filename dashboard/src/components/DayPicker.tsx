@@ -1,11 +1,31 @@
-// DT-33: the day picker and local-date helpers, shared by Today (DT-31) and Story. Days are YYYY-MM-DD in the
-// browser's time zone, and "today" follows midnight while the page is open.
+// DT-33: the day picker and local-date helpers, shared by Today (DT-31), Story, Ask and Insights (DT-34). Days are
+// YYYY-MM-DD in the browser's time zone, and "today" follows midnight while the page is open.
 import { useEffect, useState } from "react";
 
 /** YYYY-MM-DD for a local date. */
 export function isoDay(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Whether `day` is a real YYYY-MM-DD date (not 2026-02-30). */
+export function isRealDay(day: string): boolean {
+  const found = ISO_DAY.exec(day);
+  if (!found) return false;
+  const [year, month, date] = found.slice(1).map(Number);
+  const moment = new Date(Date.UTC(year, month - 1, date));
+  return moment.getUTCFullYear() === year && moment.getUTCMonth() === month - 1 && moment.getUTCDate() === date;
+}
+
+/** Days from `first` to `last`, both included. */
+export function daysBetween(first: string, last: string): number {
+  const [a, b] = [first, last].map((day) => {
+    const [year, month, date] = day.split("-").map(Number);
+    return Date.UTC(year, month - 1, date);
+  });
+  return Math.round((b - a) / 86_400_000) + 1;
 }
 
 export function shiftDay(day: string, by: number): string {
@@ -16,6 +36,19 @@ export function shiftDay(day: string, by: number): string {
 export function longDay(day: string): string {
   const [year, month, date] = day.split("-").map(Number);
   return new Date(year, month - 1, date).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** "Sat 19" for an axis label; anything that isn't a YYYY-MM-DD day stays as it is. */
+export function shortDay(day: string): string {
+  if (!ISO_DAY.test(day)) return day;
+  const [year, month, date] = day.split("-").map(Number);
+  return new Date(year, month - 1, date).toLocaleDateString([], { weekday: "short", day: "numeric" });
+}
+
+/** "19 Sep" (or "Sep 19", as the browser's language has it) for a range's ends. */
+export function dayMonth(day: string): string {
+  const [year, month, date] = day.split("-").map(Number);
+  return new Date(year, month - 1, date).toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
 /** Today's date, kept up to date across midnight. */

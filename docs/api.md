@@ -470,7 +470,7 @@ days); anything else is `400`.
   recording began, and on days still to come, they are null.
 - A series has a `kind` and what that kind needs:
   - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
-    device, also where that device sent nothing that day).
+    device, also where that device sent nothing that day). A device's line has its `device_type`.
   - `bars`: `x` and one line, or `items` by name.
   - `donut`: `items`. `treemap`: `items` with `children`.
   - `heatmap`: `x`, `y` and `cells` (indexes into them).
@@ -479,7 +479,10 @@ days); anything else is `400`.
   - `scatter`: `points`, with `stats` (rho, p, n) and a `note` for a correlation.
   - `gauge`: `value` and `max`.
 - The tabs and their series:
-  - **overview:** screen time by device and day, categories, the focus score by day, weekday by hour.
+  - **overview:** screen time by device and day, categories, the focus score by day, weekday by hour, and phone
+    against computer by day (null where no phone, or no computer, had data). Its metrics add the best day (most
+    focused minutes, `best_day` and `best_day_focused`) and the toughest (most screen time after 11 pm,
+    `toughest_day` and `toughest_day_late`), each with its reason in `explain`.
   - **apps:** top apps and sites, categories with their apps (treemap), categories by day, app switches an hour.
   - **devices:** each device's share, by day, by hour, and device to category (Sankey).
   - **focus:** the average score (gauge); focused, other work or study, and distracted time by day; switches by hour;
@@ -489,6 +492,12 @@ days); anything else is `400`.
   - **food:** meals by day and type, when you ate, the most logged foods.
   - **calendar:** planned time by day and where it went (on plan, off plan, other screen time, no screen); the
     longest events with their on-plan share; weekday by hour.
+- The overview also has `changes`: each headline number against the same number of days just before, as
+  `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down, days }`, where `now`
+  and `before` are day averages. Only whole days count: today, still going, is left out, and so is a night
+  (11 pm to 3 am) until 3 am. Each side needs 4 of them with data (half the range, rounded up, for a range
+  under 8 days); otherwise that number has no change, and a range with too few whole days has none at all. `direction` is `same` when the change rounds to nothing, and `better`
+  says which way is good (less screen time, more focus and sleep). Other tabs have an empty list.
 - Every series is cut from the same pieces as the stats engine's totals (`Stats.crosstab`), so a tab's charts add up
   to its totals and agree with Today and each other.
 - Answers are cached per range and time zone until the data changes (`cached: true`). The database keeps a change
