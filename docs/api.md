@@ -439,14 +439,17 @@ app or site seen in the last 30 days, most used first (at most 500):
     - `get_totals`: screen time grouped by app, category, device, hour or day. It can be narrowed to an app or
       site (a word of its name, or part of it for 4 letters or more), a category, phones or computers, and a
       time of day. 23:00 to 03:00 runs into the next morning and counts for the evening it started on. A range
-      with no data gets no total: missing is not zero.
+      with no data gets no total: missing is not zero. When an app filter matches several apps and sites
+      (YouTube and youtube.com), the total and all cut from it say "(all N together)", and each one's time is
+      "of that total", rounded so the parts add up to it.
     - `get_sessions`: the sessions themselves, with their times.
     - `get_focus`: focused time, focus score, pickups and switches per hour, per day.
     - `get_sleep`: sleep per night, and screen time after 11 pm the night before.
     - `get_calendar`: calendar events with their times, upcoming ones included (not all-day events).
     - `compare_plan`: how calendar time was spent, up to now.
-
-    Streaks get a tool with DT-53.
+    - `get_streaks`: the Streaks page's numbers now: each streak's days in a row up to today, its longest run,
+      what today still needs (rounded up) or what is left under a limit (rounded down), and each goal's target
+      and today's reading. It takes no range.
   - `facts_used` is every fact the tools returned, and the answer goes through the story's number check against
     them. Dates must be days the tools looked at.
   - An answer that fails is retried once. After that, the facts themselves are the answer (`fallback: true`,

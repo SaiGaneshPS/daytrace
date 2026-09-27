@@ -24,6 +24,7 @@ the stats engine loads never pile up.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -39,6 +40,7 @@ from .sessions import parse_utc
 from .stats import (
     COUNTED_TYPES,
     DESK_TYPES,
+    FOCUS_BLOCK,
     LATE_FROM,
     LATE_UNTIL,
     PHONE_TYPES,
@@ -714,3 +716,32 @@ def week_streaks(database: Database, tz: tzinfo, tz_name: str, now: datetime, fi
                               sum(day.status != "no_data" for day in track.days), len(track.best),
                               [day.day for day in track.days if day.status == "met"]))
     return out
+
+
+# --- what today still needs (nudges and ask say it the same way) ------------------------------------------------
+
+
+def still_to_go(track: Track, now: datetime, tz: tzinfo) -> tuple[int, bool] | None:
+    """What a streak to reach still needs today when it isn't kept yet, in whole units rounded up so it is enough
+    (19.2 minutes left is 20 more), and whether that can still be done today: no more minutes than the day has left,
+    and focus only in blocks of 10 minutes or more. None when nothing is still needed."""
+    left = track.today.remaining
+    if track.kind != "at_least" or track.today.status != "at_risk" or left is None or left <= 0 or track.unit == "time":
+        return None
+    amount = math.ceil(left - 1e-9)
+    if track.unit != "minutes":
+        return amount, True
+    from .api.timeline import day_window
+
+    _, midnight = day_window(now.astimezone(tz).date(), tz)
+    minutes_left = (midnight - now).total_seconds() / 60
+    return amount, left <= minutes_left and (track.measure != "focused_minutes" or minutes_left >= FOCUS_BLOCK.total_seconds() / 60)
+
+
+def room_left(track: Track) -> int | None:
+    """What a limit (a streak to stay under) still has room for today, in whole units rounded down so it is safe;
+    None for a limit on a time of day (a bedtime), or when it isn't at risk."""
+    left = track.today.remaining
+    if track.kind != "at_most" or track.today.status != "at_risk" or left is None or track.unit == "time":
+        return None
+    return max(0, math.floor(left + 1e-9))

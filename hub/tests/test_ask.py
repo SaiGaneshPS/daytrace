@@ -34,7 +34,7 @@ from daytrace_hub.llm import LLMError
 from daytrace_hub.models import Event
 from daytrace_hub.seed import seed
 from daytrace_hub.stats import Stats
-from daytrace_hub.story import unsupported_numbers
+from daytrace_hub.story import Fact, unsupported_numbers
 
 ZONE = ZoneInfo("America/Toronto")
 TZ = "America/Toronto"
@@ -147,8 +147,8 @@ def test_bad_arguments_are_refused_with_a_reason(week: Database) -> None:
         tool(week, "get_totals", {**LAST_WEEK, "category": "fun"})
     with pytest.raises(ToolError, match="not valid JSON"):
         tool(week, "get_totals", "{oops")
-    with pytest.raises(ToolError, match="no tool called get_streaks"):
-        tool(week, "get_streaks", "{}")
+    with pytest.raises(ToolError, match="no tool called get_weather"):
+        tool(week, "get_weather", "{}")
     with pytest.raises(ToolError, match="device must be text"):
         tool(week, "get_totals", {**LAST_WEEK, "device": ["phone"]})
     with pytest.raises(ToolError, match="local time"):
@@ -560,3 +560,115 @@ def test_no_new_model_call_starts_after_the_time_budget(week: Database, fake_llm
     assert result.reason is not None and "took more than 4 minutes" in result.reason
     assert result.answer.startswith("Here is what I found:") and result.facts
     assert len(fake_llm.chats()) == 1
+
+# --- DT-40 follow-up: the streaks tool ------------------------------------------------------------------------
+# Seeded 14 days up to NOW (Monday 12:00 in Toronto), the Streaks page says: Focus flame 2 days in a row (best 5),
+# 170.7 of 240 focused minutes so far; Balanced 2 (best 2), 14.5 of 60 social minutes; Synced 13, 2 of 4 devices yet;
+# Logged it 14; Screens down 3 (best 5); asleep by 23:25 against 23:30.
+
+
+def streak_facts(db: Database, now: datetime = NOW) -> tuple[ask_module.ToolOutput, dict[str, Any]]:
+    out = tool(db, "get_streaks", "{}", now=now)
+    return out, {f.label: f.value for f in out.facts}
+
+
+def test_the_streaks_tool_gives_the_streaks_pages_numbers(seeded: Database) -> None:
+    out, facts = streak_facts(seeded)
+    assert facts["Focus flame streak (240 or more focused minutes in a day): days in a row up to today"] == 2
+    assert facts["Focus flame streak: its longest run"] == 5
+    assert facts["Focus flame streak: still needed today to keep it"] == 70  # 69.3 rounded up: enough
+    assert facts["Focused time: today so far"] == 170  # 170.7 rounded down: 170 + 70 is the 240 target
+    assert facts["Balanced streak: room left under its limit today"] == 45  # 45.5 rounded down: safe
+    assert facts["Social apps: today so far"] == 15  # 14.5 rounded up: 15 + 45 is the 60 limit
+    assert facts["Synced streak: still needed today to keep it"] == 2
+    assert facts["Logged it streak (at least 1 meal logged in a day): days in a row up to today"] == 14
+    assert (facts["Bedtime goal: asleep by 23:30 the night before"], facts["Bedtime: fell asleep last night"]) == ("23:30", "23:25")
+    assert "Bedtime goal: done for today" in out.notes and "Focused time goal: not kept yet for today" in out.notes
+    assert tool(seeded, "get_streaks", LAST_WEEK).facts == out.facts  # a range asked for changes nothing
+
+
+def test_the_streaks_tool_reads_only_today_the_evening_before_and_recent_runs(seeded: Database, fake_llm: FakeModelServer) -> None:
+    out, _ = streak_facts(seeded)
+    today = date(2026, 9, 28)
+    starts = {today - timedelta(days=2), today - timedelta(days=13)}  # Focus flame's, Balanced's and Screens down's; Logged it's and Synced's
+    assert out.days == {today, today - timedelta(days=1)} | starts  # never a best run, nor a year of dates
+    fake_llm.reply_tool_call("get_streaks", {})
+    fake_llm.reply_text("Your Focus flame streak is 2 days long, and your best is 5 days.")
+    result = asked(seeded, fake_llm, "How long is my focus streak?")
+    assert result.meta is not None
+    start, end = (datetime.fromisoformat(result.meta["range"][key]) for key in ("start", "end"))
+    assert end - start <= timedelta(days=15)  # the days it named, not months
+
+
+def test_a_streak_that_can_not_be_kept_before_midnight_is_not_asked_for(seeded: Database) -> None:
+    late = datetime(2026, 9, 29, 3, 50, tzinfo=UTC)  # 23:50 in Toronto: 10 minutes left, 69 focused minutes to go
+    out, facts = streak_facts(seeded, late)
+    assert not any(label.startswith("Focus flame streak: still needed") for label in facts)
+    assert any(note.startswith("Focus flame streak: not kept yet today; it can't be kept today any more") for note in out.notes)
+
+
+def fake_found(monkeypatch: pytest.MonkeyPatch, tracks: list[Any], goals: dict[str, Any] | None = None) -> None:
+    from daytrace_hub import streaks
+
+    found = streaks.Evaluation(date(2026, 9, 28), date(2026, 9, 1), date(2026, 9, 1), TZ, goals or {}, tracks)
+    monkeypatch.setattr(streaks, "evaluation", lambda *_, **__: found)
+    monkeypatch.setattr(streaks, "evaluate", lambda *_, **__: found)
+
+
+def track(**changes: Any) -> Any:
+    from daytrace_hub import streaks
+
+    today = streaks.DayResult(date(2026, 9, 28), changes.pop("status", "at_risk"), 10.0, 60.0, changes.pop("remaining", 30.0),
+                              changes.pop("estimated", False))
+    before = changes.pop("before", [])
+    fields = {"id": "x", "name": "Reading", "rule": "30 minutes of reading", "measure": "focused_minutes", "kind": "at_least",
+              "unit": "minutes", "target": 30.0, "needs": "a computer", "days": [*before, today], **changes}
+    return streaks.Track(**fields)
+
+
+def test_a_streak_with_no_run_says_what_starts_one(seeded: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_found(monkeypatch, [track()])
+    _, facts = streak_facts(seeded)
+    assert facts == {"Reading streak (30 minutes of reading): days in a row up to today": 0, "Reading streak: its longest run": 0,
+                     "Reading streak: still needed today to start a new run": 30}
+
+
+def test_a_limit_on_a_time_of_day_never_becomes_a_number_the_check_can_not_read(seeded: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_found(monkeypatch, [track(kind="at_most", unit="time", measure="bedtime", remaining=5.0)])
+    out, _ = streak_facts(seeded)
+    assert not any(f.unit == "time" and not isinstance(f.value, str) for f in out.facts)
+    assert unsupported_numbers(facts_answer(out.facts), out.facts, out.days) == []  # no crash, nothing unsupported
+
+
+def test_estimated_readings_say_so(seeded: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    from daytrace_hub import streaks
+
+    goal = streaks.Track("bedtime", "Bedtime", "asleep by 23:30 the night before", "bedtime", "at_most", "time", 330.0, "",
+                         [streaks.DayResult(date(2026, 9, 28), "met", 325.0, 330.0, None, True)])
+    fake_found(monkeypatch, [track(status="met", remaining=None, estimated=True)], {"bedtime": goal})
+    _, facts = streak_facts(seeded)
+    assert facts["Bedtime: fell asleep last night (estimated)"] == "23:25"
+    assert "Reading streak (30 minutes of reading): days in a row up to today (partly estimated)" in facts
+
+
+def test_the_streaks_tool_uses_the_pages_own_evaluation(seeded: Database, monkeypatch: pytest.MonkeyPatch) -> None:
+    from daytrace_hub import streaks
+
+    calls: list[str] = []
+    page, fresh = streaks.evaluation, streaks.evaluate
+    monkeypatch.setattr(streaks, "evaluation", lambda *a, **k: calls.append("page") or page(*a, **k))
+    monkeypatch.setattr(streaks, "evaluate", lambda *a, **k: calls.append("again") or fresh(*a, **k))
+    with seeded.connect() as conn:
+        run_tool(Stats(conn, ZONE, TZ, NOW, database=seeded), "get_streaks", "{}")
+    assert calls[0] == "page"  # the cached evaluation the Streaks page and the nudges use
+
+
+def test_the_model_is_told_about_streaks_and_the_dashboard_names_the_tool() -> None:
+    prompt = ask_module.system_prompt(date(2026, 9, 28), TZ)
+    assert "streaks and daily goals" in prompt and "get_streaks needs no range" in prompt
+    assert "streaks and goals" in ask_module.DECLINED and "streaks and goals" in ask_module.NO_ANSWER
+    chatbox = (Path(__file__).resolve().parents[2] / "dashboard" / "src" / "components" / "ChatBox.tsx").read_text(encoding="utf-8")
+    for name in TOOLS:
+        assert f"  {name}: " in chatbox, name  # a readable "Looked up" chip for every tool
+    assert facts_answer([Fact("Reading streak: its longest run", 1, "days")]) == "Here is what I found: Reading streak: its longest run: 1 day."
+

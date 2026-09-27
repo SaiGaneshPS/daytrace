@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import re
 import sqlite3
 import threading
@@ -40,7 +39,7 @@ from .db import Database, transaction, utc_text
 from .models import Event, Nudge
 from .redaction import REDACTED
 from .sessions import parse_utc
-from .stats import DISTRACTING, FOCUS_BLOCK
+from .stats import DISTRACTING
 from .story import duration
 
 logger = logging.getLogger(__name__)
@@ -286,18 +285,9 @@ def late_scroll(moment: Moment) -> Draft | None:
 
 
 def _can_keep(moment: Moment, track: streaks.Track) -> bool:
-    """Whether what is left of a streak to reach can still be done today: not minutes more than the day has left
-    (and focus counts only in blocks of 10 minutes or more)."""
-    left = track.today.remaining
-    if track.kind != "at_least" or track.today.status != "at_risk" or left is None or left <= 0 or track.measure not in MORE:
-        return False
-    if track.unit != "minutes":
-        return True
-    from .api.timeline import day_window
-
-    _, midnight = day_window(moment.local.date(), moment.tz)
-    minutes_left = (midnight - moment.now).total_seconds() / 60
-    return left <= minutes_left and (track.measure != "focused_minutes" or minutes_left >= FOCUS_BLOCK.total_seconds() / 60)
+    """Whether what is left of a streak to reach can still be done today (streaks.still_to_go)."""
+    need = streaks.still_to_go(track, moment.now, moment.tz)
+    return need is not None and need[1] and track.measure in MORE
 
 
 def streak_at_risk(moment: Moment) -> Draft | None:
@@ -310,7 +300,9 @@ def streak_at_risk(moment: Moment) -> Draft | None:
     if not at_risk:
         return None
     track = max(at_risk, key=lambda item: len(item.current))  # the longest run has the most to lose
-    left = math.ceil(track.today.remaining - 1e-9)  # enough to keep it: 19.2 minutes left is 20 more
+    need = streaks.still_to_go(track, moment.now, moment.tz)
+    assert need is not None  # _can_keep said so
+    left = need[0]
     one, many = MORE[track.measure]
     days = len(track.current)
     return (f"Keep your {track.name}",
