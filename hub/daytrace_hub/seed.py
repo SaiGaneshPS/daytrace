@@ -32,7 +32,7 @@ from typing import Any, Literal
 from .api.events import store_events
 from .config import Settings
 from .db import Database, transaction, utc_text
-from .models import Event
+from .models import Event, Nudge
 
 SOURCE = "seed"
 MAX_DAYS = 90
@@ -400,7 +400,7 @@ def _replace(conn: sqlite3.Connection, by_device: dict[str, list[Event]]) -> Non
     for device_id, (device_type, name) in DEVICES.items():
         conn.execute(
             "INSERT INTO devices (device_id, name, device_type, token_hash, paired_at) VALUES (?, ?, ?, NULL, ?)"
-            " ON CONFLICT (device_id) DO UPDATE SET name = excluded.name, device_type = excluded.device_type",
+            " ON CONFLICT (device_id) DO UPDATE SET name = excluded.name, device_type = excluded.device_type, revoked_at = NULL",
             (device_id, name, device_type, paired_at),
         )
     conn.execute(
@@ -416,3 +416,86 @@ def _replace(conn: sqlite3.Connection, by_device: dict[str, list[Event]]) -> Non
                      (goal_id, json.dumps(target), paired_at))
     # Badges were earned from the history just replaced: they are worked out again from the new one (DT-53).
     conn.execute("DELETE FROM achievements")
+    # And the demo devices' nudges went with it (DT-48: a rehearsal's nudge mustn't keep its rule resting on stage).
+    conn.execute(f"DELETE FROM nudge_log WHERE device_id IN ({', '.join('?' for _ in DEVICES)})", tuple(DEVICES))
+
+
+# --- DT-48: what the phone would send now, for the demo ---------------------------------------------------------
+
+DEMO_PHONE = "seed-android"
+DemoScenario = Literal["live", "nudge"]
+
+
+class DemoResult:
+    """What was sent (in words) as the demo phone, the nudge the hub answered with (only the focus nudge, for the
+    nudge scenario), and a note: why there was none, or a nudge held back."""
+
+    def __init__(self, sent: str, nudge: Nudge | None, note: str | None = None) -> None:
+        self.sent = sent
+        self.nudge = nudge
+        self.note = note
+
+
+def demo_events(settings: Settings, scenario: DemoScenario, now: datetime | None = None, again: bool = False) -> DemoResult:
+    """Send, as the seeded Android phone and through the same ingest path as a real one, what it would send right now:
+    `live`, a few minutes of apps ending now (they show on Today at once); `nudge`, a study block from the phone's
+    calendar around now and TikTok opened in it, which the hub answers with a focus nudge (DT-43). For the demo when
+    the phone can't take part, and for rehearsals. `again` lets a nudge speak now even if one went out in the last
+    minutes (without forgetting any). A nudge `live` sets off, or another rule's for `nudge`, is taken back, so it
+    can't keep the demo's own nudge waiting. Refuses profiles with real data, like seed()."""
+    from .api.events import ingest
+    from .auth import AuthenticatedDevice
+    from .nudges import silence, withdraw
+
+    if not settings.profile.seedable:
+        raise SeedRefused(f"the {settings.profile.name} profile holds your real data; demo events go to demo or shared-dev")
+    now = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    database = Database(settings.database_path)
+    database.initialize()
+    device_type, name = DEVICES[DEMO_PHONE]
+    with database.connect() as conn:
+        row = conn.execute("SELECT revoked_at FROM devices WHERE device_id = ?", (DEMO_PHONE,)).fetchone()
+        if row is None:
+            raise SeedRefused(f"the {settings.profile.name} profile has no demo phone yet: seed it first")
+        if row["revoked_at"] is not None:
+            raise SeedRefused(f"the demo phone was revoked in the {settings.profile.name} profile: seed it again to bring it back")
+        with transaction(conn):
+            # A phone's contact is what lights its live dot on Today, as a real one's request does (auth).
+            conn.execute("UPDATE devices SET last_seen = ? WHERE device_id = ?", (utc_text(now), DEMO_PHONE))
+    mark = now.strftime("%Y%m%dT%H%M%S")
+
+    def at(minutes: float) -> str:
+        return (now + timedelta(minutes=minutes)).isoformat()
+
+    def app(label: str, package: str, start: float, end: float) -> dict[str, Any]:
+        return {"external_id": f"demo:{mark}:{package}", "kind": "app_session", "source": SOURCE, "start": at(start),
+                "end": at(end), "app": label, "app_id": package}
+
+    if scenario == "live":
+        events = [app("Instagram", "com.instagram.android", -5, -2), app("YouTube", "com.google.android.youtube", -2, 0)]
+        sent = "Instagram for 3 minutes, then YouTube for 2, ending now"
+    else:
+        start, end = now - timedelta(minutes=15), now + timedelta(minutes=45)
+        # One study block a day, moved to now each time (replaced through its id), never a stack of them.
+        study = {"external_id": f"demo:{now:%Y%m%d}:study", "kind": "calendar_event", "source": SOURCE, "start": start.isoformat(),
+                 "end": end.isoformat(), "title": "Study: statistics"}
+        events = [study, app("TikTok", "com.zhiliaoapp.musically", -1, 0)]
+        sent = '"Study: statistics" on its calendar around now, then TikTok opened in it'
+    batch = {"events": [{"device_id": DEMO_PHONE, **event} for event in events]}
+    result = ingest(database, AuthenticatedDevice(DEMO_PHONE, name, device_type), batch, now=now, again=again)
+    if result.rejected:
+        raise SeedRefused(f"the demo events were refused: {result.rejected[0].reason}")
+    said = f"Sent as {name}: {sent}."
+    nudge = result.nudge
+    if scenario == "live":
+        if nudge is None:
+            return DemoResult(said, None)
+        withdraw(database, DEMO_PHONE, nudge)
+        return DemoResult(said, None, f"Held back a {nudge.rule} nudge these apps set off, so the nudge step's own can show.")
+    if nudge is not None and nudge.rule != "focus_block":
+        withdraw(database, DEMO_PHONE, nudge)
+        return DemoResult(said, None, f"Only a {nudge.rule} nudge answered (held back): {silence(database, 'focus_block', now)}.")
+    if nudge is None:
+        return DemoResult(said, None, f"No focus nudge: {silence(database, 'focus_block', now)}.")
+    return DemoResult(said, nudge)
+

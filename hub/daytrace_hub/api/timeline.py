@@ -7,6 +7,7 @@ local midnight. Every number is whole seconds first; minutes are rounded from th
 from __future__ import annotations
 
 import sqlite3
+import sys
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import lru_cache
@@ -130,8 +131,50 @@ def known_zones() -> frozenset[str]:
     return frozenset(available_timezones())
 
 
+def icu_zone(windows_id: str, region: str | None) -> str | None:
+    """The IANA name Windows' own ICU gives a Windows zone in a region, as browsers do ("Eastern Standard Time" in CA
+    is America/Toronto, in the US America/New_York); None where there is no icu.dll (before Windows 10 1903)."""
+    import ctypes
+
+    try:
+        icu = ctypes.WinDLL("icu.dll")  # type: ignore[attr-defined]
+    except (OSError, AttributeError):
+        return None
+    lookup = icu.ucal_getTimeZoneIDForWindowsID
+    lookup.restype = ctypes.c_int32
+    lookup.argtypes = [ctypes.c_wchar_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_wchar_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_int)]
+    found = ctypes.create_unicode_buffer(128)
+    status = ctypes.c_int(0)
+    length = lookup(windows_id, len(windows_id), region.encode("ascii") if region else None, found, 128, ctypes.byref(status))
+    return found.value[:length] if status.value <= 0 and length > 0 else None
+
+
+@lru_cache(maxsize=1)
+def _windows_zone_name() -> str | None:
+    """On Windows, this computer's zone as its browsers name it: the Windows zone mapped with the user's region
+    (tzlocal ignores the region, so a Toronto PC would be America/New_York to the hub and America/Toronto to Edge,
+    and the hub's caches, keyed by the name, would never match what the dashboard asks for)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation") as key:
+            windows_id = str(winreg.QueryValueEx(key, "TimeZoneKeyName")[0])
+        region = ctypes.create_unicode_buffer(16)
+        ctypes.windll.kernel32.GetUserDefaultGeoName(region, 16)  # type: ignore[attr-defined]
+        return icu_zone(windows_id, region.value or None)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
 def local_zone_name() -> str:
-    """The hub computer's IANA time zone (for example America/St_Johns), or UTC if it cannot be found."""
+    """The hub computer's IANA time zone (for example America/St_Johns), named as its browsers name it, or UTC if it
+    cannot be found."""
+    name = _windows_zone_name()
+    if name in known_zones():
+        return str(name)
     try:
         name = tzlocal.get_localzone_name()
     except Exception:  # noqa: BLE001 - tzlocal raises different errors on each OS; UTC is the safe answer
