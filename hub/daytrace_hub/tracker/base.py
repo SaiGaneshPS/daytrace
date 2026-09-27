@@ -37,7 +37,7 @@ from typing import IO, Any, Protocol
 from pydantic import ValidationError
 
 from ..db import Database, transaction, utc_text
-from ..models import Event
+from ..models import Event, Nudge
 from ..redaction import LiveRedactor
 
 logger = logging.getLogger("daytrace_hub.tracker")
@@ -332,14 +332,26 @@ def tracker_device(conn: sqlite3.Connection, device_type: str, name: str) -> str
     return device_id
 
 
+NudgeShower = Callable[[Nudge], object]
+
+
+def desktop_notification(nudge: Nudge) -> object:
+    """DT-43: a nudge from this computer's own activity, as a desktop notification."""
+    from .. import notify
+
+    return notify.show(nudge.title, nudge.body)
+
+
 class DatabaseSink:
     """Writes tracker events through the same path as events from phones (validation, dedup, replacement). If the
-    device was revoked (or deleted) while tracking, the events go to a new tracker device from then on."""
+    device was revoked (or deleted) while tracking, the events go to a new tracker device from then on. A nudge
+    for what was just written (DT-43) goes to `nudge`, when desktop notifications are on."""
 
-    def __init__(self, database: Database, device_type: str, name: str) -> None:
+    def __init__(self, database: Database, device_type: str, name: str, nudge: NudgeShower | None = None) -> None:
         self.database = database
         self.device_type = device_type
         self.name = name
+        self.nudge = nudge
         with database.connect() as conn, transaction(conn):
             self.device_id = tracker_device(conn, device_type, name)
 
@@ -357,7 +369,14 @@ class DatabaseSink:
                     parsed.append((index, Event.model_validate({**event, "device_id": self.device_id})))
                 except ValidationError as error:  # one odd window never blocks the rest
                     logger.warning("the tracker dropped a span the hub would refuse: %s", error.errors()[0]["msg"])
-            store_events(conn, self.device_id, parsed)
+            stored = store_events(conn, self.device_id, parsed)
+        if self.nudge is not None and stored.changed_events:
+            from ..nudges import desktop_wanted, pick_nudge
+
+            if desktop_wanted(self.database):
+                found = pick_nudge(self.database, self.device_id, stored.changed_events)
+                if found is not None:
+                    self.nudge(found)
 
     def last_seq(self) -> int:
         """The highest seq this device has used (0 for none), so a restart continues the numbering."""
@@ -412,8 +431,9 @@ class TrackerService:
     """The tracker as a background thread inside the hub (or in the foreground for `daytrace-hub tracker`)."""
 
     def __init__(self, database: Database, probe: Probe, device_type: str, name: str, lock_path: Path,
-                 redact: Redactor | None = None) -> None:
+                 redact: Redactor | None = None, nudge: NudgeShower | None = desktop_notification) -> None:
         self.database = database
+        self.nudge = nudge  # DT-43: how a nudge for this computer's own activity is shown
         self.probe = probe
         self.device_type = device_type
         self.name = name
@@ -425,7 +445,7 @@ class TrackerService:
         self._thread: threading.Thread | None = None
 
     def _tracker(self) -> Tracker:
-        sink = DatabaseSink(self.database, self.device_type, self.name)
+        sink = DatabaseSink(self.database, self.device_type, self.name, nudge=self.nudge)
         self.device_id = sink.device_id
         return Tracker(self.probe, sink, sink.device_id, last_seq=sink.last_seq(), redact=self.redact)
 

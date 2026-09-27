@@ -66,6 +66,8 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `GET /insights/{tab}`, `GET /wrapped` | viewer | DT-41 |
 | `GET /streaks`, `GET /goals`, `GET /achievements` | viewer | DT-53 |
 | `PUT /goals/{goal_id}` | dashboard (viewer token or the hub computer) | DT-53 |
+| `GET /nudges` | viewer | DT-43 |
+| `PUT /nudges` | dashboard (viewer token or the hub computer) | DT-43 |
 | `GET /privacy/redaction`, `POST /privacy/redaction/check`, `GET /privacy/redaction/stored` | viewer | DT-44 |
 | `PUT /privacy/redaction`, `POST /privacy/redaction/apply` | dashboard (viewer token or the hub computer) | DT-44 |
 | `GET /privacy/network` | viewer | DT-45 |
@@ -129,8 +131,40 @@ Response (`200` whenever the body has the right shape, even if some events were 
     after `last_seq` and send them again; nothing is lost.
 - Besides the schema, the hub rejects (`invalid`) text with broken characters (half of an emoji), numbers that
   are not finite (`1e400`), and `data` over 16 KB as compact UTF-8 JSON.
-- When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "...", "body": "...", "created_at": "..." }`.
+- When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "Time to focus", "body": "TikTok during
+  \"Study: calculus\", which runs until 17:00.", "created_at": "2026-09-25T19:30:00Z" }`, and the device shows it.
+  See [Nudges](#nudges).
 - DT-42 adds the parsed meal items to the response for `meal` events.
+
+### Nudges
+
+An event sent to `POST /events` can come back with one `nudge` (DT-43), for what is happening now: activity that
+ended more than 10 minutes ago (a phone catching up) nudges no one. The rules, checked in this order:
+
+| Rule | Fires for | Says |
+|---|---|---|
+| `focus_block` | a social, video or game app during a timed calendar event whose title is about focus (study, work, deep work, an exam, revision, homework, an assignment, a lecture, a thesis, an essay, a deadline; whole words) | the app, the event and when it ends |
+| `late_scroll` | a social or video app after the bedtime goal (23:30 unless changed) and before 04:00 | the time, the bedtime, and the first event of the coming day (tomorrow before midnight, today after it) |
+| `streak_at_risk` | from 20:00, a streak to reach (Focus flame, Logged it, Synced) with a run going and today not kept yet | the real amount left, rounded up ("20 more focused minutes keeps your 3-day Focus flame streak going") |
+| `social_cap` | a social app once today's social time is over the social goal | today's social time and the goal, the numbers the Streaks page shows |
+
+- Each rule rests 20 minutes after it fires, across every device (the check and the log entry are one
+  transaction, so two requests at once nudge once). Every nudge is logged in `nudge_log`.
+- The hub's own desktop tracker never goes through `POST /events`: its nudges show as a desktop notification on the
+  hub computer (a Windows toast, a macOS notification, `notify-send` on Linux) when `desktop` is on. The words are
+  data, never part of a script: Windows reads them from environment variables into the toast as text.
+- Times are the hub computer's clock.
+
+`GET /nudges` (viewer):
+
+```json
+{ "rules": [ { "id": "focus_block", "name": "Focus time", "description": "A social, video or game app during ...", "enabled": true }, "..." ],
+  "desktop": true, "cooldown_minutes": 20,
+  "recent": [ { "rule": "focus_block", "device_id": "android-1", "title": "Time to focus", "body": "...", "created_at": "2026-09-25T19:30:00Z" } ] }
+```
+
+`recent` is the latest 20 nudges, newest first. `PUT /nudges` (the dashboard) with `{ "disabled": ["late_scroll"],
+"desktop": true }` switches rules off (the others on) and desktop notifications on or off; an unknown rule is `400`.
 
 ### GET /devices/{device_id}/cursor
 

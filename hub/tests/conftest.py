@@ -45,6 +45,18 @@ def _no_real_desktop_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_real_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test never shows a real desktop notification: running one fails (the notifier logs it and shows nothing).
+    Tests of notify.py replace notify._run themselves."""
+    from daytrace_hub import notify
+
+    def refuse(*_: object, **__: object) -> None:
+        raise AssertionError("tests must not show real desktop notifications; replace notify._run")
+
+    monkeypatch.setattr(notify, "_run", refuse)
+
+
+@pytest.fixture(autouse=True)
 def _no_socket_guard_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     """The socket guard (DT-45) is an audit hook, which can't be taken off: a test that starts a real hub (serve())
     without replacing it fails loudly instead of leaving it on for every later test."""
