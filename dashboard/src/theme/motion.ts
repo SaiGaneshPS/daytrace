@@ -72,15 +72,19 @@ export function useReducedMotionPreference(): boolean {
   return useMediaQuery(REDUCED_MOTION);
 }
 
+let fire: import("canvas-confetti").CreateTypes | undefined;
 const CONFETTI_COLORS = ["--cat-social", "--cat-video", "--cat-work", "--cat-study", "--cat-comms", "--cat-games"];
 
 /** Confetti, for milestones only (a streak record, a badge). Loaded when first used; nothing under reduced motion. */
 export async function celebrate(origin?: { x: number; y: number }): Promise<void> {
   if (matches(REDUCED_MOTION)) return;
   const { default: confetti } = await import("canvas-confetti");
+  // Drawn on the page itself: the default draws in a worker made from a blob: URL, which the hub's
+  // Content-Security-Policy (worker-src 'self') rightly refuses, so no confetti would show.
+  fire ??= confetti.create(undefined, { resize: true, useWorker: false });
   const style = getComputedStyle(document.documentElement);
   const colors = CONFETTI_COLORS.map((name) => style.getPropertyValue(name).trim()).filter(Boolean);
-  await confetti({
+  await fire({
     particleCount: 140,
     spread: 80,
     startVelocity: 45,

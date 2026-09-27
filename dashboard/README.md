@@ -32,11 +32,15 @@ npm run test:e2e   # Playwright tests of the build (run npm run build first); us
   palette is mirrored in `android/app/src/main/res/values/colors.xml`, and a test checks the two match.
 - **Tests:** `e2e/` holds Playwright tests of the build on a 1440 px desktop and a 360 px touch phone, with the hub's
   API mocked: layout, touch targets, accessibility (axe, light and dark), tabs, charts, motion, a page failing to
-  load, the Today page, and the Story and Ask pages (the AI online, offline and slow). `npm run test:e2e` type-checks
-  them first (tsconfig.e2e.json). `e2e/live-hub.spec.ts` runs against a real demo hub on this computer when
-  `DAYTRACE_E2E_HUB` is set (it refuses the personal hub), including the story and an answer from the hub's local
-  model when it has one. On Windows the tests use the installed Microsoft Edge (no browser download); on macOS or
-  Linux, run `npx playwright install chromium` once. CI uses Playwright's Chromium.
+  load, the Today page, the Story and Ask pages (the AI online, offline and slow), and the Devices page (pairing on
+  the hub computer and from a phone, revoking). `e2e/responsive.spec.ts` checks every page at widths from 280 to
+  1440 px and text at 100 to 200%: nothing sticks out, nothing is cut off, and no label or heading splits a word.
+  Layouts adapt by rule (things wrap, shrink, and fit as many columns as their text allows) rather than by tuning
+  for particular screens. `npm run test:e2e` type-checks them first (tsconfig.e2e.json).
+  `e2e/live-hub.spec.ts` runs against a real demo hub on this computer when `DAYTRACE_E2E_HUB` is set (it refuses
+  the personal hub), including the story and an answer from the hub's local model when it has one, and a browser on
+  the network pairing with the hub computer's code. On Windows the tests use the installed Microsoft Edge (no
+  browser download); on macOS or Linux, run `npx playwright install chromium` once. CI uses Playwright's Chromium.
 - **On a real Android phone:** with USB debugging on, `adb reverse tcp:8767 tcp:8767` lets the phone's browser open
   the demo hub at `http://localhost:8767` over the cable (no Wi-Fi needed), and `adb forward tcp:9222
   localabstract:chrome_devtools_remote` lets Playwright drive that Chrome tab with `chromium.connectOverCDP`.

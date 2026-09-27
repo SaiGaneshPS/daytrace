@@ -13,9 +13,9 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.responses import FileResponse, HTMLResponse, Response
@@ -31,6 +31,7 @@ from .api import devices as devices_api
 from .api import events as events_api
 from .api import insights as insights_api
 from .api import timeline as timeline_api
+from .auth import is_trusted_local
 from .config import Settings, client_allowed, host_allowed, load_settings
 from .db import Database
 from .discovery import Advertiser
@@ -230,6 +231,10 @@ class Health(BaseModel):
     status: str
     profile: str
     version: str
+    local: bool = Field(
+        description="True when the request comes from the hub computer's own dashboard, which can show pairing codes "
+        "and revoke devices (the same check those endpoints make)."
+    )
 
 
 def desktop_tracker(settings: Settings, database: Database) -> TrackerService | None:
@@ -282,8 +287,8 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, dashboa
     install_error_handlers(app)
 
     @app.get(f"{API_PREFIX}/health", response_model=Health, tags=["hub"], summary="Is the hub up (no auth)")
-    def health() -> Health:
-        return Health(status="ok", profile=settings.profile.name, version=__version__)
+    def health(request: Request) -> Health:
+        return Health(status="ok", profile=settings.profile.name, version=__version__, local=is_trusted_local(request))
 
     app.include_router(events_api.router)
     app.include_router(devices_api.router)

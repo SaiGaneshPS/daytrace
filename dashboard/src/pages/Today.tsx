@@ -7,8 +7,8 @@
 // blocks, and when each device last synced) and GET /insights/day (focus, pickups, the phone and computer split, top
 // apps, sleep, steps). Nothing is added up or estimated here. A refresh never cuts off a request still on its way,
 // and a failed load says so where its numbers would be.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useApi } from "../api/client";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useApi, usePolling } from "../api/client";
 import type { components } from "../api/schema";
 import ChartCard from "../components/ChartCard";
 import DayPicker, { longDay, useToday } from "../components/DayPicker";
@@ -30,28 +30,6 @@ const DEVICE_COLORS: Record<string, string> = {
   android: "var(--cat-comms)",
   ios: "var(--cat-social)",
 };
-
-/** Calls `refresh` every `every` ms while the page is visible; null stops it. */
-function usePolling(every: number | null, refresh: () => void) {
-  useEffect(() => {
-    if (every === null) return;
-    let timer: number | undefined;
-    const start = () => {
-      window.clearInterval(timer);
-      if (document.visibilityState === "visible") timer = window.setInterval(refresh, every);
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") refresh(); // catch up at once when the page comes back
-      start();
-    };
-    start();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [every, refresh]);
-}
 
 function AppsRace({ summary }: { summary: Summary }) {
   const apps = summary.top_apps;

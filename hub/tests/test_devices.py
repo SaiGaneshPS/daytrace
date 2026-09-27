@@ -26,7 +26,7 @@ from daytrace_hub.api.devices import (
 from daytrace_hub.app import create_app
 from daytrace_hub.auth import register_device
 from daytrace_hub.config import Settings, default_mdns_name, get_profile, load_settings, parse_lan_networks
-from daytrace_hub.db import Database
+from daytrace_hub.db import Database, transaction
 
 LOCAL_URL = "http://localhost:8765"
 PHONE = ("192.168.1.50", 40000)
@@ -168,6 +168,59 @@ def test_the_qr_code_is_a_png_with_the_url_and_code(client: TestClient) -> None:
 def test_the_qr_payload_is_small_json() -> None:
     active = PairingCodes().start("http://192.168.1.23:8765")
     assert json.loads(qr_payload(active)) == {"daytrace": 1, "url": "http://192.168.1.23:8765", "code": active.code}
+
+
+def test_the_browser_qr_code_opens_the_devices_page_with_the_code() -> None:
+    active = PairingCodes().start("http://192.168.1.23:8765")
+    assert qr_payload(active, "browser") == f"http://192.168.1.23:8765/devices#pair={active.code}"
+
+
+def test_both_kinds_of_qr_code_are_pngs_and_other_kinds_are_refused(client: TestClient) -> None:
+    start(client)
+    for kind in ("app", "browser"):
+        response = client.get(f"/api/v1/pair/qr.png?for={kind}")
+        assert response.status_code == 200 and response.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert client.get("/api/v1/pair/qr.png?for=token").status_code == 422
+
+
+def test_the_status_says_when_the_code_was_used_and_by_what(client: TestClient, phone: TestClient) -> None:
+    assert client.get("/api/v1/pair/status").status_code == 404  # no code started yet
+    started = start(client)
+    status = client.get("/api/v1/pair/status")
+    assert status.headers["cache-control"] == "no-store"
+    assert status.json() == {"id": started["id"], "active": True, "used": False, "claimed_by": None}
+    claimed = phone.post("/api/v1/pair/claim", json=claim_body(started["code"])).json()
+    assert client.get("/api/v1/pair/status").json() == {
+        "id": started["id"], "active": False, "used": True,
+        "claimed_by": {"device_id": claimed["device_id"], "name": claimed["name"], "device_type": claimed["device_type"]},
+    }
+    newer = start(client)
+    assert newer["id"] != started["id"]
+    assert client.get("/api/v1/pair/status").json()["id"] == newer["id"]  # a newer code: the old tab can tell
+    assert phone.get("/api/v1/pair/status").status_code == 403  # the hub computer only
+
+
+def test_the_qr_code_is_drawn_only_for_the_code_it_was_asked_for(client: TestClient) -> None:
+    first = start(client)
+    assert client.get(f"/api/v1/pair/qr.png?id={first['id']}").status_code == 200
+    second = start(client)
+    assert client.get(f"/api/v1/pair/qr.png?id={first['id']}").status_code == 404  # never another code's picture
+    assert client.get(f"/api/v1/pair/qr.png?for=browser&id={second['id']}").status_code == 200
+
+
+def test_the_list_says_which_devices_have_a_token(client: TestClient, phone: TestClient) -> None:
+    code = start(client)["code"]
+    paired = phone.post("/api/v1/pair/claim", json=claim_body(code)).json()
+    with client.app.state.db.connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO devices (device_id, name, device_type, token_hash, paired_at) VALUES ('windows-9', 'This PC', 'windows', NULL, '2026-09-25T00:00:00Z')")
+    devices = {item["device_id"]: item["has_token"] for item in client.get("/api/v1/devices").json()["devices"]}
+    assert devices[paired["device_id"]] is True and devices["windows-9"] is False  # the tracker writes directly
+
+
+def test_health_says_whether_it_is_the_hub_computer_asking(client: TestClient, phone: TestClient) -> None:
+    assert client.get("/api/v1/health").json()["local"] is True
+    assert client.get("/api/v1/health", headers={"sec-fetch-site": "cross-site"}).json()["local"] is False
+    assert phone.get("/api/v1/health").json()["local"] is False  # same answer as pairing and revoking would give
 
 
 def test_the_qr_code_cannot_be_used_to_guess_the_code(client: TestClient, phone: TestClient) -> None:

@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pair/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the last pairing code was used, and by which device (hub computer only) */
+        get: operations["pair_status_api_v1_pair_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pair/claim": {
         parameters: {
             query?: never;
@@ -436,6 +453,15 @@ export interface components {
             /** Value */
             value: number;
         };
+        /** ClaimedDevice */
+        ClaimedDevice: {
+            /** Device Id */
+            device_id: string;
+            /** Name */
+            name: string;
+            /** Device Type */
+            device_type: string;
+        };
         /** Cursor */
         Cursor: {
             /** Device Id */
@@ -526,6 +552,11 @@ export interface components {
             name: string;
             /** Device Type */
             device_type: string;
+            /**
+             * Has Token
+             * @description False for the hub computer's own tracker and the demo data, which write on the hub directly (nothing to revoke: they never send with a token).
+             */
+            has_token: boolean;
             /** Paired At */
             paired_at: string;
             /** Last Seen */
@@ -569,6 +600,11 @@ export interface components {
             profile: string;
             /** Version */
             version: string;
+            /**
+             * Local
+             * @description True when the request comes from the hub computer's own dashboard, which can show pairing codes and revoke devices (the same check those endpoints make).
+             */
+            local: boolean;
         };
         /**
          * IngestResult
@@ -719,6 +755,11 @@ export interface components {
         };
         /** PairStarted */
         PairStarted: {
+            /**
+             * Id
+             * @description Names this code in GET /pair/status and GET /pair/qr.png (instead of the code).
+             */
+            id: string;
             /** Code */
             code: string;
             /**
@@ -743,6 +784,23 @@ export interface components {
             mdns_url: string | null;
             /** Qr */
             qr: string | null;
+        };
+        /** PairStatus */
+        PairStatus: {
+            /**
+             * Id
+             * @description The last code started; a different id than yours means a newer code replaced it.
+             */
+            id: string;
+            /**
+             * Active
+             * @description It can still be claimed (not used, not run out, not locked by wrong tries).
+             */
+            active: boolean;
+            /** Used */
+            used: boolean;
+            /** @description The device that used it, once it has been used. */
+            claimed_by: components["schemas"]["ClaimedDevice"] | null;
         };
         /**
          * RejectedEvent
@@ -1068,7 +1126,12 @@ export interface operations {
     };
     pair_qr_api_v1_pair_qr_png_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description app: for the Daytrace app; browser: for a phone's camera */
+                for?: "app" | "browser";
+                /** @description The code's id from POST /pair/start: 404 when it is not the active code */
+                id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1082,6 +1145,35 @@ export interface operations {
                 };
                 content: {
                     "image/png": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pair_status_api_v1_pair_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairStatus"];
                 };
             };
         };

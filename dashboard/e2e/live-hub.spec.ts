@@ -1,16 +1,20 @@
-// DT-31 and DT-33: Today, Story and Ask against a real hub, for the claims mocks can't prove: a seeded day renders in
-// under a second, its total is the sum of its blocks, a new session shows within 5 seconds, and the story and answers
-// come from the hub's local model with their facts (skipped without one). Opt-in: set DAYTRACE_E2E_HUB to a demo
-// hub running on this computer and serving this build, for example
+// DT-31, DT-32 and DT-33: Today, Devices, Story and Ask against a real hub, for the claims mocks can't prove: a seeded
+// day renders in under a second, its total is the sum of its blocks, a new session shows within 5 seconds, a browser
+// on the network pairs with the hub computer's code (and is told to pair again once revoked), and the story and
+// answers come from the hub's local model with their facts (skipped without one). Opt-in: set DAYTRACE_E2E_HUB to a
+// demo hub running on this computer and serving this build, for example
 //   daytrace-hub seed --profile demo && daytrace-hub run --profile demo
 //   DAYTRACE_E2E_HUB=http://localhost:8767 npm run test:e2e
-// Pairing and revoking only work from the hub's own computer. Each run leaves a revoked "E2E live" device and a
-// 90 second session in that hub (re-seeding the demo profile clears them), so it refuses the personal profile.
+// Pairing and revoking only work from the hub's own computer. Each run leaves a revoked "E2E live" device with a
+// 90 second session and a revoked "E2E browser" viewer in that hub (re-seeding the demo profile clears them), so it
+// refuses the personal profile.
 import { expect, type Page, test } from "@playwright/test";
 
 const HUB = process.env.DAYTRACE_E2E_HUB;
 test.skip(!HUB, "set DAYTRACE_E2E_HUB to run these against a real hub");
 test.use({ baseURL: HUB });
+// One after another: the hub has a single pairing code at a time, and two tests pair.
+test.describe.configure({ mode: "serial" });
 
 type Lane = { counted: boolean; sessions: { seconds: number }[] };
 
@@ -27,20 +31,25 @@ async function notPersonal(page: Page) {
   expect(health.profile, "these tests write test data: never run them against the personal hub").not.toBe("personal");
 }
 
+// Yesterday: always a whole seeded day, even just after midnight (when today has hardly begun).
 test("a seeded day renders in under a second, and its total is the sum of its blocks", async ({ page, isMobile }) => {
   test.skip(isMobile, "once is enough");
   await notPersonal(page);
   await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: "Today" })).toBeVisible();
+  const clicked = await page.evaluate(() => performance.now());
+  await page.getByRole("button", { name: "Previous day" }).click();
   // Checked on every frame, so the time is when the chart appeared (not when a slower poll noticed it).
   const appeared = await page.waitForFunction(() => (document.querySelector(".timeline-chart canvas") ? performance.now() : 0), undefined, {
     polling: "raf",
   });
-  expect(await appeared.jsonValue()).toBeLessThan(1_000); // since the navigation started
+  expect((await appeared.jsonValue()) - clicked).toBeLessThan(1_000); // from the click to the day on screen
 
   const [day, tz] = await page.evaluate(() => {
-    const now = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
     const pad = (n: number) => String(n).padStart(2, "0");
-    return [`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, Intl.DateTimeFormat().resolvedOptions().timeZone];
+    return [`${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`, Intl.DateTimeFormat().resolvedOptions().timeZone];
   });
   const data = (await (await page.request.get(`/api/v1/timeline?date=${day}&tz=${encodeURIComponent(tz)}`)).json()) as {
     lanes: Lane[];
@@ -48,6 +57,7 @@ test("a seeded day renders in under a second, and its total is the sum of its bl
   };
   const blocks = data.lanes.filter((lane) => lane.counted).flatMap((lane) => lane.sessions).reduce((sum, s) => sum + s.seconds, 0);
   expect(blocks).toBe(data.totals.seconds);
+  expect(blocks).toBeGreaterThan(0); // a seeded day, not an empty one
   await expect(page.getByRole("region", { name: /^Screen time/ }).locator(".stat-value")).toContainText(formatMinutes(data.totals.minutes));
 });
 
@@ -55,7 +65,7 @@ test("a new session shows within 5 seconds", async ({ page, isMobile }) => {
   test.skip(isMobile, "once is enough");
   await notPersonal(page);
   await page.goto("/");
-  await expect(page.locator(".timeline-chart canvas")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Today" })).toBeVisible(); // today may still be empty
   const started = await page.request.post("/api/v1/pair/start");
   expect(started.ok(), "pairing only works on the hub's own computer: run the hub locally").toBe(true);
   const { code } = (await started.json()) as { code: string };
@@ -89,6 +99,7 @@ test("the story and an answer come from the local model on this computer, with t
   test.skip(!status.reachable || !status.model || !status.tool_calling, "needs the hub's local model running (DAYTRACE_LLM_BASE_URL)");
 
   await page.goto("/story");
+  await page.getByRole("button", { name: "Previous day" }).click(); // yesterday: a whole seeded day with facts
   const card = page.getByRole("region", { name: "Story" });
   await expect(card.locator(".story-text")).toBeVisible({ timeout: 300_000 });
   // The model wrote it (and says so by name), unless its story failed the number check twice and the template did.
@@ -102,4 +113,35 @@ test("the story and an answer come from the local model on this computer, with t
   await expect(answer.locator(".answer-text")).toBeVisible({ timeout: 300_000 });
   await expect(answer.locator(".model-name, .badge-template")).toBeVisible();
   await expect(answer.locator(".facts")).toBeVisible();
+});
+
+
+// DT-32: a browser on the network (this computer's own network address, which the hub treats like a phone's) pairs
+// with the code the hub computer shows, and is told to pair again once it is revoked there.
+test("a browser on the network pairs with the hub computer's code, and revoking it there unpairs it", async ({ page, browser, isMobile }) => {
+  test.skip(isMobile, "once is enough");
+  await notPersonal(page);
+  await page.goto("/devices");
+  await page.getByRole("button", { name: /Show a pairing code|Pair another device/ }).click();
+  const code = ((await page.locator(".code-digits").textContent()) ?? "").replace(/\s/g, "");
+  const lan = await page.locator(".addresses code").first().textContent();
+  test.skip(!lan || !lan.startsWith("http"), "the hub has no network address to pair from");
+  const phone = await (await browser.newContext({ baseURL: lan ?? undefined })).newPage();
+  try {
+    await phone.goto("/devices");
+    await expect(phone.getByRole("region", { name: "Pair this device" })).toBeVisible(); // not the hub computer
+    await phone.getByLabel("Pairing code").fill(code);
+    await phone.getByLabel("Name in the device list").fill("E2E browser");
+    await phone.getByRole("button", { name: "Pair this browser" }).click();
+    await expect(phone.locator(".pair-success")).toContainText("This browser is paired as E2E browser.");
+    await expect(page.locator(".pair-success")).toHaveText("E2E browser is paired.", { timeout: 6_000 });
+
+    await page.getByRole("button", { name: "Revoke E2E browser" }).first().click();
+    await page.getByRole("dialog").getByRole("button", { name: "Revoke", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Revoke E2E browser" })).toHaveCount(0);
+    await phone.goto("/");
+    await expect(phone.getByRole("alert").filter({ hasText: "isn't paired" })).toBeVisible();
+  } finally {
+    await phone.context().close();
+  }
 });
