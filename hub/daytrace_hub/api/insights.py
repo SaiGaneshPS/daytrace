@@ -22,7 +22,17 @@ from pydantic import BaseModel, Field
 from ..auth import Reader, get_database
 from ..db import Database, data_version
 from ..llm import LLM
-from ..stats import DESK_TYPES, PHONE_TYPES, GroupBy, Stats, merge
+from ..stats import (
+    DESK_TYPES,
+    DISTRACTING,
+    FOCUS_JOIN,
+    PHONE_TYPES,
+    PRODUCTIVE,
+    GroupBy,
+    Stats,
+    app_key,
+    merge,
+)
 from ..story import week_facts, week_wrapped
 from . import API_PREFIX, ApiError
 from .ai import FactOut, get_llm
@@ -117,13 +127,16 @@ def day_summary(
 # crosstab), so a tab's charts add up to its totals, and they agree with Today and with each other (DT-59 checks).
 
 Tab = Literal["overview", "apps", "devices", "focus", "sleep", "food", "calendar"]
-SeriesKind = Literal["trend", "stacked", "bars", "donut", "treemap", "heatmap", "sankey", "scatter", "gauge"]
+SeriesKind = Literal["trend", "stacked", "bars", "donut", "treemap", "heatmap", "sankey", "scatter", "gauge", "leaderboard", "strip"]
 MAX_RANGE_DAYS = 92
 LIVE_CACHE_SECONDS = 60.0  # a range with today in it changes as time passes: worked out again this often
 CACHE_SIZE = 64
 TREEMAP_APPS = 8  # apps named inside each category; the rest are one "Other apps" box
 COMPARE_MIN_DAYS = 4  # whole days with data each side needs before a change is shown (half a range under 8 days)
 TOP_APP_BARS = 15
+LEADERS = 10  # apps on the leaderboard
+SPARK_DAYS = 7  # each leader's sparkline: the week up to the range's last day
+HANDOFF_LINKS = 12  # the most common switches between devices drawn in the Sankey
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 HOURS = [f"{hour:02d}" for hour in range(24)]
 MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "other"]
@@ -147,6 +160,22 @@ class Line(BaseModel):
     values: list[float | None] = Field(description="One per x label; null where there is no data (not zero).")
 
 
+class Change(BaseModel):
+    """One number against the same number of days just before the range (DT-34's week-over-week chips)."""
+
+    id: str
+    label: str
+    unit: str
+    now: float
+    before: float
+    delta: float = Field(description="now minus before, in the unit.")
+    change_pct: int | None = Field(description="The change as a percent of before; null when before is 0.")
+    direction: Literal["up", "down", "same"]
+    better: Literal["up", "down", "neutral"] = Field(
+        description="Which way is good: more focus, less late-night screen time; neutral for an app that is neither work nor a distraction.")
+    days: int = Field(description="Whole days with data on each side that were compared, at least.")
+
+
 class Item(BaseModel):
     name: str
     value: float
@@ -154,6 +183,9 @@ class Item(BaseModel):
     category: str | None = None
     share: float | None = Field(default=None, description="A percent that goes with the item (a block's on-plan share).")
     children: list[Item] | None = None
+    spark: list[float | None] | None = Field(default=None, description="leaderboard: minutes on each of the series' x days; "
+                                             "null on a day no device sent screen data.")
+    change: Change | None = Field(default=None, description="leaderboard: the day average against the days just before the range.")
 
 
 class Cell(BaseModel):
@@ -181,11 +213,13 @@ class Series(BaseModel):
     explain: str
     estimated: bool = False
     x: list[str] | None = Field(default=None, description="trend, stacked, bars and heatmap: the x labels.")
-    y: list[str] | None = Field(default=None, description="heatmap: the row labels.")
+    y: list[str] | None = Field(default=None, description="heatmap and strip: the row labels.")
     lines: list[Line] | None = Field(default=None, description="trend and stacked: one per line; bars: one.")
-    items: list[Item] | None = Field(default=None, description="donut, treemap and bars by name.")
-    cells: list[Cell] | None = Field(default=None, description="heatmap.")
+    items: list[Item] | None = Field(default=None, description="donut, treemap, leaderboard and bars by name.")
+    cells: list[Cell] | None = Field(default=None, description="heatmap; strip: 1 sent screen data that day, 0 paired but sent none, "
+                                     "no cell when not paired (or the day hasn't begun).")
     nodes: list[str] | None = Field(default=None, description="sankey.")
+    node_categories: list[str | None] | None = Field(default=None, description="sankey: each node's category key, in the nodes' order.")
     links: list[Link] | None = Field(default=None, description="sankey.")
     points: list[Point] | None = Field(default=None, description="scatter.")
     value: float | None = Field(default=None, description="gauge.")
@@ -199,21 +233,6 @@ class RangeInfo(BaseModel):
     last: date
     days: int
     label: str
-
-
-class Change(BaseModel):
-    """One number against the same number of days just before the range (DT-34's week-over-week chips)."""
-
-    id: str
-    label: str
-    unit: str
-    now: float
-    before: float
-    delta: float = Field(description="now minus before, in the unit.")
-    change_pct: int | None = Field(description="The change as a percent of before; null when before is 0.")
-    direction: Literal["up", "down", "same"]
-    better: Literal["up", "down"] = Field(description="Which way is good: more focus, less late-night screen time.")
-    days: int = Field(description="Whole days with data on each side that were compared, at least.")
 
 
 class InsightsTab(BaseModel):
@@ -269,8 +288,31 @@ def _rounded(value: float | None, digits: int = 0) -> float | int | None:
     return round(value) if digits == 0 else round(value, digits)
 
 
+def compare_days_needed(count: int) -> int:
+    """Whole days with data each side of a comparison needs: 4, or half a range under 8 days (rounded up)."""
+    return max(1, min(COMPARE_MIN_DAYS, -(-count // 2)))
+
+
+def better_for(category: str | None) -> Literal["up", "down", "neutral"]:
+    """Which way an app's time is better going: less for distractions, more for work and study."""
+    return "down" if category in DISTRACTING else "up" if category in PRODUCTIVE else "neutral"
+
+
+CATEGORY_NAMES = {"comms": "Chat and calls"}  # as the dashboard names them; the rest are the key, capitalized
+
+
 def _category_name(key: str) -> str:
-    return key.capitalize()
+    return CATEGORY_NAMES.get(key, key.capitalize())
+
+
+def make_change(change_id: str, label: str, unit: str, now: float, then: float, better: Literal["up", "down", "neutral"],
+                days: int) -> Change:
+    """A day average against the one before: the rule behind every change chip (the overview's and each app's)."""
+    delta = now - then
+    pct = round(100 * delta / then) if then else None
+    same = abs(delta) < 0.5 or pct == 0
+    return Change(id=change_id, label=label, unit=unit, now=round(now, 2), before=round(then, 2), delta=round(delta, 2),
+                  change_pct=pct, direction="same" if same else "up" if delta > 0 else "down", better=better, days=days)
 
 
 def distinct(labels: dict[str, str], taken: Iterable[str] = ()) -> dict[str, str]:
@@ -406,7 +448,7 @@ class TabBuilder:
         going would look like less, and so would a night: 11 pm to 3 am runs into the next day), and only when both
         sides have enough days with data to say anything: 4, or half a range shorter than 8 days."""
         count = self.span.days
-        needed = max(1, min(COMPARE_MIN_DAYS, -(-count // 2)))
+        needed = compare_days_needed(count)
         if sum(self.stats.day(day).over for day in self.days) < needed:
             return []  # not enough whole days here: nothing to compare, so the days before aren't worked out
         first = self.span.first - timedelta(days=count)
@@ -436,13 +478,8 @@ class TabBuilder:
             before_values = [value for value, whole in readings(before) if whole and value is not None]
             if len(now_values) < needed or len(before_values) < needed:
                 continue
-            now, then = sum(now_values) / len(now_values), sum(before_values) / len(before_values)
-            delta = now - then
-            pct = round(100 * delta / then) if then else None
-            same = abs(delta) < 0.5 or pct == 0
-            changes.append(Change(id=metric_id, label=label, unit=unit, now=round(now, 2), before=round(then, 2), delta=round(delta, 2),
-                                  change_pct=pct, direction="same" if same else "up" if delta > 0 else "down", better=better,
-                                  days=min(len(now_values), len(before_values))))
+            changes.append(make_change(metric_id, label, unit, sum(now_values) / len(now_values), sum(before_values) / len(before_values),
+                                       better, min(len(now_values), len(before_values))))
         return changes
 
     def top_apps(self, limit: int) -> list[dict[str, Any]]:
@@ -453,6 +490,116 @@ class TabBuilder:
                 main[app] = max(main.get(app, (seconds, category)), (seconds, category))
         return [{"app": item["key"], "minutes": item["minutes"], "category": main[item["key"]][1] if item["key"] in main else "other"}
                 for item in self.totals("app")["items"][:limit] if item["seconds"] > 0]
+
+    def whole_days_with_data(self, first: date, last: date) -> list[date]:
+        days = [first + timedelta(days=i) for i in range((last - first).days + 1)]
+        return [day for day in days if self.stats.day(day).over and self.stats.day(day).counted_devices_with_data]
+
+    def app_changes(self, apps: list[dict[str, Any]]) -> dict[str, Change]:
+        """Each app's minutes a day against the same number of days just before the range, over whole days with
+        screen data on each side (a day with data and none of the app is 0 for it), with overview's rule for how
+        many days that needs. Empty when either side has too few."""
+        count = self.span.days
+        needed = compare_days_needed(count)
+        now_days = self.whole_days_with_data(self.span.first, self.span.last)
+        if len(now_days) < needed:
+            return {}
+        before_first, before_last = self.span.first - timedelta(days=count), self.span.first - timedelta(days=1)
+        before_days = self.whole_days_with_data(before_first, before_last)
+        if len(before_days) < needed:
+            return {}
+        now_cells = self.crosstab("day", "app")["cells"]
+        before_cells = self.stats.crosstab(before_first, before_last, "day", "app")["cells"]
+
+        def average(cells: dict[str, dict[str, int]], days: list[date], app: str) -> float:
+            return sum(cells.get(day.isoformat(), {}).get(app, 0) for day in days) / len(days) / 60
+
+        return {
+            app["app"]: make_change(app["app"], f"{app['app']} a day", "minutes", average(now_cells, now_days, app["app"]),
+                                    average(before_cells, before_days, app["app"]), better_for(app["category"]),
+                                    min(len(now_days), len(before_days)))
+            for app in apps
+        }
+
+    def leaderboard(self) -> Series:
+        """The top apps with each one's week (a sparkline over the 7 days up to the range's last day) and its change
+        against the days before the range."""
+        top = self.top_apps(LEADERS)
+        first = self.span.last - timedelta(days=SPARK_DAYS - 1)
+        days = [first + timedelta(days=i) for i in range(SPARK_DAYS)]
+        # The range's own split has the week when the range covers it; a shorter range reads the days before too.
+        cells = (self.crosstab("day", "app") if first >= self.span.first else self.stats.crosstab(first, self.span.last, "day", "app"))["cells"]
+        seen = [self.stats.day(day).until > self.stats.day(day).start and bool(self.stats.day(day).counted_devices_with_data) for day in days]
+        changes = self.app_changes(top)
+        items = [
+            Item(name=app["app"], key=app["app"], category=app["category"], value=app["minutes"],
+                 spark=[minutes(cells.get(day.isoformat(), {}).get(app["app"], 0)) if known else None for day, known in zip(days, seen, strict=True)],
+                 change=changes.get(app["app"]))
+            for app in top
+        ]
+        return Series(kind="leaderboard", title="Top apps and sites", unit="minutes", estimated=self.totals("app")["estimated"],
+                      x=[day.isoformat() for day in days], items=items,
+                      explain=(f"The {LEADERS} apps and sites with the most time in the range, each with its last 7 days and its "
+                               "change against the days just before the range (a day on average, whole days only)."))
+
+    def handoffs(self) -> tuple[list[Metric], Series]:
+        """Moves between devices (Stats.handoffs) over the range, as a Sankey from what you left to what you took up."""
+        pairs: dict[tuple[str, str, str, str], int] = defaultdict(int)
+        counts: list[int] = []
+        for day in self.days:
+            found = self.stats.handoffs(day)
+            if found["value"] is None:
+                continue
+            counts.append(found["value"])
+            for pair in found["pairs"]:
+                pairs[(pair["from_device"], pair["from_category"], pair["to_device"], pair["to_category"])] += pair["count"]
+        ranked = sorted(pairs.items(), key=lambda kv: (-kv[1], kv[0]))[:HANDOFF_LINKS]
+
+        def side(device: str, category: str, then: bool) -> str:
+            return f"{'then ' if then else ''}{self.device(device)} · {_category_name(category)}"
+
+        nodes: list[str] = []
+        node_categories: list[str | None] = []
+        links: list[Link] = []
+        for (from_device, from_category, to_device, to_category), count in ranked:
+            source, target = side(from_device, from_category, False), side(to_device, to_category, True)
+            for name, category in ((source, from_category), (target, to_category)):
+                if name not in nodes:
+                    nodes.append(name)
+                    node_categories.append(category)
+            links.append(Link(source=source, target=target, value=count))
+        top = ranked[0][0] if ranked else None
+        metrics = [
+            Metric(id="handoffs", label="Device switches", value=sum(counts) if counts else None, unit="switches",
+                   explain="Moving from one device to another within 5 minutes, say from the computer to the phone."),
+            Metric(id="top_handoff", label="Most common switch",
+                   value=f"{side(top[0], top[1], False)}, {side(top[2], top[3], True)}" if top else None, unit="text",
+                   explain="The move between devices you made most often in the range."),
+        ]
+        series = Series(kind="sankey", title="Switching between devices", unit="switches",
+                        explain=(f"What you left on one device (left) and what you took up on another within 5 minutes (right). "
+                                 f"The {HANDOFF_LINKS} most common."),
+                        nodes=nodes, node_categories=node_categories, links=links)
+        return metrics, series
+
+    def sync_strip(self, devices: list[str]) -> Series:
+        """Each phone and computer, day by day: sent screen data (1), sent none although it was around (0: paired
+        then, or between two days it sent data), or not around (no cell). A day at 0 is why that device's lines
+        have a gap there: no data, not no use."""
+        begun = [self.stats.day(day).until > self.stats.day(day).start for day in self.days]
+        sent = [self.stats.day(day).counted_devices_with_data if on else set() for day, on in zip(self.days, begun, strict=True)]
+        cells: list[Cell] = []
+        for y, device in enumerate(devices):
+            with_data = [x for x, found in enumerate(sent) if device in found]
+            for x, day in enumerate(self.days):
+                if not begun[x]:
+                    continue
+                if device in sent[x]:
+                    cells.append(Cell(x=x, y=y, value=1))
+                elif device in self.stats.expected(day) or (with_data and with_data[0] < x < with_data[-1]):
+                    cells.append(Cell(x=x, y=y, value=0))
+        return Series(kind="strip", title="When each device sent data", unit="days", x=self.labels, y=[self.device(d) for d in devices],
+                      cells=cells, explain="A gap here is a day that device sent nothing, so its time that day is unknown, not zero.")
 
     def stacked(self, row: GroupBy, title: str, explain: str, name: Callable[[str], str] | None = None,
                 category_of: Callable[[str], str] | None = None) -> Series:
@@ -568,6 +715,7 @@ class TabBuilder:
             "switches": Series(kind="trend", title="App switches an hour", unit="switches per hour", x=self.labels,
                                explain="How often you jumped between apps, per hour of screen time.",
                                lines=[Line(name="Switches an hour", values=switches)]),
+            "leaderboard": self.leaderboard(),
         }
         return metrics, series
 
@@ -585,7 +733,12 @@ class TabBuilder:
         ]
         metrics.append(Metric(id="phone_share", label="On the phone", value=round(100 * phones / (phones + desks)) if phones + desks else None,
                               unit="percent", explain="The phones' share of phone and computer screen time together."))
+        handoff_metrics, handoff_series = self.handoffs()
+        metrics += handoff_metrics
         device_rows = [item["key"] for item in devices]
+        strip_rows = device_rows + sorted({device for day in self.days for device in self.stats.expected(day)} - set(device_rows))
+        metrics += [Metric(id=f"last_seen:{device}", label=self.device(device), value=None, unit="time",
+                           explain="When the hub last heard from it (UTC); filled in fresh for each answer.") for device in strip_rows]
         categories = {category: _category_name(category) for category in sorted({category for row in flow["cells"].values() for category in row})}
         nodes = distinct({device: self.device(device) for device in device_rows}, taken=categories.values())
         series = {
@@ -603,6 +756,8 @@ class TabBuilder:
                            nodes=[nodes[device] for device in device_rows] + list(categories.values()),
                            links=[Link(source=nodes[device], target=categories[category], value=minutes(seconds))
                                   for device in device_rows for category, seconds in sorted(flow["cells"].get(device, {}).items()) if seconds]),
+            "handoffs": handoff_series,
+            "sync": self.sync_strip(strip_rows),
         }
         return metrics, series
 
@@ -788,7 +943,7 @@ class TabBuilder:
 # The tabs' answers, kept per database, tab, range and time zone until the data changes (or, for a range that is
 # not over, for a minute): a page of charts is worked out once.
 _cache_guard = threading.Lock()
-_cache: OrderedDict[tuple[str, str, date, date, str], tuple[int, bool, float, InsightsTab]] = OrderedDict()
+_cache: OrderedDict[tuple[str, str, date, date, str], tuple[int, bool, float, BaseModel]] = OrderedDict()
 
 
 def build_tab(stats: Stats, conn: sqlite3.Connection, tab: str, span: RangeInfo, tz_name: str) -> InsightsTab:
@@ -801,7 +956,18 @@ def build_tab(stats: Stats, conn: sqlite3.Connection, tab: str, span: RangeInfo,
                        meta=Meta(**stats.meta(span.first, span.last, estimated)))
 
 
-def _cached(key: tuple[str, str, date, date, str], version: int) -> InsightsTab | None:
+def with_last_seen(result: InsightsTab, conn: sqlite3.Connection) -> InsightsTab:
+    """The devices tab's last_seen metrics as they are now: a device's last contact moves without its data changing
+    (so without the cache noticing), and a cached answer must not show an old time."""
+    if result.tab != "devices":
+        return result
+    seen = {row["device_id"]: row["last_seen"] for row in conn.execute("SELECT device_id, last_seen FROM devices")}
+    metrics = [metric.model_copy(update={"value": seen.get(metric.id.removeprefix("last_seen:"))}) if metric.id.startswith("last_seen:")
+               else metric for metric in result.metrics]
+    return result.model_copy(update={"metrics": metrics})
+
+
+def _cached(key: tuple[str, str, date, date, str], version: int) -> Any:
     """The kept answer, if nothing behind it changed: for a range not over yet (today in it, or days still to
     come), only while under a minute old, since the numbers move with the clock even when no data arrives."""
     with _cache_guard:  # one hold: an entry can't be evicted between finding it and marking it used
@@ -812,7 +978,7 @@ def _cached(key: tuple[str, str, date, date, str], version: int) -> InsightsTab 
         return hit[3]
 
 
-def _keep(key: tuple[str, str, date, date, str], version: int, live: bool, result: InsightsTab) -> None:
+def _keep(key: tuple[str, str, date, date, str], version: int, live: bool, result: BaseModel) -> None:
     with _cache_guard:
         _cache[key] = (version, live, monotonic(), result)
         _cache.move_to_end(key)
@@ -836,9 +1002,122 @@ def insights_tab(
         version = data_version(conn)
         hit = _cached(key, version)
         if hit is not None:
-            return hit.model_copy(update={"cached": True})
+            return with_last_seen(hit, conn).model_copy(update={"cached": True})
         stats = Stats(conn, zone, zone_name, now)
         result = build_tab(stats, conn, tab, chosen, zone_name)
+        live = not stats.day(chosen.last).over
+        fresh = with_last_seen(result, conn)
+    _keep(key, version, live, result)
+    return fresh
+
+
+# --- one app, for the Apps and Devices tab's detail (DT-55) ---------------------------------------------------------
+
+
+class LongestSession(BaseModel):
+    start: datetime
+    end: datetime
+    minutes: float
+    device_id: str
+    device: str = Field(description="The device's name.")
+
+
+class AppDetail(BaseModel):
+    app: str = Field(description="The app or site, as the tabs name it (Stats.totals by app).")
+    category: str | None = Field(description="The category holding most of its time; null when it had none in the range.")
+    tz: str
+    range: RangeInfo
+    in_progress: bool
+    metrics: list[Metric]
+    series: dict[str, Series]
+    longest: LongestSession | None = Field(description="Its longest stretch on one device (pieces under a minute apart joined).")
+    meta: Meta
+    cached: bool = False
+
+
+def build_app(stats: Stats, conn: sqlite3.Connection, app: str, span: RangeInfo, tz_name: str) -> AppDetail:
+    """One app's range: minutes each day (null on a day no device sent screen data), when in the day it is used,
+    on which devices, and its longest stretch. From the same pieces as the tabs, so its total is the treemap's."""
+    builder = TabBuilder(stats, conn, span)
+    daily: list[float | None] = []
+    by_hour: dict[str, int] = defaultdict(int)
+    by_device: dict[str, int] = defaultdict(int)
+    by_category: dict[str, int] = defaultdict(int)
+    per_device: dict[str, list[tuple[datetime, datetime]]] = defaultdict(list)
+    estimated = False
+    windows = [stats.day(day) for day in builder.days]
+    for window in windows:
+        if window.until <= window.start or not window.counted_devices_with_data:
+            daily.append(None)
+            continue
+        pieces = [piece for piece in window.pieces if app_key(piece) == app]
+        daily.append(minutes(sum(piece.seconds for piece in pieces)))
+        for piece in pieces:
+            estimated = estimated or piece.estimated
+            by_device[piece.device_id] += piece.seconds
+            by_category[piece.category or "other"] += piece.seconds
+            per_device[piece.device_id].append((piece.start, piece.end))
+            for hour, seconds in stats.split_by_hour(piece.start, piece.end):
+                by_hour[hour] += seconds
+    # Across the whole range, so a stretch over midnight (cut into two days' pieces) is one stretch.
+    longest: tuple[int, datetime, datetime, str] | None = None
+    for device, stretches in per_device.items():
+        for start, end in merge(stretches, join=FOCUS_JOIN):
+            seconds = round((end - start).total_seconds())
+            if longest is None or seconds > longest[0]:
+                longest = (seconds, start, end, device)
+    known = any(value is not None for value in daily)
+    total = sum(by_device.values())
+    used = [value for value in daily if value]
+    category = max(by_category.items(), key=lambda kv: (kv[1], kv[0]))[0] if by_category else None
+    devices = sorted(by_device.items(), key=lambda kv: (-kv[1], kv[0]))
+    metrics = [
+        Metric(id="total", label="In the range", value=minutes(total) if any(value is not None for value in daily) else None,
+               unit="minutes", explain="Its screen time in the range, every device added up.", estimated=estimated),
+        Metric(id="days_used", label="Days used", value=len(used) if any(value is not None for value in daily) else None,
+               unit="days", explain="Days with any time in it."),
+        Metric(id="a_day_used", label="A day, when used", value=_rounded(sum(used) / len(used), 2) if used else None,
+               unit="minutes", explain="Its time divided by the days it was used."),
+        Metric(id="longest", label="Longest stretch", value=minutes(longest[0]) if longest else None, unit="minutes",
+               explain="Its longest stretch on one device, with breaks under a minute joined."),
+    ]
+    series = {
+        "daily": Series(kind="bars", title="Each day", unit="minutes", x=builder.labels, lines=[Line(name=app, values=daily)],
+                        explain="Its minutes each day; a gap is a day no device sent screen data.", estimated=estimated),
+        "hours": Series(kind="bars", title="When in the day", unit="minutes", x=HOURS,
+                        lines=[Line(name=app, values=[minutes(by_hour.get(hour, 0)) if known else None for hour in HOURS])],
+                        explain="Its minutes by hour of the day, the whole range added up; unknown when no day had data.", estimated=estimated),
+        "devices": Series(kind="donut", title="On which devices", unit="minutes", estimated=estimated,
+                          explain="Its time on each device.",
+                          items=[Item(name=builder.device(device), key=device, value=minutes(seconds)) for device, seconds in devices]),
+    }
+    return AppDetail(
+        app=app, category=category, tz=tz_name, range=span, in_progress=any(w.until > w.start and not w.over for w in windows),
+        metrics=metrics, series=series, meta=Meta(**stats.meta(span.first, span.last, estimated)),
+        longest=LongestSession(start=longest[1], end=longest[2], minutes=minutes(longest[0]), device_id=longest[3],
+                               device=builder.device(longest[3])) if longest else None,
+    )
+
+
+@router.get("/insights/apps/detail", response_model=AppDetail, summary="One app or site over a range: each day, the hours, devices, longest stretch")
+def app_detail(
+    _: Reader,
+    database: Annotated[Database, Depends(get_database)],
+    app: Annotated[str, Query(min_length=1, max_length=300, description="The app or site as the Apps tab names it, e.g. YouTube or youtube.com")],
+    span: Annotated[str, Query(alias="range", description="today, 7d (1 to 92 days, today included) or YYYY-MM-DD..YYYY-MM-DD")] = "7d",
+    tz: Annotated[str | None, Query(description="IANA time zone, e.g. America/Toronto; default: the hub's")] = None,
+) -> AppDetail:
+    zone, zone_name = resolve_tz(tz)
+    now = current_time()
+    chosen = parse_range(span, now.astimezone(zone).date())
+    key = (str(database.path), f"app:{app}", chosen.first, chosen.last, zone_name)
+    with database.connect() as conn:
+        version = data_version(conn)
+        hit = _cached(key, version)
+        if hit is not None:
+            return hit.model_copy(update={"cached": True})
+        stats = Stats(conn, zone, zone_name, now)
+        result = build_app(stats, conn, app, chosen, zone_name)
         live = not stats.day(chosen.last).over
     _keep(key, version, live, result)
     return result

@@ -1,12 +1,13 @@
 // DT-34: Insights, patterns over time. A range picker (today, 7 days, 30 days, or any span up to 92 days) and four
-// tabs: Overview (this ticket), Apps and Devices (DT-55), Focus and Sleep (DT-56), Food and Calendar (DT-57). The
-// tab and the range live in the address (?tab=overview&range=7d), so a link or a reload opens the same view, and
-// switching tabs keeps the range.
+// tabs: Overview (DT-34), Apps and Devices (DT-55), Focus and Sleep (DT-56), Food and Calendar (DT-57). The tab, the
+// range and an open app's detail live in the address (?tab=apps&range=7d&app=YouTube), so a link or a reload opens
+// the same view, and switching tabs keeps the range.
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import ChartCard from "../components/ChartCard";
 import { useToday } from "../components/DayPicker";
 import Tabs from "../components/Tabs";
+import AppsDevicesTab from "./insights/AppsDevicesTab";
 import OverviewTab from "./insights/OverviewTab";
 import { EARLIEST, PRESETS, localZone, rangeProblem, spanOf, validRange } from "./insights/shared";
 
@@ -112,10 +113,13 @@ export default function Insights() {
   const tab = TABS.some((item) => item.id === asked) ? (asked as (typeof TABS)[number]["id"]) : "overview";
   const wanted = params.get("range") ?? DEFAULT_RANGE;
   const range = validRange(wanted, today) ? wanted : DEFAULT_RANGE;
-  const change = (key: "tab" | "range", value: string) =>
+  const app = tab === "apps" ? params.get("app") : null;
+  const change = (key: "tab" | "range" | "app", value: string | null) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
-      next.set(key, value);
+      if (value === null) next.delete(key);
+      else next.set(key, value);
+      if (key === "tab") next.delete("app"); // an app's detail belongs to the Apps tab
       return next;
     });
 
@@ -135,7 +139,14 @@ export default function Insights() {
         tabs={TABS.map((item) => ({
           id: item.id,
           label: item.label,
-          content: item.id === "overview" ? <OverviewTab range={range} tz={tz} today={today} /> : <ComingSoon label={item.label} />,
+          content:
+            item.id === "overview" ? (
+              <OverviewTab range={range} tz={tz} today={today} />
+            ) : item.id === "apps" ? (
+              <AppsDevicesTab range={range} tz={tz} today={today} app={app} onApp={(name) => change("app", name)} />
+            ) : (
+              <ComingSoon label={item.label} />
+            ),
         }))}
       />
     </div>

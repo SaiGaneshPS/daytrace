@@ -10,7 +10,7 @@
 // loading skeleton), follows the color scheme, resizes with its box and cleans up. Colors in an option may be
 // written as "var(--token)" (categoryStyle does): they are read again whenever the scheme changes, so a chart never
 // keeps the other theme's colors. Only the chart types and components below are bundled.
-import { BarChart, CustomChart, HeatmapChart, LineChart, PieChart, ScatterChart } from "echarts/charts";
+import { BarChart, CustomChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart } from "echarts/charts";
 import {
   AriaComponent,
   DatasetComponent,
@@ -28,7 +28,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMediaQuery, useReducedMotionPreference } from "./motion";
 
 echarts.use([
-  BarChart, CustomChart, HeatmapChart, LineChart, PieChart, ScatterChart,
+  BarChart, CustomChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart,
   AriaComponent, DatasetComponent, DataZoomInsideComponent, DataZoomSliderComponent, GridComponent, LegendComponent,
   MarkLineComponent, TooltipComponent, VisualMapComponent,
   CanvasRenderer,
@@ -67,8 +67,15 @@ export const CATEGORY_DECALS: Record<Category, Record<string, unknown>> = {
   other: { symbol: "none" },
 };
 
-function asCategory(category: string | null | undefined): Category {
+/** A category key the dashboard knows, or "other". */
+export function asCategory(category: string | null | undefined): Category {
   return (CATEGORIES as readonly string[]).includes(category ?? "") ? (category as Category) : "other";
+}
+
+/** Text made safe for a tooltip: ECharts shows a formatter's string as HTML, and names (apps, sites, devices) come
+ * from what devices send. */
+export function escapeHTML(text: string | number): string {
+  return echarts.format.encodeHTML(String(text));
 }
 
 /** A token's current value (it changes with the color scheme). */

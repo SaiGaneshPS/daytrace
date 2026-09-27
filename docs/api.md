@@ -468,6 +468,7 @@ days); anything else is `400`.
   for it in the range (missing, not zero). Counts that need no screen (meals, calendar events, nights) are 0 only
   on days the hub could have heard about: a device sent something for the day, or one was paired then. Before
   recording began, and on days still to come, they are null.
+- Categories are named as the dashboard names them (`comms` is "Chat and calls"; the rest are the key, capitalized).
 - A series has a `kind` and what that kind needs:
   - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
     device, also where that device sent nothing that day). A device's line has its `device_type`.
@@ -478,13 +479,25 @@ days); anything else is `400`.
     category's, gets the device id, as in `Galaxy phone (android-3)`. Lines and heatmap rows use the same names.
   - `scatter`: `points`, with `stats` (rho, p, n) and a `note` for a correlation.
   - `gauge`: `value` and `max`.
+  - `leaderboard`: `items` in order, each with its minutes (`value`), `spark` (minutes on each of the series' `x`
+    days, null on a day no device sent screen data) and `change` (as below, or null).
+  - `strip`: `x` days, `y` rows and `cells`: 1 sent screen data that day, 0 sent none although it was around (paired
+    then, or between two days it sent data), no cell when it wasn't.
 - The tabs and their series:
   - **overview:** screen time by device and day, categories, the focus score by day, weekday by hour, and phone
     against computer by day (null where no phone, or no computer, had data). Its metrics add the best day (most
     focused minutes, `best_day` and `best_day_focused`) and the toughest (most screen time after 11 pm,
     `toughest_day` and `toughest_day_late`), each with its reason in `explain`.
-  - **apps:** top apps and sites, categories with their apps (treemap), categories by day, app switches an hour.
-  - **devices:** each device's share, by day, by hour, and device to category (Sankey).
+  - **apps:** top apps and sites, categories with their apps (treemap), categories by day, app switches an hour,
+    and the leaderboard (DT-55): the top 10, each with its last 7 days up to the range's end, and its minutes a day
+    against the days just before the range (whole days with screen data, the overview's rule for how many), better
+    down for social, video and games, up for work and study, and `neutral` otherwise.
+  - **devices:** each device's share, by day, by hour, and device to category (Sankey). DT-55 adds switching between
+    devices (`handoffs`, a Sankey from what you left on one device to what you took up on another within 5 minutes:
+    `Galaxy phone · Social` to `then Desk PC · Chat and calls`, the 12 most common, with each node's category key in
+    `node_categories`; a switch over midnight counts for the day it lands in), when each device sent data (`sync`, a
+    strip), and the metrics `handoffs` (the count), `top_handoff` and `last_seen:<device>` (when the hub last heard
+    from it, UTC, or null: read fresh for every answer, a cached one too).
   - **focus:** the average score (gauge); focused, other work or study, and distracted time by day; switches by hour;
     late nights against the next day's focus (scatter, with Spearman's rho and "correlation, not cause").
   - **sleep:** each night, measured or estimated; bedtime and wake time (minutes after 18:00 the evening before);
@@ -493,7 +506,7 @@ days); anything else is `400`.
   - **calendar:** planned time by day and where it went (on plan, off plan, other screen time, no screen); the
     longest events with their on-plan share; weekday by hour.
 - The overview also has `changes`: each headline number against the same number of days just before, as
-  `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down, days }`, where `now`
+  `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down|neutral, days }`, where `now`
   and `before` are day averages. Only whole days count: today, still going, is left out, and so is a night
   (11 pm to 3 am) until 3 am. Each side needs 4 of them with data (half the range, rounded up, for a range
   under 8 days); otherwise that number has no change, and a range with too few whole days has none at all. `direction` is `same` when the change rounds to nothing, and `better`
@@ -505,6 +518,14 @@ days); anything else is `400`.
   paired, renamed or revoked, whichever process makes the change, so a seed run from the command line counts too.
   A range that is not over (today in it, or days still to come) is also worked out again after a minute.
 - On 14 seeded days every tab answers in about 0.3 s.
+
+`GET /insights/apps/detail?app=YouTube&range=7d&tz=America/Toronto` (DT-55, viewer) is one app or site over a
+range, as the Apps tab names it (a site by its domain): `{ app, category, tz, range, in_progress, metrics, series,
+longest, meta, cached }`. Metrics: `total`, `days_used`, `a_day_used` and `longest` (minutes). Series: `daily` (bars,
+null on a day no device sent screen data, 0 on one it wasn't used), `hours` (minutes by hour of the day, the range
+added up; null when no day had data) and `devices` (a donut). `longest` is its longest stretch on one device, breaks
+under a minute joined and over midnight too: `{ start, end, minutes, device_id, device }`, or null. It is cut from the same pieces as the tabs, so its total is
+the leaderboard's. An app with no time is 200 with zeros; `app` must be 1 to 300 characters (else 422).
 
 `GET /wrapped?week=2026-W38&tz=America/Toronto` (DT-41, viewer) is the week in review, Monday to Sunday. Without
 `week`, it is last week (the last whole one).

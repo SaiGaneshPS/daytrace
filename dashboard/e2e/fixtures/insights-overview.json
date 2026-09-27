@@ -216,6 +216,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -239,7 +240,9 @@
       "key": "work",
       "category": "work",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Social",
@@ -247,7 +250,9 @@
       "key": "social",
       "category": "social",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Video",
@@ -255,7 +260,9 @@
       "key": "video",
       "category": "video",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Study",
@@ -263,7 +270,9 @@
       "key": "study",
       "category": "study",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Games",
@@ -271,15 +280,19 @@
       "key": "games",
       "category": "games",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
-      "name": "Comms",
+      "name": "Chat and calls",
       "value": 352.02,
       "key": "comms",
       "category": "comms",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Other",
@@ -287,7 +300,9 @@
       "key": "other",
       "category": "other",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Health",
@@ -295,11 +310,14 @@
       "key": "health",
       "category": "health",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      }
     ],
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -357,6 +375,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -920,6 +939,7 @@
      }
     ],
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -999,6 +1019,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -1202,6 +1223,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -1225,7 +1247,9 @@
       "key": "work",
       "category": "work",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Social",
@@ -1233,7 +1257,9 @@
       "key": "social",
       "category": "social",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Video",
@@ -1241,7 +1267,9 @@
       "key": "video",
       "category": "video",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Study",
@@ -1249,7 +1277,9 @@
       "key": "study",
       "category": "study",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Games",
@@ -1257,15 +1287,19 @@
       "key": "games",
       "category": "games",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
-      "name": "Comms",
+      "name": "Chat and calls",
       "value": 152.57,
       "key": "comms",
       "category": "comms",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Other",
@@ -1273,7 +1307,9 @@
       "key": "other",
       "category": "other",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Health",
@@ -1281,11 +1317,14 @@
       "key": "health",
       "category": "health",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      }
     ],
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -1329,6 +1368,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -1842,6 +1882,7 @@
      }
     ],
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -1900,6 +1941,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -2146,6 +2188,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -2169,7 +2212,9 @@
       "key": "work",
       "category": "work",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Study",
@@ -2177,7 +2222,9 @@
       "key": "study",
       "category": "study",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Video",
@@ -2185,7 +2232,9 @@
       "key": "video",
       "category": "video",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Social",
@@ -2193,15 +2242,19 @@
       "key": "social",
       "category": "social",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
-      "name": "Comms",
+      "name": "Chat and calls",
       "value": 12.83,
       "key": "comms",
       "category": "comms",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Other",
@@ -2209,7 +2262,9 @@
       "key": "other",
       "category": "other",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      },
      {
       "name": "Health",
@@ -2217,11 +2272,14 @@
       "key": "health",
       "category": "health",
       "share": null,
-      "children": null
+      "children": null,
+      "spark": null,
+      "change": null
      }
     ],
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -2253,6 +2311,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -2366,6 +2425,7 @@
      }
     ],
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,
@@ -2406,6 +2466,7 @@
     "items": null,
     "cells": null,
     "nodes": null,
+    "node_categories": null,
     "links": null,
     "points": null,
     "value": null,

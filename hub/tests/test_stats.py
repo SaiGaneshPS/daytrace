@@ -297,6 +297,60 @@ def test_switches_per_hour(day: Database) -> None:
     assert result["value"] == round(3 / (TOTAL / 3600), 1) == 1.1
 
 
+def test_handoffs_follow_what_was_in_front_of_you(day: Database) -> None:
+    # At 09:50 the phone's Instagram starts during VS Code: the computer's work, then the phone's social. At 09:52
+    # Instagram ends and VS Code (still running) is in front again: back to the computer. At 23:10 Instagram starts
+    # during Minecraft; when Minecraft ends at 23:30 Instagram was in front already, so that is no move. WhatsApp at
+    # 12:00 comes two hours after the computer: coming back later is not a hand-off.
+    with stats(day) as s:
+        result = s.handoffs(DAY)
+    assert result["value"] == 3
+    assert result["pairs"] == [
+        {"from_device": "android-1", "from_category": "social", "to_device": "windows-1", "to_category": "work", "count": 1},
+        {"from_device": "windows-1", "from_category": "games", "to_device": "android-1", "to_category": "social", "count": 1},
+        {"from_device": "windows-1", "from_category": "work", "to_device": "android-1", "to_category": "social", "count": 1},
+    ]
+
+
+def test_a_handoff_is_within_5_minutes(db: Database) -> None:
+    add(db, "windows-1", "windows", [
+        span("window", at("09:00:00"), at("09:10:00"), **CODE),
+        span("window", at("10:00:00"), at("10:20:00"), **CODE),
+    ])
+    add(db, "android-1", "android", [
+        phone_app(at("09:15:00"), at("09:20:00"), "Instagram", "com.instagram.android", 1),  # 5 minutes after: counted
+        phone_app(at("10:25:01"), at("10:30:00"), "Instagram", "com.instagram.android", 2),  # 5 minutes and 1 second: not
+    ])
+    with stats(db) as s:
+        result = s.handoffs(DAY)
+    assert [(pair["from_device"], pair["to_device"], pair["count"]) for pair in result["pairs"]] == [("windows-1", "android-1", 1)]
+    # Back at the computer at 10:00 is 40 minutes after the phone: not a hand-off either.
+    assert result["value"] == 1
+    with stats(db) as s:
+        assert s.handoffs(NEXT)["value"] is None  # no screen data that day: unknown, not 0
+
+
+def test_a_switch_over_midnight_counts_for_the_day_it_lands_in(db: Database) -> None:
+    add(db, "windows-1", "windows", [span("window", at("23:30:00"), at("23:59:30"), **CODE)])
+    add(db, "android-1", "android", [phone_app(at("00:00:30", NEXT), at("00:10:00", NEXT), "Instagram", "com.instagram.android", 1)])
+    with stats(db) as s:
+        assert s.handoffs(DAY)["value"] == 0  # the phone came after midnight: not this day's
+        after = s.handoffs(NEXT)
+    assert after["value"] == 1
+    assert after["pairs"] == [{"from_device": "windows-1", "from_category": "work", "to_device": "android-1", "to_category": "social", "count": 1}]
+
+
+def test_the_foreground_is_the_piece_started_last(day: Database) -> None:
+    with stats(day) as s:
+        stretches = s.foreground(s.day(DAY).pieces)
+    shown = [(start.astimezone(ZONE).strftime("%H:%M"), end.astimezone(ZONE).strftime("%H:%M"), piece.app) for start, end, piece in stretches]
+    assert shown[:6] == [
+        ("09:00", "09:25", "Visual Studio Code"), ("09:25", "09:30", "youtube.com"), ("09:30", "09:40", "docs.google.com"),
+        ("09:40", "09:50", "Visual Studio Code"), ("09:50", "09:52", "Instagram"), ("09:52", "10:00", "Visual Studio Code"),
+    ]
+    assert shown[-2:] == [("22:30", "23:10", "Minecraft"), ("23:10", "23:40", "Instagram")]
+
+
 def test_pickups(day: Database) -> None:
     # Instagram at 09:50, WhatsApp at 12:00 (the 12:05:30 session follows a 30 s rest: the same pickup), and
     # Instagram at 23:10. The paired iPhone sent nothing: missing, not zero.

@@ -300,6 +300,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/insights/apps/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One app or site over a range: each day, the hours, devices, longest stretch */
+        get: operations["app_detail_api_v1_insights_apps_detail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/wrapped": {
         parameters: {
             query?: never;
@@ -635,6 +652,38 @@ export interface components {
              */
             events: number;
         };
+        /** AppDetail */
+        AppDetail: {
+            /**
+             * App
+             * @description The app or site, as the tabs name it (Stats.totals by app).
+             */
+            app: string;
+            /**
+             * Category
+             * @description The category holding most of its time; null when it had none in the range.
+             */
+            category: string | null;
+            /** Tz */
+            tz: string;
+            range: components["schemas"]["RangeInfo"];
+            /** In Progress */
+            in_progress: boolean;
+            /** Metrics */
+            metrics: components["schemas"]["Metric"][];
+            /** Series */
+            series: {
+                [key: string]: components["schemas"]["Series"];
+            };
+            /** @description Its longest stretch on one device (pieces under a minute apart joined). */
+            longest: components["schemas"]["LongestSession"] | null;
+            meta: components["schemas"]["Meta"];
+            /**
+             * Cached
+             * @default false
+             */
+            cached: boolean;
+        };
         /** AppMinutes */
         AppMinutes: {
             /** App */
@@ -781,10 +830,10 @@ export interface components {
             direction: "up" | "down" | "same";
             /**
              * Better
-             * @description Which way is good: more focus, less late-night screen time.
+             * @description Which way is good: more focus, less late-night screen time; neutral for an app that is neither work nor a distraction.
              * @enum {string}
              */
-            better: "up" | "down";
+            better: "up" | "down" | "neutral";
             /**
              * Days
              * @description Whole days with data on each side that were compared, at least.
@@ -1165,6 +1214,13 @@ export interface components {
             share?: number | null;
             /** Children */
             children?: components["schemas"]["Item"][] | null;
+            /**
+             * Spark
+             * @description leaderboard: minutes on each of the series' x days; null on a day no device sent screen data.
+             */
+            spark?: (number | null)[] | null;
+            /** @description leaderboard: the day average against the days just before the range. */
+            change?: components["schemas"]["Change"] | null;
         };
         /** Lane */
         Lane: {
@@ -1221,6 +1277,28 @@ export interface components {
             target: string;
             /** Value */
             value: number;
+        };
+        /** LongestSession */
+        LongestSession: {
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /** Minutes */
+            minutes: number;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Device
+             * @description The device's name.
+             */
+            device: string;
         };
         /** MealEntry */
         MealEntry: {
@@ -1545,7 +1623,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "trend" | "stacked" | "bars" | "donut" | "treemap" | "heatmap" | "sankey" | "scatter" | "gauge";
+            kind: "trend" | "stacked" | "bars" | "donut" | "treemap" | "heatmap" | "sankey" | "scatter" | "gauge" | "leaderboard" | "strip";
             /** Title */
             title: string;
             /** Unit */
@@ -1564,7 +1642,7 @@ export interface components {
             x?: string[] | null;
             /**
              * Y
-             * @description heatmap: the row labels.
+             * @description heatmap and strip: the row labels.
              */
             y?: string[] | null;
             /**
@@ -1574,12 +1652,12 @@ export interface components {
             lines?: components["schemas"]["Line"][] | null;
             /**
              * Items
-             * @description donut, treemap and bars by name.
+             * @description donut, treemap, leaderboard and bars by name.
              */
             items?: components["schemas"]["Item"][] | null;
             /**
              * Cells
-             * @description heatmap.
+             * @description heatmap; strip: 1 sent screen data that day, 0 paired but sent none, no cell when not paired (or the day hasn't begun).
              */
             cells?: components["schemas"]["Cell"][] | null;
             /**
@@ -1587,6 +1665,11 @@ export interface components {
              * @description sankey.
              */
             nodes?: string[] | null;
+            /**
+             * Node Categories
+             * @description sankey: each node's category key, in the nodes' order.
+             */
+            node_categories?: (string | null)[] | null;
             /**
              * Links
              * @description sankey.
@@ -2576,6 +2659,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InsightsTab"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    app_detail_api_v1_insights_apps_detail_get: {
+        parameters: {
+            query: {
+                /** @description The app or site as the Apps tab names it, e.g. YouTube or youtube.com */
+                app: string;
+                /** @description today, 7d (1 to 92 days, today included) or YYYY-MM-DD..YYYY-MM-DD */
+                range?: string;
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppDetail"];
                 };
             };
             /** @description Validation Error */

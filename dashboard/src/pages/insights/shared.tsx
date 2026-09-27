@@ -1,7 +1,7 @@
 // DT-34: what every Insights tab shares: the hub's answer for a tab and range, the range's words, and the
 // week-over-week chips. Every number is the hub's (GET /insights/{tab}); nothing is added up here.
 import { useEffect, useRef } from "react";
-import { useApi, usePolling } from "../../api/client";
+import { type Loaded, useApi, usePolling } from "../../api/client";
 import type { components } from "../../api/schema";
 import { dayMonth, daysBetween, isRealDay, shiftDay } from "../../components/DayPicker";
 import { formatMinutes } from "../../components/StatCard";
@@ -11,6 +11,9 @@ export type Series = components["schemas"]["Series"];
 export type Metric = components["schemas"]["Metric"];
 export type Change = components["schemas"]["Change"];
 export type HubTab = InsightsData["tab"];
+export type AppDetail = components["schemas"]["AppDetail"];
+export type Item = components["schemas"]["Item"];
+type WithMetrics = { metrics: Metric[] };
 
 /** The ranges the picker offers, and a custom one as "YYYY-MM-DD..YYYY-MM-DD". */
 export const PRESETS = [
@@ -51,39 +54,49 @@ export function validRange(range: string, today: string): boolean {
 }
 
 /** What a range covers, in words: "Last 7 days, so far" or "1 Sep to 10 Sep". */
-export function rangeWords(data: InsightsData): string {
+export function rangeWords(data: Pick<InsightsData, "range" | "in_progress">): string {
   const { first, last, label } = data.range;
   const words = /^\d{4}-/.test(label) ? (first === last ? dayMonth(first) : `${dayMonth(first)} to ${dayMonth(last)}`) : label;
   return data.in_progress ? `${words}, so far` : words;
 }
 
-export function metric(data: InsightsData, id: string): Metric | undefined {
+export function metric(data: WithMetrics, id: string): Metric | undefined {
   return data.metrics.find((item) => item.id === id);
 }
 
 /** A metric's number, or null (no data) and undefined (not in this answer). */
-export function valueOf(data: InsightsData | undefined, id: string): number | null | undefined {
+export function valueOf(data: WithMetrics | undefined, id: string): number | null | undefined {
   if (!data) return undefined;
   const found = metric(data, id);
   if (!found) return undefined;
   return typeof found.value === "number" ? found.value : null;
 }
 
-/** The hub's answer for one tab and range, shown only once it answers this tab and range (a slower answer for the
- * range picked before never shows under the new one). The hub works out which days a range is, so a new day asks
- * again ("7d" moves at midnight), and so does a minute passing while the range has today in it. */
-export function useInsights(tab: HubTab, range: string, tz: string, today: string) {
-  const loaded = useApi("/api/v1/insights/{tab}", { path: { tab }, query: { range, tz }, quiet: true });
+/** What both kinds of answer do once asked for: shown only once it answers these options, asked for again when the
+ * day changes ("7d" moves at midnight), and every minute while its range has today in it. */
+function useLive<T extends { in_progress: boolean }>(loaded: Loaded<T>, today: string, enabled = true) {
   const { reload } = loaded;
-  const data = loaded.current ? loaded.data : undefined;
+  const data = enabled && loaded.current ? loaded.data : undefined;
   const day = useRef(today);
   useEffect(() => {
     if (day.current === today) return;
     day.current = today;
-    reload();
-  }, [today, reload]);
+    if (enabled) reload();
+  }, [today, reload, enabled]);
   usePolling(data?.in_progress ? REFRESH_MS : null, reload);
   return { data, error: data ? undefined : loaded.error, reload };
+}
+
+/** The hub's answer for one tab and range (a slower answer for the range picked before never shows under the new
+ * one). The hub works out which days a range is. */
+export function useInsights(tab: HubTab, range: string, tz: string, today: string) {
+  return useLive(useApi("/api/v1/insights/{tab}", { path: { tab }, query: { range, tz }, quiet: true }), today);
+}
+
+/** One app's range (DT-55), for the detail drawer: asked for only while an app is open. */
+export function useAppDetail(app: string | null, range: string, tz: string, today: string) {
+  const loaded = useApi("/api/v1/insights/apps/detail", { query: { app: app ?? "", range, tz }, enabled: app !== null, quiet: true });
+  return useLive(loaded, today, app !== null);
 }
 
 /** An amount in a change's unit: "9h 25m", "64", "5 pickups". */
@@ -102,8 +115,9 @@ function Arrow({ up }: { up: boolean }) {
   );
 }
 
-/** A change against the days just before the range: an arrow and how much, green when it went the good way. Its
- * title has both averages ("Screen time a day: 9h 12m against 9h 25m in the 7 days before"). */
+/** A change against the days just before the range: an arrow and how much, green when it went the good way, red
+ * when not, and plain for an app that is neither work nor a distraction. Its title has both averages ("Screen time
+ * a day: 9h 12m against 9h 25m in the 7 days before"). */
 export function ChangeChip({ change, days }: { change: Change | undefined; days: number }) {
   if (!change) return null;
   const size = Math.abs(change.delta);
@@ -124,16 +138,18 @@ export function ChangeChip({ change, days }: { change: Change | undefined; days:
     );
   }
   const up = change.direction === "up";
+  const judged = change.better !== "neutral";
   const good = change.direction === change.better;
+  const tone = !judged ? "change-neutral" : good ? "change-good" : "change-bad";
   return (
-    <span className={`change ${good ? "change-good" : "change-bad"}`} title={`${change.label}: ${measure(change.unit, change.now)} against ${then} in ${against}`}>
+    <span className={`change ${tone}`} title={`${change.label}: ${measure(change.unit, change.now)} against ${then} in ${against}`}>
       <Arrow up={up} />
       <span>
         {up ? "up" : "down"} {amount}
       </span>
       <span className="visually-hidden">
         {" "}
-        on {against}, {good ? "a good change" : "a change the wrong way"}
+        on {against}{judged ? `, ${good ? "a good change" : "a change the wrong way"}` : ""}
       </span>
     </span>
   );

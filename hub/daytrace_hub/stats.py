@@ -127,6 +127,11 @@ def app_matches(needle: str, piece: Session) -> bool:
     return needle in words or (len(needle) >= 4 and any(w.startswith(needle) for w in words))
 
 
+def app_key(piece: Session) -> str:
+    """The name an app or site goes by in every split and tab (a site by its domain)."""
+    return piece.app or piece.app_id or "unknown"
+
+
 def is_meeting(session: Session) -> bool:
     text = f"{session.app or ''} {session.app_id or ''}".lower()
     return any(marker in text for marker in MEETING_MARKERS)
@@ -280,6 +285,11 @@ class Stats:
         paired = {d for d, device in self._devices.items() if device.expected(window.start, window.until)}
         return {d for d in paired | window.counted_devices_with_data if self._device_types.get(d) in types}
 
+    def expected(self, day: date) -> set[str]:
+        """The phones and computers that should have sent something for `day`: paired then, or that did send
+        screen data (so a day at none is a gap in their data)."""
+        return self._expected(self.day(day))
+
     def observed(self, day: date) -> bool:
         """Whether the hub could have heard about `day` at all: it has begun, and something was sent for it or a
         phone or computer was paired then. Counts that need no screen (meals, calendar events) are 0 only on such
@@ -427,7 +437,7 @@ class Stats:
 
     def _keys(self, piece: Session, group_by: str, day: date) -> list[tuple[str, int]]:
         if group_by == "app":
-            return [(piece.app or piece.app_id or "unknown", piece.seconds)]
+            return [(app_key(piece), piece.seconds)]
         if group_by == "category":
             return [(piece.category or "other", piece.seconds)]
         if group_by == "device":
@@ -630,6 +640,51 @@ class Stats:
         return {"value": round(switches / (screen / 3600), 1) if screen else None, "missing": False, "switches": switches,
                 "screen_seconds": screen, "by_hour": dict(sorted(by_hour.items())),
                 **self._meta(window.start, window.end, [window], any(s.estimated for s in window.pieces), unit="switches per hour")}
+
+    @staticmethod
+    def foreground(pieces: Sequence[Session]) -> list[tuple[datetime, datetime, Session]]:
+        """What was in front of you, moment by moment: of the pieces running at a time, the one started last (a
+        phone picked up during a long spell at the computer, then the computer again once the phone is put down).
+        Stretches of one piece are joined; a time with nothing running is a gap."""
+        ordered = sorted(pieces, key=lambda piece: (piece.start, piece.end))
+        points = sorted({piece.start for piece in ordered} | {piece.end for piece in ordered})
+        stretches: list[tuple[datetime, datetime, Session]] = []
+        running: list[Session] = []
+        taken = 0
+        for moment, following in itertools.pairwise(points):
+            while taken < len(ordered) and ordered[taken].start <= moment:
+                running.append(ordered[taken])
+                taken += 1
+            running = [piece for piece in running if piece.end > moment]
+            if not running:
+                continue
+            top = running[-1]  # started last: the list keeps the order they started in
+            if stretches and stretches[-1][2] is top and stretches[-1][1] == moment:
+                stretches[-1] = (stretches[-1][0], following, top)
+            else:
+                stretches.append((moment, following, top))
+        return stretches
+
+    def handoffs(self, day: date) -> dict[str, Any]:
+        """Moves from one device to another: what was in front of you (foreground()) changing device, with at most
+        5 minutes between (coming back to a screen later is not a hand-off, as with switches). Each is counted from
+        the device and category left to the device and category taken up ("the PC's work, then the phone's
+        social"), in `pairs`, most first. A switch counts for the day it lands in: the computer until 23:59, then
+        the phone at 00:01, is the next day's (the evening before is read for it). None when no device sent screen
+        data that day."""
+        window = self.day(day)
+        if not window.counted_devices_with_data:
+            return self._missing(window, unit="switches", pairs=[])
+        evening = [piece for piece in self.day(day - timedelta(days=1)).pieces if piece.end > window.start - SWITCH_GAP]
+        pairs: dict[tuple[str, str, str, str], int] = defaultdict(int)
+        for (_, left_at, left), (taken_at, _, taken) in itertools.pairwise(self.foreground([*evening, *window.pieces])):
+            if taken_at >= window.start and taken.device_id != left.device_id and taken_at - left_at <= SWITCH_GAP:
+                pairs[(left.device_id, left.category or "other", taken.device_id, taken.category or "other")] += 1
+        ranked = sorted(pairs.items(), key=lambda kv: (-kv[1], kv[0]))
+        return {"value": sum(pairs.values()), "missing": False,
+                "pairs": [{"from_device": a, "from_category": b, "to_device": c, "to_category": d, "count": n}
+                          for (a, b, c, d), n in ranked],
+                **self._meta(window.start, window.end, [window], any(s.estimated for s in window.pieces), unit="switches")}
 
     def pickups(self, day: date) -> dict[str, Any]:
         """How many times a phone was picked up: a phone app coming into use after the phone rested for a
