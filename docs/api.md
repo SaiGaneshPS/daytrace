@@ -22,7 +22,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Host names | To block DNS rebinding, the `Host` header must be an IP address, a single-label name (`localhost`, the PC name), a private name (`*.local`, `*.home.arpa`, `*.internal`, `*.lan`, `*.home`, `*.localdomain`) or, on shared-dev only, a Tailscale MagicDNS name (`*.ts.net`). Anything else gets `403 forbidden_host`. |
 | Forwarding | Never forward the personal port with a VS Code tunnel, `tailscale serve` / `funnel` or `ssh -L`: forwarded traffic arrives from `127.0.0.1` and would look like the hub computer itself. Tunnel and `ts.net` host names are refused on personal, but `ssh -L` to `localhost` is not. |
 | Local only | Endpoints marked *local only* (and dashboard reads without a token) accept requests only from the hub computer talking to itself: the client is `127.0.0.1` / `::1`, the `Host` is `localhost`, `127.0.0.1` or `[::1]`, an `Origin` (when sent) is a loopback origin, and `Sec-Fetch-Site` is not `cross-site`. So open the dashboard at `http://localhost:<port>` on the hub computer. Web pages from other sites, and DNS rebinding through LAN names, get `403 local_only`. |
-| Accuracy | Every response that feeds a chart or a number on screen includes `meta`: `{ "unit", "range": { "start", "end", "tz" }, "source": "real" \| "seed" \| "mixed", "estimated": true \| false }`. |
+| Accuracy | Every response that feeds a chart or a number on screen includes `meta`: `{ "unit", "range": { "start", "end", "tz" }, "source": "real" \| "seed" \| "mixed", "estimated": true \| false }`: the timeline, the day summary, every Insights tab, one app's detail, Wrapped, streaks, goals, achievements, the day's story, and an answer to a question (the days its tools read; null when none was read) (DT-59's `test_reconciliation.py` checks each, and that every split of the numbers adds up to the same totals). `unit` is the headline numbers' unit (minutes, days, badges), null when each number has its own (the goals, the story's facts). A range read from the evening before (a night's bedtime, Screens down) starts there. `estimated` is true when a number behind the answer was inferred: a streak's current and best runs count, not only the days listed. |
 
 ### Errors
 
@@ -430,7 +430,8 @@ engine, so the dashboard never works one out itself:
   "pickups": 3, "switches_per_hour": 2.3,
   "sleep_minutes": 447.0, "sleep_estimated": true, "steps": 8412,
   "top_apps": [ { "app": "Minecraft", "category": "games", "minutes": 60.0 } ],
-  "screen_estimated": false, "estimated": true }
+  "screen_estimated": false, "estimated": true,
+  "meta": { "unit": "minutes", "range": { "...": "the day" }, "source": "seed", "estimated": true } }
 ```
 
 - `screen_minutes` is the timeline's total (per device, added up); `phone_minutes` and `computer_minutes` add up to it.
@@ -581,8 +582,12 @@ counted.
     "current": 3, "best": 5, "today": "met", "value": 384.6, "remaining": null,
     "counted": ["2026-09-23", "2026-09-24", "2026-09-25"],
     "best_dates": ["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21"],
-    "days": [ { "date": "2026-09-22", "status": "missed", "value": 140.0 }, "..." ] } ] }
+    "days": [ { "date": "2026-09-22", "status": "missed", "value": 140.0, "estimated": false }, "..." ], "estimated": false } ],
+  "meta": { "unit": "days", "range": { "...": "the days listed" }, "source": "seed", "estimated": false } }
 ```
+
+- A day's `estimated` is true when its reading was partly inferred (a bedtime from a night guessed from the phone,
+  minutes from an app whose close was never seen), and a streak's when any listed day's was (DT-59).
 
 - The streaks: **Focus flame** (the focus target, in focused minutes), **Screens down** (15 minutes or less on the
   phone after 11 pm the night before), **Logged it** (a meal logged), **Balanced** (the social cap) and **Synced**
@@ -609,7 +614,8 @@ goal is `404`.
 { "tz": "America/Toronto", "date": "2026-09-25", "goals": [
   { "id": "social_cap", "label": "Social apps", "rule": "60 minutes or less in social apps in a day",
     "explain": "...", "kind": "at_most", "unit": "minutes", "target": 60.0, "default": 60, "min": 5.0, "max": 600.0,
-    "today": { "value": 17.98, "status": "at_risk", "progress": 30 } } ] }
+    "today": { "value": 17.98, "status": "at_risk", "progress": 30, "estimated": false } } ],
+  "meta": { "unit": "each goal's own", "range": { "...": "today" }, "source": "seed", "estimated": false } }
 ```
 
 - `focus_target` (focused minutes, at least; 10 to 720, default 120), `social_cap` (social minutes, at most; 5 to
@@ -624,7 +630,8 @@ goal is `404`.
 { "tz": "America/Toronto", "unlocked": 4, "achievements": [
   { "id": "streak_7", "name": "One week strong", "rule": "Any streak reached 7 days.", "unlocked": true,
     "earned_on": "2026-09-18", "unlocked_at": "2026-09-25T21:00:00Z", "dates": ["2026-09-12", "...", "2026-09-18"],
-    "progress": { "value": 7, "target": 7, "unit": "days" } } ] }
+    "progress": { "value": 7, "target": 7, "unit": "days" } } ],
+  "meta": { "unit": "badges", "range": { "...": "the history" }, "source": "seed", "estimated": false } }
 ```
 
 - The badges: first sync, a full set (a Windows PC, a Mac, an Android phone and an iPhone all sent data), 7-day and

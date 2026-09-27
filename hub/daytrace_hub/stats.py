@@ -35,7 +35,7 @@ from typing import Any, Literal
 
 from scipy import stats as scipy_stats
 
-from .api.timeline import DETAIL_ONLY_TYPES, day_window, minutes, union_seconds
+from .api.timeline import DETAIL_ONLY_TYPES, day_window, minutes, source_of, union_seconds
 from .categories import Categorizer
 from .db import utc_text
 from .sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
@@ -306,17 +306,17 @@ class Stats:
         return any(window.overlaps(event, window.start, window.until) for event in window.events) or bool(self._expected(window))
 
     def _meta(self, start: datetime, end: datetime, windows: Sequence[Window], estimated: bool,
-              unit: str = "minutes") -> dict[str, Any]:
+              unit: str | None = "minutes") -> dict[str, Any]:
         sources = {e.source for w in windows for e in w.events if w.overlaps(e, w.start, w.until)}
         return {
             "unit": unit,
             "range": {"start": start.astimezone(self.tz).isoformat(), "end": end.astimezone(self.tz).isoformat(),
                       "tz": self.tz_name},
-            "source": "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real",
+            "source": source_of(sources),
             "estimated": estimated,
         }
 
-    def meta(self, first: date, last: date, estimated: bool, unit: str = "minutes") -> dict[str, Any]:
+    def meta(self, first: date, last: date, estimated: bool, unit: str | None = "minutes") -> dict[str, Any]:
         """The `meta` (unit, range, source, estimated) for the local days `first` to `last`."""
         windows = [self.day(day) for day in self._days(first, last)]
         return self._meta(windows[0].start, windows[-1].end, windows, estimated, unit)
@@ -569,6 +569,12 @@ class Stats:
         return {"value": minutes(seconds), "seconds": seconds, "missing": False,
                 **self._meta(window.start, window.end, [window], False)}
 
+    def day_estimated(self, day: date) -> bool:
+        """Whether a day's numbers were partly inferred: screen time from an app whose close was never seen, or last
+        night's sleep guessed from the phone (no health app data)."""
+        night = self.sleep_estimate(day)
+        return bool(self.totals(day)["estimated"] or (night["value"] is not None and not night.get("measured", False)))
+
     def steps(self, day: date) -> int | None:
         """The day's steps: per device, the step counts that started on `day` added up (each span once); the largest
         device total wins, since two phones syncing one health account send the same steps twice. None without any."""
@@ -588,11 +594,17 @@ class Stats:
 
     # --- focus -----------------------------------------------------------------------------------------------
 
+    @staticmethod
+    def _focus_pieces(window: Window) -> tuple[list[Session], list[Session]]:
+        """What focus is made of: work and study on any device, and the phone distractions that split it."""
+        work = [s for s in window.pieces if s.category in PRODUCTIVE]
+        distractions = [s for s in window.pieces if window.type_of(s) in PHONE_TYPES and s.category in DISTRACTING]
+        return work, distractions
+
     def _focus(self, window: Window) -> tuple[int, list[dict[str, Any]]]:
-        work = merge((s.start, s.end) for s in window.pieces if s.category in PRODUCTIVE)
-        distractions = merge(
-            (s.start, s.end) for s in window.pieces if window.type_of(s) in PHONE_TYPES and s.category in DISTRACTING
-        )
+        work_pieces, distraction_pieces = self._focus_pieces(window)
+        work = merge((s.start, s.end) for s in work_pieces)
+        distractions = merge((s.start, s.end) for s in distraction_pieces)
         kept = subtract_intervals(work, distractions)
         focused = 0
         blocks: list[dict[str, Any]] = []
@@ -618,8 +630,10 @@ class Stats:
         if not window.counted_devices_with_data:
             return self._missing(window, blocks=[])
         focused, blocks = self._focus(window)
+        work, distractions = self._focus_pieces(window)
+        # Estimated only by what focus is made of: a phone map with no close seen doesn't make focused time a guess.
         return {"value": minutes(focused), "seconds": focused, "missing": False, "in_progress": not window.over,
-                "blocks": blocks, **self._meta(window.start, window.end, [window], any(s.estimated for s in window.pieces))}
+                "blocks": blocks, **self._meta(window.start, window.end, [window], any(s.estimated for s in [*work, *distractions]))}
 
     def focus_score(self, day: date) -> dict[str, Any]:
         """How much of the day's work-or-distraction time was deep focus, from 0 to 100.

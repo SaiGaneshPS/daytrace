@@ -561,6 +561,7 @@ export interface components {
             unlocked: number;
             /** Achievements */
             achievements: components["schemas"]["Achievement"][];
+            meta: components["schemas"]["Meta"];
         };
         /** AiStatus */
         AiStatus: {
@@ -617,6 +618,8 @@ export interface components {
              * @description Why the facts are shown instead of an answer.
              */
             reason: string | null;
+            /** @description The days the answer's tools read (their range, source, and whether any was inferred); null when none was read. */
+            meta: components["schemas"]["Meta"] | null;
         };
         /** AppCategory */
         AppCategory: {
@@ -961,6 +964,7 @@ export interface components {
              * @description True when any of this was inferred (an iPhone app without a close, a guessed night).
              */
             estimated: boolean;
+            meta: components["schemas"]["Meta"];
         };
         /** DeleteAll */
         DeleteAll: {
@@ -1088,6 +1092,7 @@ export interface components {
             date: string;
             /** Goals */
             goals: components["schemas"]["Goal"][];
+            meta: components["schemas"]["Meta"];
         };
         /** GoalTarget */
         GoalTarget: {
@@ -1114,6 +1119,12 @@ export interface components {
              * @description 0 to 100: toward a target, or how much of a limit is used.
              */
             progress: number | null;
+            /**
+             * Estimated
+             * @description Today's reading was partly inferred (last night guessed from the phone).
+             * @default false
+             */
+            estimated: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1316,21 +1327,28 @@ export interface components {
             /** Device Id */
             device_id: string;
         };
-        /** Meta */
+        /**
+         * Meta
+         * @description What every answer about a range of time says about its numbers (DT-59 checks each carries it).
+         */
         Meta: {
             /**
              * Unit
+             * @description The unit of the answer's headline numbers (minutes, days, badges); null when they differ (the goals), and each metric, series or goal still states its own.
              * @default minutes
-             * @constant
              */
-            unit: "minutes";
+            unit: string | null;
             range: components["schemas"]["TimeRange"];
             /**
              * Source
+             * @description Your devices' data, the demo seed's, or both.
              * @enum {string}
              */
             source: "real" | "seed" | "mixed";
-            /** Estimated */
+            /**
+             * Estimated
+             * @description True when some of it was inferred (an app with no close seen, a night guessed from the phone).
+             */
             estimated: boolean;
         };
         /** Metric */
@@ -1777,6 +1795,7 @@ export interface components {
              * @description True while the day is not over: the story is of the day so far.
              */
             in_progress: boolean;
+            meta: components["schemas"]["Meta"];
         };
         /** Streak */
         Streak: {
@@ -1839,6 +1858,12 @@ export interface components {
              * @description The last days, oldest first, today last.
              */
             days: components["schemas"]["StreakDay"][];
+            /**
+             * Estimated
+             * @description Some of the days behind its numbers (the current run, the best, the days listed) were inferred.
+             * @default false
+             */
+            estimated: boolean;
         };
         /** StreakDay */
         StreakDay: {
@@ -1857,6 +1882,12 @@ export interface components {
              * @description The day's reading (minutes, meals, devices); null without data.
              */
             value: number | null;
+            /**
+             * Estimated
+             * @description The reading was partly inferred (a night guessed from the phone).
+             * @default false
+             */
+            estimated: boolean;
         };
         /** StreakList */
         StreakList: {
@@ -1876,6 +1907,7 @@ export interface components {
             since: string;
             /** Streaks */
             streaks: components["schemas"]["Streak"][];
+            meta: components["schemas"]["Meta"];
         };
         /** TimeRange */
         TimeRange: {
