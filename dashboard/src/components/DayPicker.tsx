@@ -39,6 +39,7 @@ function Chevron({ direction }: { direction: "left" | "right" }) {
 export default function DayPicker({ day, today, onChange }: { day: string; today: string; onChange: (day: string) => void }) {
   return (
     <div className="day-picker">
+      <div className="day-step">
       <button type="button" className="icon-button" aria-label="Previous day" onClick={() => onChange(shiftDay(day, -1))}>
         <Chevron direction="left" />
       </button>
@@ -59,6 +60,7 @@ export default function DayPicker({ day, today, onChange }: { day: string; today
       >
         <Chevron direction="right" />
       </button>
+      </div>
       {day !== today && (
         <button type="button" className="button button-ghost" onClick={() => onChange(today)}>
           Today
