@@ -1197,6 +1197,11 @@ export interface components {
              * @description The addresses the hub listens on right now (empty in tests).
              */
             listening: string[];
+            /**
+             * Guarded
+             * @description Whether the socket guard is on: nothing in the hub process can connect to the internet, whatever code asks (a real hub always; not in tests).
+             */
+            guarded: boolean;
         };
         /**
          * Nudge

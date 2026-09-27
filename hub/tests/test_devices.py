@@ -146,8 +146,9 @@ def test_other_sites_cannot_act_as_the_hub_computer(client: TestClient, headers:
     [
         {},
         {"origin": "http://localhost:8765", "sec-fetch-site": "same-origin"},
-        {"origin": "http://localhost:5173", "sec-fetch-site": "same-site"},  # the Vite dev server
-        {"origin": "http://127.0.0.1:8765"},
+        # The Vite dev server's page: its proxy sends the hub's own origin (DT-45), from this computer.
+        {"origin": "http://localhost:8765", "sec-fetch-site": "same-site"},
+        {"origin": "http://127.0.0.1:8765"},  # the same hub under another loopback name
         {"host": "127.0.0.1:8765"},
         {"host": "[::1]:8765"},
         {"sec-fetch-site": "none"},  # typed into the address bar

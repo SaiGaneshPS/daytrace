@@ -55,6 +55,13 @@ export default defineConfig({
         target: hub,
         changeOrigin: true,
         bypass: (request) => (fromThisComputer(request.socket?.remoteAddress) ? undefined : false),
+        // The hub refuses requests from other sites' pages (DT-45): through the proxy, the dev server's page is the
+        // hub's own, so it gets the hub's own origin.
+        configure: (proxy) => {
+          proxy.on("proxyReq", (proxied) => {
+            if (proxied.getHeader("origin")) proxied.setHeader("origin", new URL(hub).origin);
+          });
+        },
       },
     },
   },

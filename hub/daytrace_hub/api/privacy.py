@@ -170,6 +170,8 @@ class NetworkStatus(BaseModel):
                                                "profile doesn't serve, a Host name that could be DNS rebinding, or "
                                                "another web site's page.")
     listening: list[str] = Field(description="The addresses the hub listens on right now (empty in tests).")
+    guarded: bool = Field(description="Whether the socket guard is on: nothing in the hub process can connect to the "
+                                      "internet, whatever code asks (a real hub always; not in tests).")
 
 
 @router.get("/privacy/network", response_model=NetworkStatus, summary="Every connection since the hub started, by network")
@@ -179,5 +181,5 @@ def network_status(_: Reader) -> NetworkStatus:
     return NetworkStatus(
         since=found["since"], internet_connections=outgoing.internet + incoming.internet, outgoing=outgoing,
         blocked=Blocked(count=found["blocked"]["count"], destinations=[BlockedDestination(**entry) for entry in found["blocked"]["destinations"]]),
-        incoming=incoming, refused=NetworkCounts(**found["refused"]), listening=found["listening"],
+        incoming=incoming, refused=NetworkCounts(**found["refused"]), listening=found["listening"], guarded=found["guarded"],
     )

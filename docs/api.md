@@ -18,7 +18,7 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Times | ISO 8601 with an offset, for example `2026-09-25T14:03:10-04:00`. Seconds and up to 9 fractional digits are optional, `T` and `Z` may be lowercase. Times without an offset, Unix numbers and impossible dates are rejected. |
 | Days | `YYYY-MM-DD`, interpreted in the time zone given by `tz` (an IANA name such as `America/Toronto`). Default: the hub computer's time zone. |
 | Auth | `Authorization: Bearer <token>`. Devices get a token when they pair (DT-12); the dashboard on phones pairs as a `viewer`. |
-| Networks | The hub listens only on this computer (`127.0.0.1`, `::1`) and the addresses phones use (the LAN adapter's, not a VPN's or a virtual machine's; the tailnet's only for shared-dev), never on a public address or every interface, and follows them as Wi-Fi and DHCP change (DT-45). Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, and `fc00::/7`, `fe80::/10` for IPv6-mapped peers). On Wi-Fi you do not trust (venue, cafe), set `DAYTRACE_LAN_NETWORKS` to your own subnet, for example `192.168.1.0/24`, or stop the personal profile. Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. A request from another web site's page (an `Origin` that isn't the hub's own, a browser extension's, or the dev server's on this computer) gets `403 forbidden_origin`; no CORS headers are ever sent. HTTP and WebSocket are checked the same way. |
+| Networks | The hub listens only on this computer (`127.0.0.1`, `::1`) and the addresses phones use (the LAN adapter's, not a VPN's or a virtual machine's; the tailnet's only for shared-dev), never on a public address or every interface, and follows them as Wi-Fi and DHCP change (DT-45). Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, and `fc00::/7`, `fe80::/10` for IPv6-mapped peers). On Wi-Fi you do not trust (venue, cafe), set `DAYTRACE_LAN_NETWORKS` to your own subnet, for example `192.168.1.0/24`, or stop the personal profile. Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. A request from another web page (an `Origin` that isn't the hub's own or a browser extension's, including another page on this computer, `null`, or one that doesn't parse) gets `403 forbidden_origin`. The dashboard's dev server sends the hub's own origin through its proxy. No CORS headers are ever sent. HTTP and WebSocket are checked the same way. |
 | Host names | To block DNS rebinding, the `Host` header must be an IP address, a single-label name (`localhost`, the PC name), a private name (`*.local`, `*.home.arpa`, `*.internal`, `*.lan`, `*.home`, `*.localdomain`) or, on shared-dev only, a Tailscale MagicDNS name (`*.ts.net`). Anything else gets `403 forbidden_host`. |
 | Forwarding | Never forward the personal port with a VS Code tunnel, `tailscale serve` / `funnel` or `ssh -L`: forwarded traffic arrives from `127.0.0.1` and would look like the hub computer itself. Tunnel and `ts.net` host names are refused on personal, but `ssh -L` to `localhost` is not. |
 | Local only | Endpoints marked *local only* (and dashboard reads without a token) accept requests only from the hub computer talking to itself: the client is `127.0.0.1` / `::1`, the `Host` is `localhost`, `127.0.0.1` or `[::1]`, an `Origin` (when sent) is a loopback origin, and `Sec-Fetch-Site` is not `cross-site`. So open the dashboard at `http://localhost:<port>` on the hub computer. Web pages from other sites, and DNS rebinding through LAN names, get `403 local_only`. |
@@ -627,11 +627,14 @@ name or id, or a site (docs/privacy.md has the rules).
   "blocked": { "count": 1, "destinations": [ { "host": "8.8.8.8", "port": 1234, "count": 1, "last": "..." } ] },
   "incoming": { "localhost": 120, "lan": 44, "tailscale": 0, "internet": 0 },
   "refused": { "localhost": 0, "lan": 0, "tailscale": 0, "internet": 3 },
-  "listening": ["127.0.0.1:8767", "[::1]:8767", "192.168.2.179:8767"] }
+  "listening": ["127.0.0.1:8767", "[::1]:8767", "192.168.2.179:8767"], "guarded": true }
 ```
 
-  - `outgoing` counts requests to the local model, which is the only thing the hub reaches out to, through its
-    one local-only transport. `blocked` counts the requests it refused, listing the first 20 destinations.
+  - `outgoing` counts connections to the local model, the only thing the hub reaches out to, by the address
+    each one really went to.
+  - `blocked` counts every attempt refused, listing the first 20 destinations. That includes the model transport's
+    refusals and the socket guard's: with `guarded`, which is on in every real hub, nothing in the hub process can
+    open a connection to the internet, whatever code asks.
   - `incoming` counts requests served. `refused` counts requests turned away: from a network the profile doesn't
     serve, with a Host name that could be DNS rebinding, or from another site's page.
   - `internet_connections` is outgoing plus incoming internet, and is always 0. `listening` is where the hub

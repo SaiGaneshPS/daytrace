@@ -174,11 +174,13 @@ def checked_addresses(host: str, port: int, networks: Iterable[IPNetwork], resol
 
 
 class LocalOnlyBackend(httpcore.SyncBackend):
-    """Opens connections only to checked addresses (see the module docstring)."""
+    """Opens connections only to checked addresses (see the module docstring). Each connection it opens is written
+    in the network ledger by where it went (the address it really connected to), and each name it refuses too."""
 
-    def __init__(self, networks: Iterable[IPNetwork], resolve: Resolver = system_resolver) -> None:
+    def __init__(self, networks: Iterable[IPNetwork], resolve: Resolver = system_resolver, ledger: NetworkLedger = LEDGER) -> None:
         self._networks = tuple(networks)
         self._resolve = resolve
+        self._ledger = ledger
 
     def connect_tcp(
         self,
@@ -189,11 +191,19 @@ class LocalOnlyBackend(httpcore.SyncBackend):
         socket_options: Iterable[Any] | None = None,
     ) -> httpcore.NetworkStream:
         error: Exception | None = None
-        for address in checked_addresses(host, port, self._networks, self._resolve):
+        try:
+            addresses = checked_addresses(host, port, self._networks, self._resolve)
+        except LLMRefused:
+            self._ledger.block(host, port)
+            raise
+        for address in addresses:
             try:
-                return super().connect_tcp(address, port, timeout, local_address, socket_options)  # type: ignore[arg-type]
+                stream = super().connect_tcp(address, port, timeout, local_address, socket_options)  # type: ignore[arg-type]
             except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:  # e.g. ::1 first, server on IPv4 only
                 error = exc
+                continue
+            self._ledger.connected(network_of(address))
+            return stream
         raise error  # type: ignore[misc]  # checked_addresses never returns an empty list
 
     def connect_unix_socket(self, *_: Any, **__: Any) -> httpcore.NetworkStream:
@@ -202,8 +212,8 @@ class LocalOnlyBackend(httpcore.SyncBackend):
 
 class LocalOnlyTransport(httpx.BaseTransport):
     """The model guard as an httpx transport. `inner` is for tests (a fake server); by default it is httpx's own
-    transport connecting through `LocalOnlyBackend`. Every request it lets through, and every one it refuses, is
-    written in the network ledger (DT-45) by the kind of network it went to."""
+    transport connecting through `LocalOnlyBackend`, which writes each connection in the network ledger (DT-45).
+    A literal address refused here is written as blocked."""
 
     def __init__(
         self,
@@ -213,34 +223,24 @@ class LocalOnlyTransport(httpx.BaseTransport):
         ledger: NetworkLedger = LEDGER,
     ) -> None:
         self._networks = tuple(networks)
-        self._resolve = resolve
         self._ledger = ledger
         if inner is None:
             inner = httpx.HTTPTransport()
             pool = getattr(inner, "_pool", None)
             if pool is None or not hasattr(pool, "_network_backend"):
                 raise RuntimeError("this httpx version hides its connection pool, so the model guard can't be installed")
-            pool._network_backend = LocalOnlyBackend(self._networks, resolve)
+            pool._network_backend = LocalOnlyBackend(self._networks, resolve, ledger)
         self._inner = inner
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
-        port = request.url.port or (443 if request.url.scheme == "https" else 80)
-        try:
-            if parse_ip(host) is not None:
-                if not address_allowed(host, self._networks):
-                    raise _refused(host)  # clear and immediate
-                where = network_of(host)
-            else:  # the backend checks the name again as it connects; this lookup only says where it goes
-                where = network_of(checked_addresses(host, port, self._networks, self._resolve)[0])
-            for name in list(request.headers.keys()):
-                if name.lower() not in SENT_HEADERS:
-                    del request.headers[name]
-            self._ledger.connected(where)
-            return self._inner.handle_request(request)
-        except LLMRefused:
-            self._ledger.block(host, port)
-            raise
+        if parse_ip(host) is not None and not address_allowed(host, self._networks):
+            self._ledger.block(host, request.url.port or (443 if request.url.scheme == "https" else 80))
+            raise _refused(host)  # clear and immediate; names are checked when connecting
+        for name in list(request.headers.keys()):
+            if name.lower() not in SENT_HEADERS:
+                del request.headers[name]
+        return self._inner.handle_request(request)
 
     def close(self) -> None:
         self._inner.close()

@@ -19,7 +19,7 @@ from zeroconf import IPVersion, ServiceInfo
 from zeroconf.asyncio import AsyncZeroconf
 
 from . import __version__
-from .config import TAILSCALE_NETWORKS, Settings, parse_ip
+from .config import LEDGER, TAILSCALE_NETWORKS, Settings, parse_ip
 
 SERVICE_TYPE = "_daytrace._tcp.local."
 REFRESH_SECONDS = 30.0  # how often the advertised addresses are checked (Wi-Fi changes, DHCP renewals)
@@ -54,6 +54,11 @@ def interface_ipv4s() -> list[tuple[str, str]]:
     return found
 
 
+# The adapter Tailscale's address sits on: "Tailscale" (Windows), tailscale0 (Linux), utunN (macOS). The same range
+# on any other adapter is carrier-grade NAT, shared with an ISP's other customers: never listened on or advertised.
+TAILSCALE_ADAPTER = re.compile(r"tailscale|^utun\d*$", re.IGNORECASE)
+
+
 def is_tailscale(address: str) -> bool:
     parsed = parse_ip(address)
     return parsed is not None and any(parsed in network for network in TAILSCALE_NETWORKS)
@@ -78,7 +83,7 @@ def phone_addresses(settings: Settings, primary: str | None, candidates: Iterabl
         if address.is_loopback or address.is_link_local or address.is_unspecified:
             continue
         if is_tailscale(text):
-            if settings.profile.allow_tailscale and text not in tailscale:
+            if settings.profile.allow_tailscale and TAILSCALE_ADAPTER.search(adapter) and text not in tailscale:
                 tailscale.append(text)
         elif VIRTUAL_ADAPTER.search(adapter):
             continue
@@ -92,6 +97,13 @@ def detect_phone_addresses(settings: Settings) -> list[str]:
 
 
 LOOPBACK_LISTEN = ("127.0.0.1", "::1")
+
+
+def served(addresses: list[str]) -> list[str]:
+    """The addresses the hub listens on right now, once it listens anywhere (app.HubServer): mDNS never tells a
+    phone an address the hub doesn't answer on yet (after a Wi-Fi change, until the listener follows)."""
+    listening = {entry.rsplit(":", 1)[0].strip("[]") for entry in LEDGER.listening}
+    return [address for address in addresses if address in listening] if listening else addresses
 
 
 def listen_addresses(settings: Settings, phones: Iterable[str] | None = None) -> list[str]:
@@ -140,7 +152,7 @@ class Advertiser:
     ) -> None:
         self.settings = settings
         self._factory = zeroconf_factory
-        self._find = find_addresses or (lambda: detect_phone_addresses(settings))
+        self._find = find_addresses or (lambda: served(detect_phone_addresses(settings)))
         self.refresh_seconds = refresh_seconds
         self._zeroconf: Any = None
         self._task: asyncio.Task[None] | None = None

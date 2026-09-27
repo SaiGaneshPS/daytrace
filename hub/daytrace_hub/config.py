@@ -276,26 +276,45 @@ def load_settings(profile_name: str = "personal", env: Mapping[str, str] | None 
 EXTENSION_SCHEMES = frozenset({"chrome-extension", "moz-extension", "safari-web-extension", "ms-browser-extension"})
 
 
-def origin_allowed(origin: str | None, host_header: str | None, client_loopback: bool) -> bool:
+def origin_allowed(origin: str | None, host_header: str | None) -> bool:
     """Whether a request's Origin may call the hub (no CORS headers are ever sent, so a browser can't read an answer
     from another origin; this refuses the request itself, so another site can't make one with side effects).
 
     - No Origin: not from a web page (a phone app, a Shortcut, a script) or a plain page load: allowed.
-    - The hub's own pages (the same host and port as the request): allowed.
+    - The hub's own pages (the same host and port as the request, or, on this computer, the same port under another
+      loopback name: http://127.0.0.1:8765 is the hub at localhost:8765): allowed. The dashboard's dev server
+      (Vite) sends the hub's own origin through its proxy, so it counts as the hub's pages.
     - The browser extension's pages: allowed (its token says who it is).
-    - A page on this computer's localhost, for a request from this computer: the dashboard's dev server (Vite),
-      which proxies to the hub with its own Origin.
-    - Anything else, including "null" (a local file, a sandboxed frame): refused."""
+    - Anything else: refused, including another page on this computer (another profile's dashboard, a local web
+      app), "null" (a local file, a sandboxed frame) and an Origin that doesn't parse."""
     if origin is None:
         return True
-    parts = urlsplit(origin.strip())
+    try:
+        parts = urlsplit(origin.strip())
+        netloc = parts.netloc
+        parts.port  # noqa: B018 (raises for a port that isn't a number)
+    except ValueError:
+        return False
     if parts.scheme in EXTENSION_SCHEMES:
         return True
-    if parts.scheme not in ("http", "https") or not parts.netloc:
+    if parts.scheme not in ("http", "https") or not netloc or not host_header:
         return False
-    if host_header and parts.netloc.lower() == host_header.strip().lower():
+    if netloc.lower() == host_header.strip().lower():
         return True
-    return client_loopback and host_name(parts.netloc) in ("localhost", "127.0.0.1", "::1")
+    return _loopback_port(netloc, parts.scheme) is not None and _loopback_port(netloc, parts.scheme) == _loopback_port(host_header, "http")
+
+
+def _loopback_port(authority: str, scheme: str) -> int | None:
+    """The port of a loopback authority (localhost, 127.x, [::1]), or None when it isn't one."""
+    name = host_name(authority)
+    address = parse_ip(name)
+    if name != "localhost" and (address is None or not address.is_loopback):
+        return None
+    try:
+        port = urlsplit(f"//{authority.strip()}").port
+    except ValueError:
+        return None
+    return port or (443 if scheme == "https" else 80)
 
 
 # --- the network ledger (DT-45) -----------------------------------------------------------------------------------
@@ -323,8 +342,9 @@ class NetworkLedger:
     """Every connection this hub made or refused since it started, by the kind of network at the other end: the
     proof behind "Daytrace never talks to the internet" (GET /privacy/network).
 
-    - Outgoing: each request the local-only transport (llm.py) let through, and each it refused. It is the only way
-      the hub reaches out; mDNS answers stay on the LAN's multicast group.
+    - Outgoing: each connection to the model server (llm.LocalOnlyBackend, the only thing the hub reaches out to),
+      and each attempt refused: by that transport, or by the socket guard (app.network_audit) that refuses any
+      connection to the internet from anything in the hub process (`guarded` says whether it is on).
     - Incoming: each request served, and each refused (from a network the profile doesn't serve, a Host name that
       could be DNS rebinding, or another web site's page).
     - Where the hub listens right now."""
@@ -342,6 +362,7 @@ class NetworkLedger:
             self.incoming: Counter[str] = Counter()
             self.refused: Counter[str] = Counter()
             self.listening: list[str] = []
+            self.guarded = getattr(self, "guarded", False)  # the socket guard can't be taken off once it is on
 
     def connected(self, where: Where) -> None:
         with self._lock:
@@ -378,6 +399,7 @@ class NetworkLedger:
                 "incoming": dict(self.incoming),
                 "refused": dict(self.refused),
                 "listening": list(self.listening),
+                "guarded": self.guarded,
             }
 
 

@@ -271,6 +271,7 @@ def test_run_starts_the_chosen_profile_on_its_port(monkeypatch: pytest.MonkeyPat
     started: list[object] = []
     monkeypatch.setenv("DAYTRACE_DATA_DIR", str(tmp_path))
     monkeypatch.setattr("daytrace_hub.app.HubServer.run", lambda server, *args, **kwargs: started.append(server))
+    monkeypatch.setattr("daytrace_hub.app.install_network_audit", lambda: None)  # never in the test process
     monkeypatch.setattr("daytrace_hub.discovery.detect_phone_addresses", lambda settings: ["192.168.1.20", "100.101.102.103"])
     assert cli.main(["run", "--profile", "shared-dev"]) == 0
     (server,) = started
