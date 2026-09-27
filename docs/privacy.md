@@ -78,5 +78,13 @@ TODO (DT-44 / DT-45 / DT-47)
 
 ## Export and delete
 
-TODO (DT-44 / DT-45 / DT-47)
+Everything the hub holds is yours to take or to erase (DT-46). Both only work from the hub computer itself, never
+from a phone.
+
+- **Export:** the Privacy page's "Export all" downloads one JSON file with every table: events, devices (without
+  their tokens), categories, goals, badges, stories and settings, as of one moment.
+- **Delete all:** type the exact phrase **delete all my daytrace data**, every time. The hub then empties every
+  table, overwrites what it deleted, and compacts the file, so nothing deleted stays on the disk. The hub keeps
+  running; phones and browsers pair again, and the desktop tracker starts afresh. The built-in redaction rules
+  still apply. Your own words and goals are deleted too, since they can say something about you.
 

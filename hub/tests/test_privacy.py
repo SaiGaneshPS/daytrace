@@ -1,4 +1,4 @@
-"""Tests for DT-45: the network lockdown and the "no internet" proof. DT-46 (export, delete) adds its own.
+"""Tests for DT-45 (the network lockdown and the "no internet" proof) and DT-46 (export and delete everything).
 
 The claims: the hub listens only on this computer and the addresses phones use (the tailnet only for shared-dev,
 never a public address or carrier-grade NAT) and follows them as they change, even when a listener dies; the
@@ -9,6 +9,7 @@ other web sites' pages and malformed ones; and GET /privacy/network shows it all
 from __future__ import annotations
 
 import http.server
+import json
 import logging
 import socket
 import subprocess
@@ -18,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +30,16 @@ from conftest import FakeModelServer
 from fastapi.testclient import TestClient
 
 from daytrace_hub import app as app_module
+from daytrace_hub.api import privacy as privacy_api
+from daytrace_hub.api.privacy import data_tables
 from daytrace_hub.app import HubServer, create_app, network_audit, serve
+from daytrace_hub.auth import hash_token, register_device
 from daytrace_hub.config import LEDGER, Settings, get_profile, network_of, origin_allowed
+from daytrace_hub.db import Database, load_migrations, transaction
 from daytrace_hub.discovery import listen_addresses, phone_addresses, served
 from daytrace_hub.llm import LLM, LLMRefused, LLMSettings, LocalOnlyTransport, local_http_client
+from daytrace_hub.seed import seed
+from daytrace_hub.tracker.base import DatabaseSink
 
 LOCAL = ("127.0.0.1", 50000)
 LAN = ("192.168.1.40", 50000)
@@ -389,3 +397,123 @@ def test_ctrl_c_ends_the_hub_quietly(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(HubServer, "run", interrupted)
     monkeypatch.setattr(app_module, "install_network_audit", lambda: None)  # not in the test process
     assert serve(Settings(profile=get_profile("demo"), data_dir=tmp_path)) is None
+
+
+# --- export and delete everything (DT-46) -------------------------------------------------------------------------
+
+
+SEEDED_AT = datetime(2026, 9, 25, 21, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def seeded(tmp_path: Path, fake_llm: FakeModelServer) -> Iterator[tuple[TestClient, Settings]]:
+    settings = Settings(profile=get_profile("demo"), data_dir=tmp_path)
+    seed(settings, 3, UTC, SEEDED_AT)
+    with TestClient(create_app(settings, llm=fake_llm.llm()), client=LOCAL, base_url="http://localhost:8767") as client:
+        yield client, settings
+
+
+def counts(settings: Settings) -> dict[str, int]:
+    with Database(settings.database_path).connect() as conn:
+        return {table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in data_tables(conn)}
+
+
+def add_titled_event(settings: Settings, title: str) -> None:
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute(
+            "INSERT INTO events (device_id, dedup_key, kind, source, start_utc, end_utc, utc_offset_min, app, title, data, received_at)"
+            " VALUES ('seed-windows', ?, 'window', 'seed', '2026-09-25T15:00:00.000000Z', '2026-09-25T15:05:00.000000Z', 0, 'Notepad', ?, '{}',"
+            " '2026-09-25T15:05:00.000000Z')", (f"content:{title}", title))
+
+
+def test_the_export_is_every_table_as_json(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        token = register_device(conn, device_id="android-5", name="Phone", device_type="android")
+        conn.execute("INSERT INTO settings (key, value) VALUES ('redaction', ?)", (json.dumps({"disabled": ["health"], "custom": []}),))
+    response = client.get("/api/v1/privacy/export")
+    assert response.status_code == 200 and response.headers["content-type"].startswith("application/json")
+    assert response.headers["content-disposition"].startswith('attachment; filename="daytrace-demo-')
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()  # valid JSON, all of it
+    assert (body["daytrace_export"], body["profile"], body["schema_version"]) == (1, "demo", Database(settings.database_path).schema_version())
+    assert {table: len(rows) for table, rows in body["tables"].items()} == counts(settings)  # every table, every row
+    assert "schema_migrations" not in body["tables"] and "data_changes" not in body["tables"]  # bookkeeping, not data
+    assert all("token_hash" not in device for device in body["tables"]["devices"])
+    assert token not in response.text and hash_token(token) not in response.text  # no secret, not even its hash
+    assert isinstance(body["tables"]["events"][0]["data"], dict)  # JSON columns come as JSON
+    assert body["tables"]["settings"] == [{"key": "redaction", "value": {"disabled": ["health"], "custom": []}}]
+    assert body["tables"]["goals"][0]["target"] == 240  # the demo student's focus goal
+
+
+def test_the_export_comes_in_pieces_from_one_snapshot(seeded: tuple[TestClient, Settings], monkeypatch: pytest.MonkeyPatch) -> None:
+    _, settings = seeded
+    monkeypatch.setattr(privacy_api, "EXPORT_CHUNK", 2000)
+    before = counts(settings)["events"]
+    pieces = privacy_api.export_chunks(Database(settings.database_path), "demo")
+    first = next(pieces)  # the snapshot is taken
+    add_titled_event(settings, "arrived during the export")  # a device syncs meanwhile
+    rest = list(pieces)
+    document = json.loads(first + "".join(rest))
+    assert len(rest) > 5 and len(document["tables"]["events"]) == before  # streamed, and as of one moment
+    assert counts(settings)["events"] == before + 1
+
+
+def test_only_the_hub_computer_can_export_or_delete(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        viewer = register_device(conn, device_id="viewer-5", name="Phone browser", device_type="viewer")
+    before = counts(settings)
+    with TestClient(client.app, client=LAN) as phone:
+        as_viewer = {"Authorization": f"Bearer {viewer}"}
+        refused = phone.get("/api/v1/privacy/export", headers=as_viewer)
+        assert refused.status_code == 403 and refused.json()["error"]["code"] == "local_only"
+        deleted = phone.post("/api/v1/privacy/delete", json={"confirm": privacy_api.DELETE_PHRASE}, headers=as_viewer)
+        assert deleted.status_code == 403 and deleted.json()["error"]["code"] == "local_only"
+    assert counts(settings) == before
+
+
+@pytest.mark.parametrize("phrase", ["", "delete all my data", "DELETE ALL MY DAYTRACE DATA", " delete all my daytrace data", "yes"])
+def test_delete_needs_the_exact_phrase(seeded: tuple[TestClient, Settings], phrase: str) -> None:
+    client, settings = seeded
+    before = counts(settings)
+    response = client.post("/api/v1/privacy/delete", json={"confirm": phrase})
+    assert response.status_code == 400 and "nothing was deleted" in response.json()["error"]["message"]
+    assert counts(settings) == before
+    assert client.post("/api/v1/privacy/delete", json={}).status_code == 422
+
+
+def test_delete_empties_every_table_and_the_hub_keeps_working(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        phone_token = register_device(conn, device_id="android-5", name="Phone", device_type="android")
+    before = counts(settings)
+    assert client.get("/api/v1/insights/overview", params={"range": "2026-09-23..2026-09-24", "tz": "UTC"}).json()["metrics"][0]["value"]
+    response = client.post("/api/v1/privacy/delete", json={"confirm": privacy_api.DELETE_PHRASE})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted"] == before and body["wiped"] is True
+    assert all(count == 0 for count in counts(settings).values())  # every table empty
+    assert Database(settings.database_path).schema_version() == len(load_migrations())  # the schema kept
+    with TestClient(client.app, client=LAN) as phone:  # the phone's token is gone: it pairs again
+        assert phone.get("/api/v1/insights/day", headers={"Authorization": f"Bearer {phone_token}"}).status_code == 401
+    overview = client.get("/api/v1/insights/overview", params={"range": "2026-09-23..2026-09-24", "tz": "UTC"}).json()
+    assert overview["metrics"][0]["value"] is None and overview["cached"] is False  # no stale answer
+    assert client.post("/api/v1/pair/start").status_code == 200  # pairing works again
+    sink = DatabaseSink(Database(settings.database_path), "windows", "PC")  # and the desktop tracker carries on
+    sink([{"kind": "window", "source": "tracker", "seq": 1, "external_id": "tracker:9:1", "app": "Code", "app_id": "Code.exe",
+           "start": "2026-09-26T10:00:00+00:00", "end": "2026-09-26T10:01:00+00:00"}])
+    assert counts(settings)["events"] == 1
+    again = client.post("/api/v1/privacy/delete", json={"confirm": "delete"})  # asked again, every time
+    assert again.status_code == 400 and counts(settings)["events"] == 1
+
+
+def test_deleted_rows_are_gone_from_the_file(seeded: tuple[TestClient, Settings]) -> None:
+    client, settings = seeded
+    add_titled_event(settings, "ZebraSecretTitle-9431")
+    raw = settings.database_path.read_bytes() + (Path(f"{settings.database_path}-wal").read_bytes() if Path(f"{settings.database_path}-wal").exists() else b"")
+    assert b"ZebraSecretTitle-9431" in raw
+    assert client.post("/api/v1/privacy/delete", json={"confirm": privacy_api.DELETE_PHRASE}).json()["wiped"] is True
+    wal = Path(f"{settings.database_path}-wal")
+    raw = settings.database_path.read_bytes() + (wal.read_bytes() if wal.exists() else b"")
+    assert b"ZebraSecretTitle-9431" not in raw and b"Visual Studio Code" not in raw  # overwritten, not just unlinked

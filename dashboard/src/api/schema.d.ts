@@ -471,6 +471,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/privacy/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Everything the profile holds, as one JSON file (the hub computer only) */
+        get: operations["export_all_api_v1_privacy_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/privacy/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete everything the profile holds (the hub computer only) */
+        post: operations["delete_all_api_v1_privacy_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -836,6 +870,29 @@ export interface components {
              * @description True when any of this was inferred (an iPhone app without a close, a guessed night).
              */
             estimated: boolean;
+        };
+        /** DeleteAll */
+        DeleteAll: {
+            /**
+             * Confirm
+             * @description Exactly "delete all my daytrace data", on every call.
+             */
+            confirm: string;
+        };
+        /** Deleted */
+        Deleted: {
+            /**
+             * Deleted
+             * @description Rows deleted from each table.
+             */
+            deleted: {
+                [key: string]: number;
+            };
+            /**
+             * Wiped
+             * @description True when the deleted rows are gone from the file too (overwritten, the file compacted). False when another connection kept that from finishing just now; the rows are deleted either way, and SQLite overwrites them as the file is used.
+             */
+            wiped: boolean;
         };
         /** DeviceInfo */
         DeviceInfo: {
@@ -2827,6 +2884,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NetworkStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_all_api_v1_privacy_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_all_api_v1_privacy_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAll"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Validation Error */
