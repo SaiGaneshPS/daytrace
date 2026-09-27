@@ -283,6 +283,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/insights/{tab}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One Insights tab: metrics and chart-ready series for a range */
+        get: operations["insights_tab_api_v1_insights__tab__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/wrapped": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The week in review: top stats and three checked lines */
+        get: operations["wrapped_api_v1_wrapped_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -431,6 +465,21 @@ export interface components {
             apps: components["schemas"]["AppCategory"][];
             /** Overrides */
             overrides: components["schemas"]["OverrideOut"][];
+        };
+        /** Cell */
+        Cell: {
+            /**
+             * X
+             * @description Index into the series' x labels.
+             */
+            x: number;
+            /**
+             * Y
+             * @description Index into the series' y labels.
+             */
+            y: number;
+            /** Value */
+            value: number;
         };
         /** Chart */
         Chart: {
@@ -636,6 +685,52 @@ export interface components {
             last_seq?: number | null;
             nudge?: components["schemas"]["Nudge"] | null;
         };
+        /** InsightsTab */
+        InsightsTab: {
+            /**
+             * Tab
+             * @enum {string}
+             */
+            tab: "overview" | "apps" | "devices" | "focus" | "sleep" | "food" | "calendar";
+            /** Tz */
+            tz: string;
+            range: components["schemas"]["RangeInfo"];
+            /**
+             * In Progress
+             * @description True when the range includes today, which is not over: numbers so far.
+             */
+            in_progress: boolean;
+            /** Metrics */
+            metrics: components["schemas"]["Metric"][];
+            /** Series */
+            series: {
+                [key: string]: components["schemas"]["Series"];
+            };
+            meta: components["schemas"]["daytrace_hub__api__insights__Meta"];
+            /**
+             * Cached
+             * @default false
+             */
+            cached: boolean;
+        };
+        /** Item */
+        Item: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: number;
+            /** Key */
+            key?: string | null;
+            /** Category */
+            category?: string | null;
+            /**
+             * Share
+             * @description A percent that goes with the item (a block's on-plan share).
+             */
+            share?: number | null;
+            /** Children */
+            children?: components["schemas"]["Item"][] | null;
+        };
         /** Lane */
         Lane: {
             /** Device Id */
@@ -661,6 +756,32 @@ export interface components {
             /** Sessions */
             sessions: components["schemas"]["TimelineSession"][];
         };
+        /** Line */
+        Line: {
+            /** Name */
+            name: string;
+            /**
+             * Key
+             * @description The id behind the name (a device id, a category).
+             */
+            key?: string | null;
+            /** Category */
+            category?: string | null;
+            /**
+             * Values
+             * @description One per x label; null where there is no data (not zero).
+             */
+            values: (number | null)[];
+        };
+        /** Link */
+        Link: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Value */
+            value: number;
+        };
         /** MealEntry */
         MealEntry: {
             /**
@@ -677,21 +798,25 @@ export interface components {
             /** Device Id */
             device_id: string;
         };
-        /** Meta */
-        Meta: {
+        /** Metric */
+        Metric: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
             /**
-             * Unit
-             * @default minutes
-             * @constant
+             * Value
+             * @description null when there is no data for it in the range (missing, not zero)
              */
-            unit: "minutes";
-            range: components["schemas"]["TimeRange"];
+            value: number | string | null;
+            /** Unit */
+            unit: string;
+            /** Explain */
+            explain: string;
             /**
-             * Source
-             * @enum {string}
+             * Estimated
+             * @default false
              */
-            source: "real" | "seed" | "mixed";
-            /** Estimated */
             estimated: boolean;
         };
         /**
@@ -802,6 +927,32 @@ export interface components {
             /** @description The device that used it, once it has been used. */
             claimed_by: components["schemas"]["ClaimedDevice"] | null;
         };
+        /** Point */
+        Point: {
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Label */
+            label: string;
+        };
+        /** RangeInfo */
+        RangeInfo: {
+            /**
+             * First
+             * Format: date
+             */
+            first: string;
+            /**
+             * Last
+             * Format: date
+             */
+            last: string;
+            /** Days */
+            days: number;
+            /** Label */
+            label: string;
+        };
         /**
          * RejectedEvent
          * @description One event the hub refused.
@@ -825,6 +976,84 @@ export interface components {
             external_id?: string | null;
             /** Reason */
             reason: string;
+        };
+        /** Series */
+        Series: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "trend" | "stacked" | "bars" | "donut" | "treemap" | "heatmap" | "sankey" | "scatter" | "gauge";
+            /** Title */
+            title: string;
+            /** Unit */
+            unit: string;
+            /** Explain */
+            explain: string;
+            /**
+             * Estimated
+             * @default false
+             */
+            estimated: boolean;
+            /**
+             * X
+             * @description trend, stacked, bars and heatmap: the x labels.
+             */
+            x?: string[] | null;
+            /**
+             * Y
+             * @description heatmap: the row labels.
+             */
+            y?: string[] | null;
+            /**
+             * Lines
+             * @description trend and stacked: one per line; bars: one.
+             */
+            lines?: components["schemas"]["Line"][] | null;
+            /**
+             * Items
+             * @description donut, treemap and bars by name.
+             */
+            items?: components["schemas"]["Item"][] | null;
+            /**
+             * Cells
+             * @description heatmap.
+             */
+            cells?: components["schemas"]["Cell"][] | null;
+            /**
+             * Nodes
+             * @description sankey.
+             */
+            nodes?: string[] | null;
+            /**
+             * Links
+             * @description sankey.
+             */
+            links?: components["schemas"]["Link"][] | null;
+            /**
+             * Points
+             * @description scatter.
+             */
+            points?: components["schemas"]["Point"][] | null;
+            /**
+             * Value
+             * @description gauge.
+             */
+            value?: number | null;
+            /**
+             * Max
+             * @description gauge.
+             */
+            max?: number | null;
+            /**
+             * Stats
+             * @description scatter: rho, p and n.
+             */
+            stats?: {
+                [key: string]: number | null;
+            } | null;
+            /** Note */
+            note?: string | null;
         };
         /** SleepEntry */
         SleepEntry: {
@@ -919,7 +1148,7 @@ export interface components {
             /** Meals */
             meals: components["schemas"]["MealEntry"][];
             totals: components["schemas"]["Totals"];
-            meta: components["schemas"]["Meta"];
+            meta: components["schemas"]["daytrace_hub__api__timeline__Meta"];
         };
         /** TimelineSession */
         TimelineSession: {
@@ -1006,6 +1235,91 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** Wrapped */
+        Wrapped: {
+            /**
+             * Week
+             * @description ISO week, e.g. 2026-W39 (Monday to Sunday).
+             */
+            week: string;
+            /**
+             * First
+             * Format: date
+             */
+            first: string;
+            /**
+             * Last
+             * Format: date
+             */
+            last: string;
+            /** Tz */
+            tz: string;
+            /**
+             * In Progress
+             * @description True while the week is not over: the numbers and lines so far.
+             */
+            in_progress: boolean;
+            /** Metrics */
+            metrics: components["schemas"]["Metric"][];
+            /** Top Apps */
+            top_apps: components["schemas"]["AppMinutes"][];
+            /**
+             * Lines
+             * @description Three highlight lines by the local model (every number checked against the facts), or plain ones.
+             */
+            lines: string[];
+            /** Facts Used */
+            facts_used: components["schemas"]["FactOut"][];
+            /**
+             * Model
+             * @description The local model that wrote the lines; null for the plain ones.
+             */
+            model: string | null;
+            /** Cached */
+            cached: boolean;
+            /** Fallback */
+            fallback: boolean;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Streaks
+             * @description The week's streak highlights (DT-53); empty until then.
+             */
+            streaks?: {
+                [key: string]: unknown;
+            }[];
+            meta: components["schemas"]["daytrace_hub__api__insights__Meta"];
+        };
+        /** Meta */
+        daytrace_hub__api__insights__Meta: {
+            /** Unit */
+            unit: string;
+            /** Range */
+            range: {
+                [key: string]: string;
+            };
+            /** Source */
+            source: string;
+            /** Estimated */
+            estimated: boolean;
+        };
+        /** Meta */
+        daytrace_hub__api__timeline__Meta: {
+            /**
+             * Unit
+             * @default minutes
+             * @constant
+             */
+            unit: "minutes";
+            range: components["schemas"]["TimeRange"];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "real" | "seed" | "mixed";
+            /** Estimated */
+            estimated: boolean;
         };
     };
     responses: never;
@@ -1533,6 +1847,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DaySummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    insights_tab_api_v1_insights__tab__get: {
+        parameters: {
+            query?: {
+                /** @description today, 7d (1 to 92 days, today included) or YYYY-MM-DD..YYYY-MM-DD */
+                range?: string;
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                tab: "overview" | "apps" | "devices" | "focus" | "sleep" | "food" | "calendar";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsightsTab"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    wrapped_api_v1_wrapped_get: {
+        parameters: {
+            query?: {
+                /** @description ISO week, e.g. 2026-W39; default: last week */
+                week?: string | null;
+                /** @description IANA time zone, e.g. America/Toronto; default: the hub's */
+                tz?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wrapped"];
                 };
             };
             /** @description Validation Error */

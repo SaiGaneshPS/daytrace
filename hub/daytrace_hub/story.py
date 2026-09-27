@@ -22,6 +22,8 @@ A story with any other number, the wrong length, or cut off gets one retry, told
 when the model is not available, a plain template story built from the same facts is used instead (`fallback`).
 Stories the model wrote are cached per day and time zone until the facts, the prompt, the checker or the
 configured model change. Today's story is of the day so far, and is written again at most every 15 minutes.
+
+DT-41 adds the week's Wrapped: three short highlight lines from the week's facts, checked and cached the same way.
 """
 from __future__ import annotations
 
@@ -778,4 +780,208 @@ def day_story(database: Database, llm: LLM, day: date, tz: tzinfo, tz_name: str,
         result = write_story(llm, facts, day, in_progress)
         if not result.fallback and result.model is not None:
             cache_story(database, day, tz_name, writer, digest, result, stats.now)
+        return result
+
+
+# --- the week's Wrapped (DT-41) -----------------------------------------------------------------------------------
+
+WRAPPED_LINES = 3
+MIN_DAYS_TO_COMPARE = 4  # days with data the week before needs before this week is compared with it
+MAX_LINE_CHARS = 160
+WRAPPED_PROMPT = (
+    "You write the three highlight lines of someone's week in review, from facts about their screen time, for them "
+    "to read. Rules: exactly 3 lines, one sentence each, under 140 characters, in the second person (\"you\"), "
+    "upbeat but honest. Use only the facts given: never add a number, app, day or event that is not in them, and "
+    "never guess. Minutes may be written as they are or as hours and minutes (125 minutes = 2 hours 5 minutes). "
+    "Reply with the 3 lines only, one per line: no numbering, no headings, no emoji."
+)
+WRAPPED_VERSION = f"{CHECK_VERSION}:{hashlib.sha256(WRAPPED_PROMPT.encode('utf-8')).hexdigest()[:12]}"
+
+
+def week_facts(stats: Stats, first: date, last: date) -> list[Fact]:
+    """The facts for the week from `first` to `last`, from the stats engine. Empty when nothing was recorded."""
+    totals = stats.totals(first, last, group_by="app")
+    by_day = stats.totals(first, last, group_by="day")
+    days_with_data = len(by_day["items"])
+    if not days_with_data or not totals["total_seconds"]:
+        return []
+    facts = [
+        Fact("screen time this week", round(totals["total_minutes"]), "minutes"),
+        Fact("average screen time a day", round(totals["total_minutes"] / days_with_data), "minutes"),
+    ]
+    facts += [Fact(f"time in {item['key']}", round(item["minutes"]), "minutes") for item in totals["items"][:3] if item["seconds"]]
+    categories = stats.totals(first, last, group_by="category")["items"]
+    if categories:
+        facts.append(Fact(f"time on {categories[0]['key']}", round(categories[0]["minutes"]), "minutes"))
+    days = [first + timedelta(days=i) for i in range((last - first).days + 1)]
+    focused = [stats.focused_minutes(day)["value"] for day in days]
+    if any(value is not None for value in focused):
+        facts.append(Fact("focused time this week (work or study blocks of 10+ minutes)", round(sum(v for v in focused if v is not None)), "minutes"))
+    scores = [(stats.focus_score(day)["value"], day) for day in days]
+    known = [(score, day) for score, day in scores if score is not None]
+    if known:
+        best, best_day = max(known, key=lambda pair: (pair[0], pair[1]))
+        facts.append(Fact(f"best focus score (0 to 100), on {best_day:%A}", best, "score"))
+    pickups = [stats.pickups(day)["value"] for day in days]
+    if any(value is not None for value in pickups):
+        facts.append(Fact("phone pickups this week", sum(v for v in pickups if v is not None), "times"))
+    sleep = [stats.sleep_estimate(day)["value"] for day in days]
+    nights = [value for value in sleep if value is not None]
+    if nights:
+        facts.append(Fact("average sleep a night", round(sum(nights) / len(nights)), "minutes"))
+    late = [stats.late_night_minutes(day)["value"] for day in days]
+    if any(value is not None for value in late):
+        facts.append(Fact("screen time after 11 pm this week", round(sum(v for v in late if v is not None)), "minutes"))
+    # Against the week before, a day for a day (so a week with a missing day isn't "less"), and only when it has
+    # enough days to say anything: a week that only just began being recorded would make any week look huge.
+    before = stats.totals(first - timedelta(days=7), first - timedelta(days=1), group_by="day")
+    if len(before["items"]) >= MIN_DAYS_TO_COMPARE and before["total_seconds"]:
+        this_day = totals["total_seconds"] / days_with_data
+        before_day = before["total_seconds"] / len(before["items"])
+        facts.append(Fact("average screen time a day the week before", round(before_day / 60), "minutes"))
+        change = round(100 * (this_day - before_day) / before_day)
+        if change:
+            facts.append(Fact(f"{'more' if change > 0 else 'less'} screen time a day than the week before", abs(change), "percent"))
+    return facts
+
+
+def week_title(first: date) -> str:
+    return f"the week of {first.day} {first:%B} {first.year}"
+
+
+def template_wrapped(facts: Sequence[Fact], first: date) -> list[str]:
+    """Plain lines from the facts, used when the model is not available or keeps getting numbers wrong."""
+    if not facts:
+        return [f"Nothing was recorded in {week_title(first)}.", "When your devices send data, your week appears here."]
+    by_label = {fact.label: fact for fact in facts}
+    lines = [(f"You spent {duration(float(by_label['screen time this week'].value))} on screens this week, about "
+              f"{duration(float(by_label['average screen time a day'].value))} a day.")]
+    top = next((fact for fact in facts if fact.label.startswith("time in ")), None)
+    if top is not None:
+        lines.append(f"Your most-used app was {top.label[8:]}, at {duration(float(top.value))}.")
+    focus = next((fact for fact in facts if fact.label.startswith("focused time this week")), None)
+    best = next((fact for fact in facts if fact.label.startswith("best focus score")), None)
+    if focus is not None:
+        lines.append(f"You focused for {duration(float(focus.value))} in longer blocks"
+                     + (f", best on {best.label.rsplit('on ', 1)[1]} with a score of {best.value}." if best else "."))
+    elif "average sleep a night" in by_label:
+        lines.append(f"You slept about {duration(float(by_label['average sleep a night'].value))} a night.")
+    return lines[:WRAPPED_LINES]
+
+
+def clean_lines(text: str | None) -> list[str]:
+    """The reply's lines, without a reasoning model's thinking, bullets, numbering or wrapping quotes."""
+    text = text or ""
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
+    lines = [re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s*", "", line).strip().strip('"').strip() for line in text.splitlines()]
+    return [re.sub(r"\s+", " ", line) for line in lines if line]
+
+
+def wrapped_problems(lines: Sequence[str], facts: Sequence[Fact], days: Iterable[date], cut_off: bool = False) -> list[str]:
+    """Why the lines can't be used, in words the model can act on; empty when they are fine."""
+    if cut_off:
+        return ["it was cut off before it finished"]
+    problems = []
+    if len(lines) != WRAPPED_LINES:
+        problems.append(f"it had {len(lines)} line{'s' if len(lines) != 1 else ''} instead of {WRAPPED_LINES}")
+    long = [line for line in lines if len(line) > MAX_LINE_CHARS]
+    if long:
+        problems.append(f"{len(long)} line{'s were' if len(long) != 1 else ' was'} over {MAX_LINE_CHARS} characters")
+    wrong = unsupported_numbers(" ".join(lines), facts, list(days))
+    if wrong:
+        problems.append(f"it used numbers that are not in the facts ({', '.join(wrong)})")
+    return problems
+
+
+@dataclass
+class WrappedLines:
+    lines: list[str]
+    facts: list[Fact]
+    model: str | None
+    cached: bool
+    fallback: bool
+    reason: str | None = None
+    in_progress: bool = False
+
+
+def write_wrapped(llm: LLM, facts: Sequence[Fact], first: date, in_progress: bool = False) -> WrappedLines:
+    """Ask the model for the week's lines, check them, retry once, and fall back to the template."""
+    facts = list(facts)
+    days = [first + timedelta(days=i) for i in range(7)]
+
+    def fallback(reason: str) -> WrappedLines:
+        return WrappedLines(template_wrapped(facts, first), facts, None, False, True, reason, in_progress)
+
+    try:
+        model = llm.current_model()
+    except LLMError as error:
+        return fallback(str(error))
+    so_far = " The week is not over yet: these are the facts so far." if in_progress else ""
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": WRAPPED_PROMPT},
+        {"role": "user", "content": f"Facts for {week_title(first)}.{so_far}\n"
+                                     f"{json.dumps([fact.as_dict() for fact in facts], ensure_ascii=False)}\n"
+                                     "Write the 3 lines."},
+    ]
+    problems: list[str] = []
+    for _ in range(2):
+        try:
+            choice = llm.complete(messages, temperature=0.5, max_tokens=MAX_TOKENS, model=model)
+        except LLMError as error:
+            return fallback(str(error))
+        lines = clean_lines(getattr(choice.message, "content", None))
+        problems = wrapped_problems(lines, facts, days, cut_off=getattr(choice, "finish_reason", None) == "length")
+        if not problems:
+            return WrappedLines(lines, facts, model, False, False, None, in_progress)
+        messages += [
+            {"role": "assistant", "content": "\n".join(lines) or "(no lines)"},
+            {"role": "user", "content": f"Those lines cannot be used: {'; '.join(problems)}. Write exactly "
+                                        f"{WRAPPED_LINES} lines again, each under {MAX_LINE_CHARS} characters, using "
+                                        "only numbers that appear in the facts. Reply with the lines only."},
+        ]
+    return fallback(f"the lines from {model} could not be used, even after a retry: {'; '.join(problems)}")
+
+
+def wrapped_writer(llm: LLM, in_progress: bool) -> str:
+    return f"{WRAPPED_VERSION}|{llm.settings.model or 'auto'}|{'so far' if in_progress else 'whole week'}"
+
+
+def week_wrapped(database: Database, llm: LLM, first: date, tz: tzinfo, tz_name: str,
+                 now: datetime | None = None) -> WrappedLines:
+    """The Wrapped lines for the week starting on Monday `first`: from the cache when nothing behind them changed
+    (for a week not over, when under 15 minutes old), otherwise written now. The database is not held while the
+    model writes."""
+    last = first + timedelta(days=6)
+    with _story_lock(database, first, f"wrapped|{tz_name}"):
+        with database.connect() as conn:
+            stats = Stats(conn, tz, tz_name, now)
+            facts = week_facts(stats, first, last)
+            in_progress = not stats.day(last).over
+            row = conn.execute("SELECT facts_hash, writer, lines, facts, model, created_at FROM wrapped_cache"
+                               " WHERE week = ? AND tz = ?", (first.isoformat(), tz_name)).fetchone()
+        writer, digest = wrapped_writer(llm, in_progress), facts_hash(facts, first, f"wrapped|{tz_name}")
+        if row is not None and row["writer"] == writer:
+            recent = in_progress and parse_utc(row["created_at"]) > stats.now - TODAY_REWRITE
+            if row["facts_hash"] == digest or recent:
+                written_from = [Fact(**fact) for fact in json.loads(row["facts"])]
+                return WrappedLines(json.loads(row["lines"]), written_from, row["model"], True, False, None, in_progress)
+        if not facts:
+            return WrappedLines(template_wrapped(facts, first), facts, None, False, True, "nothing was recorded that week", in_progress)
+        result = write_wrapped(llm, facts, first, in_progress)
+        if not result.fallback and result.model is not None:
+            try:
+                with database.connect() as conn, transaction(conn):
+                    conn.execute(
+                        "INSERT INTO wrapped_cache (week, tz, facts_hash, writer, lines, facts, model, created_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                        " ON CONFLICT (week, tz) DO UPDATE SET facts_hash = excluded.facts_hash, writer = excluded.writer,"
+                        " lines = excluded.lines, facts = excluded.facts, model = excluded.model, created_at = excluded.created_at"
+                        " WHERE excluded.created_at >= wrapped_cache.created_at",
+                        (first.isoformat(), tz_name, digest, writer, json.dumps(result.lines),
+                         json.dumps([f.as_dict() for f in result.facts]), result.model, utc_text(stats.now)),
+                    )
+            except sqlite3.OperationalError:
+                pass  # too busy to keep: the lines are still good
         return result
