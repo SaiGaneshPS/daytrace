@@ -380,16 +380,16 @@ def test_an_app_and_its_site_are_parts_of_one_total_that_can_not_be_mixed_up(wee
 
 
 def test_the_parts_add_up_to_the_total_said_whatever_the_seconds(db: Database) -> None:
-    # 110 minutes 25 seconds in the app and 13 minutes 55 seconds on the site: 124 minutes 20 seconds in all is "124",
-    # and the parts, each rounded alone, would be 110 and 14.
-    add(db, "android-1", "android", [phone(*YT, at(22, "10:00:00"), at(22, "11:50:25"), 1)])
-    add(db, "windows-1", "windows", [span("window", at(23, "20:00:00"), at(23, "20:13:55"), app="Microsoft Edge", app_id="msedge.exe")])
-    add(db, "browser-1", "browser", [span("web", at(23, "20:00:00"), at(23, "20:13:55"), source="browser", app_id="msedge.exe",
+    # 109 minutes 36 seconds in the app and 13 minutes 36 seconds on the site: 123 minutes 12 seconds in all is "123",
+    # while each part rounded alone would make 110 + 14 = 124.
+    add(db, "android-1", "android", [phone(*YT, at(22, "10:00:00"), at(22, "11:49:36"), 1)])
+    add(db, "windows-1", "windows", [span("window", at(23, "20:00:00"), at(23, "20:13:36"), app="Microsoft Edge", app_id="msedge.exe")])
+    add(db, "browser-1", "browser", [span("web", at(23, "20:00:00"), at(23, "20:13:36"), source="browser", app_id="msedge.exe",
                                           data={"domain": "youtube.com"}, seq=1)])
     out = tool(db, "get_totals", {**LAST_WEEK, "app": "YouTube"})
     parts = [f.value for f in out.facts if f.label.startswith("of that total, ")]
-    assert out.facts[0].value == 124 and parts == [110, 14] and sum(parts) == 124
-    assert ask_module._whole_parts([110.4, 13.9], 124) == [110, 14]  # 110 + 13 = 123: the larger remainder rounds up
+    assert out.facts[0].value == 123 and sum(parts) == 123 and parts in ([110, 13], [109, 14])  # a tie of remainders: either
+    assert ask_module._whole_parts([109.6, 13.6], 123) == [110, 13]  # 109 + 13 = 122: the larger remainder rounds up
     assert ask_module._whole_parts([0.5, 0.5, 0.5], 2) == [1, 1, 0]
 
 
