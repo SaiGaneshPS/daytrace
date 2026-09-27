@@ -44,7 +44,8 @@ function timeline(extra: ReturnType<typeof lane>[] = [], estimated = false) {
 
 const SUMMARY = {
   date: DAY, tz: "America/Toronto", in_progress: true, screen_minutes: 190, phone_minutes: 45, computer_minutes: 145,
-  focused_minutes: 125, focus_score: 71, pickups: 4, switches_per_hour: 1.3, sleep_minutes: 447, sleep_estimated: true,
+  focused_minutes: 125, focus_score: 71, work_or_study_minutes: 130, distracted_minutes: 45, pickups: 4,
+  switches_per_hour: 1.3, sleep_minutes: 447, sleep_estimated: true,
   steps: 8412, estimated: true, screen_estimated: false,
   top_apps: [
     { app: "Visual Studio Code", category: "work", minutes: 125 },

@@ -1,5 +1,6 @@
-// DT-31: Today against a real hub, for the claims mocks can't prove: a seeded day renders in under a second, its
-// total is the sum of its blocks, and a new session shows within 5 seconds. Opt-in: set DAYTRACE_E2E_HUB to a demo
+// DT-31 and DT-33: Today, Story and Ask against a real hub, for the claims mocks can't prove: a seeded day renders in
+// under a second, its total is the sum of its blocks, a new session shows within 5 seconds, and the story and answers
+// come from the hub's local model with their facts (skipped without one). Opt-in: set DAYTRACE_E2E_HUB to a demo
 // hub running on this computer and serving this build, for example
 //   daytrace-hub seed --profile demo && daytrace-hub run --profile demo
 //   DAYTRACE_E2E_HUB=http://localhost:8767 npm run test:e2e
@@ -77,4 +78,28 @@ test("a new session shows within 5 seconds", async ({ page, isMobile }) => {
   } finally {
     await page.request.delete(`/api/v1/devices/${claimed.device_id}`); // revoke the test device
   }
+});
+
+// DT-33: the story and an answer from the hub's real local model (skipped when the hub has no usable model).
+test("the story and an answer come from the local model on this computer, with their facts", async ({ page, isMobile }) => {
+  test.skip(isMobile, "once is enough");
+  test.setTimeout(600_000); // a small model can take a minute or two per reply
+  await notPersonal(page);
+  const status = (await (await page.request.get("/api/v1/ai/status")).json()) as { reachable: boolean; model: string | null; tool_calling: boolean | null };
+  test.skip(!status.reachable || !status.model || !status.tool_calling, "needs the hub's local model running (DAYTRACE_LLM_BASE_URL)");
+
+  await page.goto("/story");
+  const card = page.getByRole("region", { name: "Story" });
+  await expect(card.locator(".story-text")).toBeVisible({ timeout: 300_000 });
+  // The model wrote it (and says so by name), unless its story failed the number check twice and the template did.
+  await expect(card.locator(".model-name, .badge-template")).toBeVisible();
+  if (await card.locator(".model-name").count()) await expect(card.locator(".model-name")).toHaveText(status.model!);
+  expect(await card.locator(".facts li").count()).toBeGreaterThan(0);
+
+  await page.goto("/ask");
+  await page.getByRole("button", { name: "How did I sleep last night?" }).click();
+  const answer = page.locator(".bubble-answer").last();
+  await expect(answer.locator(".answer-text")).toBeVisible({ timeout: 300_000 });
+  await expect(answer.locator(".model-name, .badge-template")).toBeVisible();
+  await expect(answer.locator(".facts")).toBeVisible();
 });

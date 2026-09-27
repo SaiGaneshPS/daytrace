@@ -20,6 +20,8 @@ const TOKEN_KEY = "daytrace.token";
 const RETRIES = 2;
 const RETRY_STATUSES = new Set([502, 503, 504]);
 const TIMEOUT_MS = 15_000; // a hub that went to sleep never answers: give up and say so
+/** For the local AI (a story, an answer): each model call may take up to 2 minutes, and a question makes several. */
+export const AI_TIMEOUT_MS = 300_000;
 
 // --- types from the schema -----------------------------------------------------------------------------------
 
@@ -55,7 +57,11 @@ type BodyPart<O> = O extends { requestBody: { content: { "application/json": inf
   : O extends { requestBody?: { content: { "application/json": infer B } } }
     ? { body?: B }
     : { body?: never };
-export type Options<O> = Part<Params<O>, "query"> & Part<Params<O>, "path"> & BodyPart<O> & { signal?: AbortSignal };
+export type Options<O> = Part<Params<O>, "query"> & Part<Params<O>, "path"> & BodyPart<O> & {
+  signal?: AbortSignal;
+  /** How long to wait for the hub (ms). A request given its own time is not retried when that runs out. */
+  timeout?: number;
+};
 /** The options argument: optional when nothing in it is required. */
 type Args<O, Extra = unknown> = {} extends Options<O> ? [options?: Options<O> & Extra] : [options: Options<O> & Extra];
 /** The reply of GET `P`. */
@@ -140,7 +146,7 @@ function retryDelay(attempt: number, response?: Response): number {
   return Number.isFinite(header) && header > 0 ? Math.min(header, 10) * 1000 : 500 * 2 ** (attempt - 1);
 }
 
-type RawOptions = { query?: object; path?: object; body?: unknown; signal?: AbortSignal };
+type RawOptions = { query?: object; path?: object; body?: unknown; signal?: AbortSignal; timeout?: number };
 
 async function send<T>(method: string, template: string, options: RawOptions): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -156,13 +162,16 @@ async function send<T>(method: string, template: string, options: RawOptions): P
   for (let attempt = 1; ; attempt++) {
     let response: Response;
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => timeout.abort(), options.timeout ?? TIMEOUT_MS);
     const onAbort = () => timeout.abort();
     options.signal?.addEventListener("abort", onAbort);
     try {
       response = await fetch(target, { method, headers, body, signal: timeout.signal, credentials: "same-origin" });
     } catch (error) {
       if (options.signal?.aborted) throw error;
+      if (timeout.signal.aborted && options.timeout !== undefined) {
+        throw new ApiError(0, "timeout", `The hub didn't answer within ${Math.round(options.timeout / 1000)} seconds.`);
+      }
       if (attempt < attempts) {
         await wait(retryDelay(attempt), options.signal);
         continue;
@@ -256,7 +265,7 @@ export function useApi<P extends PathsWith<"get">>(
   ...[given]: Args<Operation<P, "get">, { enabled?: boolean; quiet?: boolean }>
 ): Loaded<GetReply<P>> {
   const options = (given ?? {}) as RawOptions & { enabled?: boolean; quiet?: boolean };
-  const { enabled = true, quiet = false } = options;
+  const { enabled = true, quiet = false, timeout } = options;
   const key = JSON.stringify([path, options.query ?? null, options.path ?? null]);
   const [state, setState] = useState<LoadState<GetReply<P>>>({
     data: undefined,
@@ -274,7 +283,7 @@ export function useApi<P extends PathsWith<"get">>(
     const controller = new AbortController();
     const [target, query, pathParams] = JSON.parse(key) as [P, object | null, object | null];
     setState((previous) => ({ ...previous, loading: true }));
-    const request: RawOptions = { query: query ?? undefined, path: pathParams ?? undefined, signal: controller.signal };
+    const request: RawOptions = { query: query ?? undefined, path: pathParams ?? undefined, signal: controller.signal, timeout };
     send<GetReply<P>>("GET", target, request)
       .then((data) =>
         setState((previous) => ({
@@ -291,7 +300,7 @@ export function useApi<P extends PathsWith<"get">>(
         setState((previous) => ({ data: previous.data, error: failure, errorKey: key, loading: false }));
       });
     return () => controller.abort();
-  }, [key, attempt, enabled, quiet]);
+  }, [key, attempt, enabled, quiet, timeout]);
   return {
     data: state.data,
     error: state.errorKey === key ? state.error : undefined,

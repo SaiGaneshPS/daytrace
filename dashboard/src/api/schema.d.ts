@@ -481,6 +481,16 @@ export interface components {
              * @description 0 to 100; null on a day with neither work nor distraction.
              */
             focus_score: number | null;
+            /**
+             * Work Or Study Minutes
+             * @description Time in work or study apps and sites, any device (overlaps once); focused time is part of it.
+             */
+            work_or_study_minutes: number | null;
+            /**
+             * Distracted Minutes
+             * @description Time in social, video or game apps and sites, any device (overlaps once).
+             */
+            distracted_minutes: number | null;
             /** Pickups */
             pickups: number | null;
             /** Switches Per Hour */

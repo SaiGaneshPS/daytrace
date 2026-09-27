@@ -136,7 +136,7 @@ test("a page that fails to load says so, and the menus keep working", async ({ p
   await expect(page.getByRole("alert")).toContainText("This page couldn't load");
   await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
   await sidebar.getByRole("link", { name: "Story" }).click();
-  await expect(page.locator("main h1")).toHaveText("Story");
+  await expect(page.locator("main h1")).toHaveText("Today's story");
 });
 
 // --- accessibility and themes ------------------------------------------------------------------------------------
