@@ -706,7 +706,7 @@ export interface components {
             series: {
                 [key: string]: components["schemas"]["Series"];
             };
-            meta: components["schemas"]["daytrace_hub__api__insights__Meta"];
+            meta: components["schemas"]["Meta"];
             /**
              * Cached
              * @default false
@@ -797,6 +797,23 @@ export interface components {
             meal_type: string | null;
             /** Device Id */
             device_id: string;
+        };
+        /** Meta */
+        Meta: {
+            /**
+             * Unit
+             * @default minutes
+             * @constant
+             */
+            unit: "minutes";
+            range: components["schemas"]["TimeRange"];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "real" | "seed" | "mixed";
+            /** Estimated */
+            estimated: boolean;
         };
         /** Metric */
         Metric: {
@@ -1148,7 +1165,7 @@ export interface components {
             /** Meals */
             meals: components["schemas"]["MealEntry"][];
             totals: components["schemas"]["Totals"];
-            meta: components["schemas"]["daytrace_hub__api__timeline__Meta"];
+            meta: components["schemas"]["Meta"];
         };
         /** TimelineSession */
         TimelineSession: {
@@ -1289,37 +1306,7 @@ export interface components {
             streaks?: {
                 [key: string]: unknown;
             }[];
-            meta: components["schemas"]["daytrace_hub__api__insights__Meta"];
-        };
-        /** Meta */
-        daytrace_hub__api__insights__Meta: {
-            /** Unit */
-            unit: string;
-            /** Range */
-            range: {
-                [key: string]: string;
-            };
-            /** Source */
-            source: string;
-            /** Estimated */
-            estimated: boolean;
-        };
-        /** Meta */
-        daytrace_hub__api__timeline__Meta: {
-            /**
-             * Unit
-             * @default minutes
-             * @constant
-             */
-            unit: "minutes";
-            range: components["schemas"]["TimeRange"];
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "real" | "seed" | "mixed";
-            /** Estimated */
-            estimated: boolean;
+            meta: components["schemas"]["Meta"];
         };
     };
     responses: never;

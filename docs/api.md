@@ -462,13 +462,17 @@ days); anything else is `400`.
 ```
 
 - Every metric has a unit and a line saying what it means (`explain`), and `value` is null when there is no data
-  for it in the range (missing, not zero).
+  for it in the range (missing, not zero). Counts that need no screen (meals, calendar events, nights) are 0 only
+  on days the hub could have heard about: a device sent something for the day, or one was paired then. Before
+  recording began, and on days still to come, they are null.
 - A series has a `kind` and what that kind needs:
-  - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data).
+  - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
+    device, also where that device sent nothing that day).
   - `bars`: `x` and one line, or `items` by name.
   - `donut`: `items`. `treemap`: `items` with `children`.
   - `heatmap`: `x`, `y` and `cells` (indexes into them).
-  - `sankey`: `nodes` and `links`.
+  - `sankey`: `nodes` and `links`. Node names are unique: a device name two devices share, or one that is also a
+    category's, gets the device id, as in `Galaxy phone (android-3)`. Lines and heatmap rows use the same names.
   - `scatter`: `points`, with `stats` (rho, p, n) and a `note` for a correlation.
   - `gauge`: `value` and `max`.
 - The tabs and their series:
@@ -484,8 +488,10 @@ days); anything else is `400`.
     longest events with their on-plan share; weekday by hour.
 - Every series is cut from the same pieces as the stats engine's totals (`Stats.crosstab`), so a tab's charts add up
   to its totals and agree with Today and each other.
-- Answers are cached per range and time zone until the data changes: new or replaced events, category choices,
-  devices paired or revoked (`cached: true`). A range with today in it is also worked out again after a minute.
+- Answers are cached per range and time zone until the data changes (`cached: true`). The database keeps a change
+  counter (migration `0005`): its triggers count events added, replaced or deleted, category choices, and devices
+  paired, renamed or revoked, whichever process makes the change, so a seed run from the command line counts too.
+  A range that is not over (today in it, or days still to come) is also worked out again after a minute.
 - On 14 seeded days every tab answers in about 0.3 s.
 
 `GET /wrapped?week=2026-W38&tz=America/Toronto` (DT-41, viewer) is the week in review, Monday to Sunday. Without
@@ -499,11 +505,13 @@ days); anything else is `400`.
   "model": "google/gemma-4-e4b", "cached": false, "fallback": false, "reason": null, "streaks": [], "meta": { "...": "..." } }
 ```
 
-- `lines` are three highlight lines by the local model from the week's facts. Every number in them is checked like
-  the story's (DT-39); lines that fail are retried once, then replaced by plain lines from the same facts
-  (`fallback: true`, `model: null`, `reason` says why).
-- The facts compare the week with the one before only a day for a day (average screen time a day), and only when the
-  week before has data on at least 4 days. A week that only began being recorded would make any week look huge.
+- `lines` are always three: highlight lines by the local model from the week's facts. Every number in them is
+  checked like the story's (DT-39); lines that fail are retried once, then replaced by three plain lines from the
+  same facts (`fallback: true`, `model: null`, `reason` says why).
+- `in_progress` is true only while the week is going: a week still to come says false, as `/insights` does.
+- The facts compare the week with the one before only a day for a day (average screen time a day), over whole days,
+  and only when both weeks have at least 4 whole days with data. A week that only began being recorded, or this week
+  on a Monday morning, would make any change look huge.
 - The lines are cached per week and time zone like the story: until the facts or what wrote them change, and for a
   week not over yet at most every 15 minutes.
 - `streaks` is empty until DT-53 adds them.

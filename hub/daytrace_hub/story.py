@@ -35,9 +35,10 @@ import sqlite3
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
 
+from .api.timeline import day_window
 from .db import Database, transaction, utc_text
 from .llm import LLM, LLMError
 from .sessions import parse_utc
@@ -786,7 +787,7 @@ def day_story(database: Database, llm: LLM, day: date, tz: tzinfo, tz_name: str,
 # --- the week's Wrapped (DT-41) -----------------------------------------------------------------------------------
 
 WRAPPED_LINES = 3
-MIN_DAYS_TO_COMPARE = 4  # days with data the week before needs before this week is compared with it
+MIN_DAYS_TO_COMPARE = 4  # whole days with data each week needs before the two are compared
 MAX_LINE_CHARS = 160
 WRAPPED_PROMPT = (
     "You write the three highlight lines of someone's week in review, from facts about their screen time, for them "
@@ -832,11 +833,13 @@ def week_facts(stats: Stats, first: date, last: date) -> list[Fact]:
     late = [stats.late_night_minutes(day)["value"] for day in days]
     if any(value is not None for value in late):
         facts.append(Fact("screen time after 11 pm this week", round(sum(v for v in late if v is not None)), "minutes"))
-    # Against the week before, a day for a day (so a week with a missing day isn't "less"), and only when it has
-    # enough days to say anything: a week that only just began being recorded would make any week look huge.
+    # Against the week before, a day for a day (so a week with a missing day isn't "less"), over whole days only,
+    # and only when both weeks have enough of them to say anything: a week that only began being recorded, or
+    # this week on a Monday morning (a few hours of one day), would make any change look huge.
+    whole = [item for item in by_day["items"] if stats.day(date.fromisoformat(item["key"])).over]
     before = stats.totals(first - timedelta(days=7), first - timedelta(days=1), group_by="day")
-    if len(before["items"]) >= MIN_DAYS_TO_COMPARE and before["total_seconds"]:
-        this_day = totals["total_seconds"] / days_with_data
+    if len(whole) >= MIN_DAYS_TO_COMPARE and len(before["items"]) >= MIN_DAYS_TO_COMPARE and before["total_seconds"]:
+        this_day = sum(item["seconds"] for item in whole) / len(whole)
         before_day = before["total_seconds"] / len(before["items"])
         facts.append(Fact("average screen time a day the week before", round(before_day / 60), "minutes"))
         change = round(100 * (this_day - before_day) / before_day)
@@ -850,9 +853,10 @@ def week_title(first: date) -> str:
 
 
 def template_wrapped(facts: Sequence[Fact], first: date) -> list[str]:
-    """Plain lines from the facts, used when the model is not available or keeps getting numbers wrong."""
+    """Three plain lines from the facts, used when the model is not available or keeps getting numbers wrong."""
     if not facts:
-        return [f"Nothing was recorded in {week_title(first)}.", "When your devices send data, your week appears here."]
+        return [f"Nothing was recorded in {week_title(first)}.", "When your devices send data for a week, its highlights appear here.",
+                "Pick another week, or pair a phone or computer on the Devices page."]
     by_label = {fact.label: fact for fact in facts}
     lines = [(f"You spent {duration(float(by_label['screen time this week'].value))} on screens this week, about "
               f"{duration(float(by_label['average screen time a day'].value))} a day.")]
@@ -861,11 +865,20 @@ def template_wrapped(facts: Sequence[Fact], first: date) -> list[str]:
         lines.append(f"Your most-used app was {top.label[8:]}, at {duration(float(top.value))}.")
     focus = next((fact for fact in facts if fact.label.startswith("focused time this week")), None)
     best = next((fact for fact in facts if fact.label.startswith("best focus score")), None)
+    category = next((fact for fact in facts if fact.label.startswith("time on ")), None)
+    more = []  # the rest, best first; a week with screen time always has a top category
     if focus is not None:
-        lines.append(f"You focused for {duration(float(focus.value))} in longer blocks"
-                     + (f", best on {best.label.rsplit('on ', 1)[1]} with a score of {best.value}." if best else "."))
-    elif "average sleep a night" in by_label:
-        lines.append(f"You slept about {duration(float(by_label['average sleep a night'].value))} a night.")
+        more.append(f"You focused for {duration(float(focus.value))} in longer blocks"
+                    + (f", best on {best.label.rsplit('on ', 1)[1]} with a score of {best.value}." if best else "."))
+    if "average sleep a night" in by_label:
+        more.append(f"You slept about {duration(float(by_label['average sleep a night'].value))} a night.")
+    if "phone pickups this week" in by_label:
+        more.append(f"You picked up your phone {by_label['phone pickups this week'].value} times.")
+    if category is not None:
+        more.append(f"Your top category was {category.label[8:]}, at {duration(float(category.value))}.")
+    lines += more
+    while len(lines) < WRAPPED_LINES:  # only if the facts were cut short; the API promises three
+        lines.append("Every number here comes from your own devices.")
     return lines[:WRAPPED_LINES]
 
 
@@ -875,7 +888,8 @@ def clean_lines(text: str | None) -> list[str]:
     if "</think>" in text:
         text = text.rsplit("</think>", 1)[1]
     text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
-    lines = [re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s*", "", line).strip().strip('"').strip() for line in text.splitlines()]
+    # Numbering is "1." or "2)" not followed by a digit: "2.5 hours of focus" keeps its number.
+    lines = [re.sub(r"^\s*(?:[-*]\s+|\u2022\s*|\d{1,2}[.)](?!\d)\s*)", "", line).strip().strip('"').strip() for line in text.splitlines()]
     return [re.sub(r"\s+", " ", line) for line in lines if line]
 
 
@@ -948,22 +962,30 @@ def wrapped_writer(llm: LLM, in_progress: bool) -> str:
     return f"{WRAPPED_VERSION}|{llm.settings.model or 'auto'}|{'so far' if in_progress else 'whole week'}"
 
 
+def week_in_progress(first: date, tz: tzinfo, now: datetime) -> bool:
+    """Whether the week from Monday `first` has begun and is not over (as a day's `in_progress`)."""
+    start, end = day_window(first, tz)[0], day_window(first + timedelta(days=6), tz)[1]
+    return start < now < end
+
+
 def week_wrapped(database: Database, llm: LLM, first: date, tz: tzinfo, tz_name: str,
-                 now: datetime | None = None) -> WrappedLines:
+                 now: datetime | None = None, facts: list[Fact] | None = None) -> WrappedLines:
     """The Wrapped lines for the week starting on Monday `first`: from the cache when nothing behind them changed
-    (for a week not over, when under 15 minutes old), otherwise written now. The database is not held while the
-    model writes."""
-    last = first + timedelta(days=6)
+    (for a week not over, when under 15 minutes old), otherwise written now. `facts` are week_facts() for it at
+    `now` when the caller has them already. The database is not held while the model writes."""
+    if now is not None and now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now = (now or datetime.now(UTC)).astimezone(UTC)
+    in_progress = week_in_progress(first, tz, now)
     with _story_lock(database, first, f"wrapped|{tz_name}"):
         with database.connect() as conn:
-            stats = Stats(conn, tz, tz_name, now)
-            facts = week_facts(stats, first, last)
-            in_progress = not stats.day(last).over
+            if facts is None:
+                facts = week_facts(Stats(conn, tz, tz_name, now), first, first + timedelta(days=6))
             row = conn.execute("SELECT facts_hash, writer, lines, facts, model, created_at FROM wrapped_cache"
                                " WHERE week = ? AND tz = ?", (first.isoformat(), tz_name)).fetchone()
         writer, digest = wrapped_writer(llm, in_progress), facts_hash(facts, first, f"wrapped|{tz_name}")
         if row is not None and row["writer"] == writer:
-            recent = in_progress and parse_utc(row["created_at"]) > stats.now - TODAY_REWRITE
+            recent = in_progress and parse_utc(row["created_at"]) > now - TODAY_REWRITE
             if row["facts_hash"] == digest or recent:
                 written_from = [Fact(**fact) for fact in json.loads(row["facts"])]
                 return WrappedLines(json.loads(row["lines"]), written_from, row["model"], True, False, None, in_progress)
@@ -980,7 +1002,7 @@ def week_wrapped(database: Database, llm: LLM, first: date, tz: tzinfo, tz_name:
                         " lines = excluded.lines, facts = excluded.facts, model = excluded.model, created_at = excluded.created_at"
                         " WHERE excluded.created_at >= wrapped_cache.created_at",
                         (first.isoformat(), tz_name, digest, writer, json.dumps(result.lines),
-                         json.dumps([f.as_dict() for f in result.facts]), result.model, utc_text(stats.now)),
+                         json.dumps([f.as_dict() for f in result.facts]), result.model, utc_text(now)),
                     )
             except sqlite3.OperationalError:
                 pass  # too busy to keep: the lines are still good

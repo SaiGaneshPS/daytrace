@@ -280,6 +280,15 @@ class Stats:
         paired = {d for d, device in self._devices.items() if device.expected(window.start, window.until)}
         return {d for d in paired | window.counted_devices_with_data if self._device_types.get(d) in types}
 
+    def observed(self, day: date) -> bool:
+        """Whether the hub could have heard about `day` at all: it has begun, and something was sent for it or a
+        phone or computer was paired then. Counts that need no screen (meals, calendar events) are 0 only on such
+        a day; before recording began, or on a day still to come, they are missing."""
+        window = self.day(day)
+        if window.until <= window.start:
+            return False
+        return any(window.overlaps(event, window.start, window.until) for event in window.events) or bool(self._expected(window))
+
     def _meta(self, start: datetime, end: datetime, windows: Sequence[Window], estimated: bool,
               unit: str = "minutes") -> dict[str, Any]:
         sources = {e.source for w in windows for e in w.events if w.overlaps(e, w.start, w.until)}

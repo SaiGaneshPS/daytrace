@@ -26,7 +26,15 @@ from daytrace_hub.config import Settings, get_profile
 from daytrace_hub.db import Database, transaction
 from daytrace_hub.seed import seed
 from daytrace_hub.stats import Stats
-from daytrace_hub.story import MIN_DAYS_TO_COMPARE, template_wrapped, week_facts
+from daytrace_hub.story import (
+    MIN_DAYS_TO_COMPARE,
+    WRAPPED_LINES,
+    Fact,
+    clean_lines,
+    template_wrapped,
+    week_facts,
+    wrapped_problems,
+)
 
 TZ_NAME = "America/Toronto"
 TZ = ZoneInfo(TZ_NAME)
@@ -189,6 +197,47 @@ def test_the_sleep_food_and_calendar_tabs_agree_with_the_stats_engine(hub: TestC
     assert metric(calendar, "events") == sum(len(plan["blocks"]) for plan in plans)
 
 
+def test_a_device_that_sent_nothing_that_day_is_a_gap_not_zero(hub: TestClient, demo: Settings, stats_of: Callable[[], Stats]) -> None:
+    quiet = TODAY - timedelta(days=3)
+    start, end = datetime.combine(quiet, datetime.min.time(), tzinfo=TZ), datetime.combine(quiet + timedelta(days=1), datetime.min.time(), tzinfo=TZ)
+    with Database(demo.database_path).connect() as conn, transaction(conn):  # the desk PC stayed off that day
+        conn.execute("DELETE FROM events WHERE device_id = 'seed-windows' AND start_utc < ? AND COALESCE(end_utc, start_utc) >= ?", (utc(end), utc(start)))
+    day = (quiet - FIRST).days
+    by_day = {total["key"]: total["minutes"] for total in stats_of().totals(FIRST, TODAY, group_by="day")["items"]}
+    for name, key in (("overview", "screen_by_device"), ("devices", "by_day")):
+        lines = {line["key"]: line["values"] for line in tab(hub, name)["series"][key]["lines"]}
+        assert lines["seed-windows"][day] is None, name  # no data from it, which is not 0 minutes
+        assert lines["seed-android"][day] is not None and lines["seed-windows"][day + 1] is not None
+        assert close(by_day[quiet.isoformat()], [values[day] or 0 for values in lines.values()], len(lines))
+
+
+def test_device_names_that_repeat_are_told_apart(hub: TestClient, demo: Settings) -> None:
+    add_device(demo, "android-9", "Galaxy phone (demo)", "android")  # the phone, paired again with its old name
+    add_device(demo, "windows-9", "work", "windows")  # a computer named like the Work category
+    add_event(demo, datetime(2026, 9, 23, 12, 0, tzinfo=TZ), device="android-9")
+    add_event(demo, datetime(2026, 9, 23, 14, 0, tzinfo=TZ), device="windows-9", kind="window", app="Code", category="work")
+    body = tab(hub, "devices")
+    flow = body["series"]["flow"]
+    assert len({node.casefold() for node in flow["nodes"]}) == len(flow["nodes"])  # a Sankey refuses a name twice
+    assert all(link["source"] != link["target"] and {link["source"], link["target"]} <= set(flow["nodes"]) for link in flow["links"])
+    assert {"Galaxy phone (demo) (android-9)", "Galaxy phone (demo) (seed-android)", "work (windows-9)", "Work"} <= set(flow["nodes"])
+    names = [line["name"] for line in body["series"]["by_day"]["lines"]]
+    assert len(set(names)) == len(names)
+    rows = body["series"]["hours"]["y"]
+    assert len(set(rows)) == len(rows)
+    assert insights_api.distinct({"a": "Pixel", "b": "pixel", "c": "Work", "d": "Mac"}, taken=["work"]) == {
+        "a": "Pixel (a)", "b": "pixel (b)", "c": "Work (c)", "d": "Mac"}
+
+
+def test_overlapping_events_are_planned_time_once_in_the_heatmap(hub: TestClient, demo: Settings) -> None:
+    day = datetime(2026, 9, 23, 10, 0, tzinfo=TZ)
+    add_event(demo, day, minutes=60, kind="calendar_event", app=None, category=None, title="Standup and planning")
+    add_event(demo, day + timedelta(minutes=30), minutes=60, device="seed-iphone", kind="calendar_event", app=None, category=None, title="Study block")
+    body = tab(hub, "calendar")
+    cells = [cell["value"] for cell in body["series"]["hours"]["cells"]]
+    assert close(metric(body, "planned"), cells, len(cells))  # 10:00 to 11:30 is 90 minutes, not 120
+
+
 # --- ranges and missing days -------------------------------------------------------------------------------------
 
 
@@ -200,6 +249,25 @@ def test_days_without_data_are_null_not_zero(hub: TestClient) -> None:
     assert metric(future, "screen_time") is None and future["in_progress"] is False  # nothing has happened yet
     past = tab(hub, "overview", f"{FIRST.isoformat()}..{(TODAY - timedelta(days=1)).isoformat()}")
     assert past["in_progress"] is False
+
+
+@pytest.mark.parametrize("span", ["2026-09-01..2026-09-05", f"{(TODAY + timedelta(days=1)).isoformat()}..{(TODAY + timedelta(days=3)).isoformat()}"])
+def test_counts_are_null_where_nothing_could_be_seen(hub: TestClient, span: str) -> None:
+    """Before recording began and on days still to come, "0 meals" or "0 events" would claim what nobody saw."""
+    food, calendar, sleep = tab(hub, "food", span), tab(hub, "calendar", span), tab(hub, "sleep", span)
+    assert (metric(food, "meals"), metric(food, "days_with_meals")) == (None, None)
+    assert all(value is None for line in food["series"]["meals_by_day"]["lines"] for value in line["values"])
+    assert (metric(calendar, "planned"), metric(calendar, "events")) == (None, None)
+    assert (metric(sleep, "nights"), metric(sleep, "estimated_nights"), metric(sleep, "sleep")) == (None, None, None)
+
+
+def test_counts_are_zero_on_a_day_that_was_seen(hub: TestClient, demo: Settings) -> None:
+    fasting = TODAY - timedelta(days=2)
+    start, end = datetime.combine(fasting, datetime.min.time(), tzinfo=TZ), datetime.combine(fasting + timedelta(days=1), datetime.min.time(), tzinfo=TZ)
+    with Database(demo.database_path).connect() as conn, transaction(conn):  # the devices sent data, but no meal was logged
+        conn.execute("DELETE FROM events WHERE kind = 'meal' AND start_utc >= ? AND start_utc < ?", (utc(start), utc(end)))
+    body = tab(hub, "food", f"{fasting.isoformat()}..{fasting.isoformat()}")
+    assert (metric(body, "meals"), metric(body, "days_with_meals")) == (0, 0)
 
 
 @pytest.mark.parametrize(("span", "first", "last"), [
@@ -229,14 +297,25 @@ def test_an_unknown_tab_or_an_unpaired_phone_is_refused(hub: TestClient) -> None
 # --- caching and speed -------------------------------------------------------------------------------------------
 
 
-def add_event(settings: Settings, when: datetime, minutes: int = 30) -> None:
+def utc(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+
+
+def add_event(settings: Settings, when: datetime, minutes: int = 30, device: str = "seed-android", kind: str = "app_session",
+              app: str | None = "Extra", category: str | None = "social", title: str | None = None) -> None:
     with Database(settings.database_path).connect() as conn, transaction(conn):
         conn.execute(
-            "INSERT INTO events (device_id, dedup_key, seq, kind, source, start_utc, end_utc, utc_offset_min, app, app_id, category, data, received_at)"
-            " VALUES ('seed-android', ?, NULL, 'app_session', 'seed', ?, ?, -240, 'Extra', 'app.extra', 'social', '{}', ?)",
-            (f"content:extra-{when.isoformat()}", when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000Z"),
-             (when + timedelta(minutes=minutes)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000Z"), "2026-09-25T20:00:00.000000Z"),
+            "INSERT INTO events (device_id, dedup_key, seq, kind, source, start_utc, end_utc, utc_offset_min, app, app_id, title, category, data, received_at)"
+            " VALUES (?, ?, NULL, ?, 'seed', ?, ?, -240, ?, ?, ?, ?, '{}', ?)",
+            (device, f"content:extra-{device}-{kind}-{when.isoformat()}", kind, utc(when), utc(when + timedelta(minutes=minutes)),
+             app, f"app.{app.lower()}" if app else None, title, category, "2026-09-25T20:00:00.000000Z"),
         )
+
+
+def add_device(settings: Settings, device_id: str, name: str, device_type: str) -> None:
+    with Database(settings.database_path).connect() as conn, transaction(conn):
+        conn.execute("INSERT INTO devices (device_id, name, device_type, paired_at) VALUES (?, ?, ?, ?)",
+                     (device_id, name, device_type, utc(datetime(2026, 9, 1, tzinfo=TZ))))
 
 
 def test_answers_are_cached_until_the_data_changes(hub: TestClient, demo: Settings, stats_of: Callable[[], Stats]) -> None:
@@ -259,6 +338,55 @@ def test_a_range_with_today_is_worked_out_again_after_a_minute(hub: TestClient, 
     assert tab(hub, "apps", "7d")["cached"] is True
     moment[0] += 2
     assert tab(hub, "apps", "7d")["cached"] is False  # today moves on even when no event arrives
+
+
+def test_a_range_not_begun_is_worked_out_again_after_a_minute(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    moment = [1000.0]
+    monkeypatch.setattr(insights_api, "monotonic", lambda: moment[0])
+    tomorrow = (TODAY + timedelta(days=1)).isoformat()
+    assert tab(hub, "overview", f"{tomorrow}..{tomorrow}")["cached"] is False
+    assert tab(hub, "overview", f"{tomorrow}..{tomorrow}")["cached"] is True
+    moment[0] += insights_api.LIVE_CACHE_SECONDS + 1
+    assert tab(hub, "overview", f"{tomorrow}..{tomorrow}")["cached"] is False  # after midnight it has begun
+
+
+def test_a_cache_hit_survives_another_request_evicting_it(hub: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    span = f"{FIRST.isoformat()}..{(TODAY - timedelta(days=1)).isoformat()}"
+    tab(hub, "overview", span)
+
+    class Evicting:
+        """The cache's lock, with another request filling the cache (and evicting everything) whenever it is let go."""
+
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_: object) -> None:
+            insights_api._cache.clear()
+
+    monkeypatch.setattr(insights_api, "_cache_guard", Evicting())
+    assert tab(hub, "overview", span)["cached"] is True  # found and used in one hold of the lock
+
+
+def test_the_data_version_sees_a_seed_run_and_not_last_seen(hub: TestClient, demo: Settings) -> None:
+    span = f"{FIRST.isoformat()}..{(TODAY - timedelta(days=1)).isoformat()}"
+    tab(hub, "overview", span)
+    database = Database(demo.database_path)
+    with database.connect() as conn:
+        version, rows = insights_api.data_version(conn), conn.execute("SELECT COUNT(*), MAX(id) FROM events").fetchone()
+    seed(demo, 14, TZ, NOW)  # from another process, it deletes its events and inserts as many again
+    with database.connect() as conn:
+        assert tuple(conn.execute("SELECT COUNT(*), MAX(id) FROM events").fetchone()) == tuple(rows)  # ids reused
+        assert insights_api.data_version(conn) > version
+    assert tab(hub, "overview", span)["cached"] is False
+    with database.connect() as conn, transaction(conn):
+        version = insights_api.data_version(conn)
+        conn.execute("UPDATE devices SET last_seen = ?", (utc(NOW),))  # written on every request: changes no number
+    with database.connect() as conn:
+        assert insights_api.data_version(conn) == version
+    assert tab(hub, "overview", span)["cached"] is True
+    with database.connect() as conn, transaction(conn):
+        conn.execute("UPDATE devices SET name = 'Renamed' WHERE device_id = 'seed-android'")
+    assert tab(hub, "overview", span)["cached"] is False
 
 
 def test_every_tab_answers_quickly_on_two_weeks_of_data(hub: TestClient) -> None:
@@ -342,11 +470,48 @@ def test_the_week_so_far_and_bad_weeks(hub: TestClient, fake_llm: FakeModelServe
         assert hub.get("/api/v1/wrapped", params={"week": week}).status_code == 400, week
 
 
+def test_a_week_to_come_is_not_in_progress(hub: TestClient, fake_llm: FakeModelServer) -> None:
+    body = hub.get("/api/v1/wrapped", params={"tz": TZ_NAME, "week": "2026-W41"}).json()
+    assert body["in_progress"] is False and body["fallback"] is True  # as /insights says for days not begun
+    assert len(body["lines"]) == WRAPPED_LINES and body["lines"][0].startswith("Nothing was recorded")
+    assert fake_llm.chats() == []  # nothing to write about
+
+
 def test_a_week_is_compared_with_the_one_before_only_when_it_has_enough_days(demo: Settings, stats_of: Callable[[], Stats]) -> None:
     stats = stats_of()
     labels = [fact.label for fact in week_facts(stats, LAST_WEEK, LAST_WEEK + timedelta(days=6))]
     assert not any("week before" in label for label in labels)  # the seed has only 2 days of the week before
     this_week = TODAY - timedelta(days=TODAY.weekday())
     labels = [fact.label for fact in week_facts(stats, this_week, this_week + timedelta(days=6))]
-    assert "average screen time a day the week before" in labels  # last week has all 7 (MIN_DAYS_TO_COMPARE is fewer)
-    assert MIN_DAYS_TO_COMPARE <= 7
+    assert "average screen time a day the week before" in labels  # last week has all 7, this one 4 whole days so far
+    assert MIN_DAYS_TO_COMPARE <= 4
+
+
+def test_a_week_just_begun_is_not_compared_with_the_one_before(demo: Settings) -> None:
+    monday = datetime(2026, 9, 21, 9, 0, tzinfo=TZ)  # a few hours of Monday against a whole week
+    with Database(demo.database_path).connect() as conn:
+        facts = week_facts(Stats(conn, TZ, TZ_NAME, monday), monday.date(), monday.date() + timedelta(days=6))
+    assert facts and not any("week before" in fact.label for fact in facts)
+
+
+def test_the_plain_lines_are_always_three_and_pass_the_number_check(demo: Settings, stats_of: Callable[[], Stats]) -> None:
+    days = [LAST_WEEK + timedelta(days=i) for i in range(7)]
+    facts = week_facts(stats_of(), LAST_WEEK, LAST_WEEK + timedelta(days=6))
+    lines = template_wrapped(facts, LAST_WEEK)
+    assert len(lines) == WRAPPED_LINES and wrapped_problems(lines, facts, days) == []
+    screen_only = [fact for fact in facts if fact.label.startswith(("screen time this", "average screen", "time in ", "time on "))]
+    lines = template_wrapped(screen_only, LAST_WEEK)  # no focus, sleep or pickups: a week of phone videos
+    assert len(lines) == WRAPPED_LINES and wrapped_problems(lines, screen_only, days) == []
+    shortest = [Fact("screen time this week", 30, "minutes"), Fact("average screen time a day", 30, "minutes")]
+    assert len(template_wrapped(shortest, LAST_WEEK)) == WRAPPED_LINES
+    assert len(template_wrapped([], LAST_WEEK)) == WRAPPED_LINES
+
+
+def test_clean_lines_takes_off_numbering_but_not_a_number() -> None:
+    reply = "<think>plan</think>\n1. You spent 2.5 hours in Code.\n2) Two.\n- Three\n• Four\n2.5 hours of focus on Tuesday.\n\"Quoted.\""
+    assert clean_lines(reply) == ["You spent 2.5 hours in Code.", "Two.", "Three", "Four", "2.5 hours of focus on Tuesday.", "Quoted."]
+
+
+def test_the_openapi_schema_has_one_meta_model(hub: TestClient) -> None:
+    schemas = hub.app.openapi()["components"]["schemas"]
+    assert "Meta" in schemas and not any(name.endswith("__Meta") for name in schemas)  # the dashboard's types keep "Meta"
