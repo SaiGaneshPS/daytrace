@@ -310,3 +310,25 @@ export function useApi<P extends PathsWith<"get">>(
     reload,
   };
 }
+
+/** Calls `refresh` every `every` ms while the page is visible; null stops it. */
+export function usePolling(every: number | null, refresh: () => void) {
+  useEffect(() => {
+    if (every === null) return;
+    let timer: number | undefined;
+    const start = () => {
+      window.clearInterval(timer);
+      if (document.visibilityState === "visible") timer = window.setInterval(refresh, every);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh(); // catch up at once when the page comes back
+      start();
+    };
+    start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [every, refresh]);
+}

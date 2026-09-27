@@ -1,7 +1,8 @@
 // DT-32: the Devices page with the hub mocked: the hub computer's pairing code (countdown, the two QR codes, a token
-// given right there, a code running out, a new device ending it), the device list and revoking, and pairing from a
-// phone (typing the code, the camera's link, which survives a reload, and a token for Shortcuts with Copy). Also
-// confetti drawn without a worker (the hub's Content-Security-Policy refuses blob: workers), touch targets and axe.
+// given right there, a code running out, the hub saying it was used, a newer code in another tab), the device list
+// and revoking, and pairing from a phone (typing the code, the camera's link, a token for Shortcuts with Copy, an
+// already paired or revoked browser). Also confetti drawn without a worker (the hub's Content-Security-Policy
+// refuses blob: workers), touch targets and axe.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 
@@ -12,31 +13,45 @@ const CODE = "493817";
 const LAN = "http://192.168.2.179:8765";
 
 type Device = {
-  device_id: string; name: string; device_type: string; paired_at: string; last_seen: string | null; revoked_at: string | null;
-  last_seq: number | null; event_count: number; events_24h: number;
+  device_id: string; name: string; device_type: string; has_token: boolean; paired_at: string; last_seen: string | null;
+  revoked_at: string | null; last_seq: number | null; event_count: number; events_24h: number;
 };
 const device = (device_id: string, name: string, device_type: string, extra: Partial<Device> = {}): Device => ({
-  device_id, name, device_type, paired_at: ago(86_400 * 10), last_seen: null, revoked_at: null, last_seq: null,
-  event_count: 0, events_24h: 0, ...extra,
+  device_id, name, device_type, has_token: true, paired_at: ago(86_400 * 10), last_seen: null, revoked_at: null,
+  last_seq: null, event_count: 0, events_24h: 0, ...extra,
 });
 const DEVICES = (): Device[] => [
-  device("windows-1", "Desk PC", "windows", { last_seq: 812, event_count: 813, events_24h: 120 }), // the hub's own tracker
+  device("windows-1", "Desk PC", "windows", { has_token: false, last_seq: 812, event_count: 813, events_24h: 120 }), // the hub's tracker
   device("android-1", "Galaxy phone", "android", { last_seen: ago(20), last_seq: 1203, event_count: 1204, events_24h: 64 }),
-  device("seed-iphone", "iPhone (demo)", "ios", { last_seq: 171, event_count: 172, events_24h: 9 }),
+  device("seed-iphone", "iPhone (demo)", "ios", { has_token: false, last_seq: 171, event_count: 172, events_24h: 9 }),
   device("viewer-1", "Android phone (Chrome)", "viewer", { last_seen: ago(3 * 3600) }),
   device("browser-1", "Old laptop extension", "browser", { revoked_at: ago(86_400 * 3), last_seq: 57, event_count: 58 }),
 ];
 
-test.use({ timezoneId: "America/Toronto", locale: "en-US" });
-
-type Mocks = { local?: boolean | (() => boolean); devices?: () => Device[] | { status: number }; claim?: (body: Record<string, string>) => { status?: number; json: object } | Promise<{ status?: number; json: object }> };
+type Status = { id: string; active: boolean; used: boolean; claimed_by: { device_id: string; name: string; device_type: string } | null };
+type Mocks = {
+  local?: boolean | (() => boolean);
+  url?: string | null;
+  health?: () => { status: number } | null;
+  devices?: () => Device[] | { status: number };
+  status?: (latestId: string) => Status;
+  claim?: (body: Record<string, string>) => { status?: number; json: object } | Promise<{ status?: number; json: object }>;
+};
 
 async function mockHub(page: Page, mocks: Mocks = {}) {
-  const seen = { starts: 0, claims: [] as Record<string, string>[], deleted: [] as string[], qr: [] as string[] };
-  await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked" } } }));
+  const seen = { starts: 0, claims: [] as Record<string, string>[], deleted: [] as string[], qr: [] as string[], urls: [] as string[], devices: 0, statuses: 0 };
+  page.on("request", (request) => seen.urls.push(request.url()));
   const local = () => (typeof mocks.local === "function" ? mocks.local() : (mocks.local ?? true));
-  await page.route("**/api/v1/health", (route) => route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: local() } }));
+  const url = mocks.url === undefined ? LAN : mocks.url;
+  const latestId = () => (seen.starts <= 1 ? "code-a" : "code-b");
+  await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: { code: "not_found", message: "Not mocked" } } }));
+  await page.route("**/api/v1/health", (route) => {
+    const failure = mocks.health?.();
+    if (failure) return route.fulfill({ status: failure.status, json: { error: { code: "down", message: "the hub is starting" } } });
+    return route.fulfill({ json: { status: "ok", profile: "demo", version: "0.1.0", local: local() } });
+  });
   await page.route("**/api/v1/devices", (route) => {
+    seen.devices += 1;
     const reply = (mocks.devices ?? DEVICES)();
     if ("status" in reply) return route.fulfill({ status: reply.status, json: { error: { code: "unauthorized", message: "not paired" } } });
     return route.fulfill({ json: { devices: reply } });
@@ -45,8 +60,15 @@ async function mockHub(page: Page, mocks: Mocks = {}) {
     seen.starts += 1;
     const code = seen.starts === 1 ? CODE : "802211";
     return route.fulfill({
-      json: { code, expires_at: new Date(NOW + 300_000).toISOString(), url: LAN, urls: [LAN], mdns_url: "http://daytrace-desk.local:8765", qr: "/api/v1/pair/qr.png" },
+      json: {
+        id: latestId(), code, expires_at: new Date(NOW + 300_000).toISOString(), url, urls: url ? [url] : [],
+        mdns_url: url ? "http://daytrace-desk.local:8765" : null, qr: url ? "/api/v1/pair/qr.png" : null,
+      },
     });
+  });
+  await page.route("**/api/v1/pair/status", (route) => {
+    seen.statuses += 1;
+    return route.fulfill({ json: mocks.status ? mocks.status(latestId()) : { id: latestId(), active: true, used: false, claimed_by: null } });
   });
   await page.route("**/api/v1/pair/qr.png?**", (route) => {
     seen.qr.push(new URL(route.request().url()).search);
@@ -61,7 +83,7 @@ async function mockHub(page: Page, mocks: Mocks = {}) {
     };
     await route.fulfill({ status: reply.status ?? 201, json: reply.json });
   });
-  await page.route("**/api/v1/devices/*", (route) => {
+  await page.route("**/api/v1/devices/*", async (route) => {
     if (route.request().method() !== "DELETE") return route.fallback();
     seen.deleted.push(route.request().url().split("/").pop() ?? "");
     return route.fulfill({ status: 204 });
@@ -94,10 +116,11 @@ test("the hub computer shows a code with its time left, both QR codes and its ad
   await page.getByRole("tab", { name: "Phone browser" }).click();
   await expect(page.getByRole("img", { name: "QR code that opens this page on a phone and pairs its browser" })).toBeVisible();
   await expect(card).toContainText(`${LAN}/devices`);
-  expect(seen.qr).toEqual([`?for=app&code=${CODE}`, `?for=browser&code=${CODE}`]); // a new code, a new picture
+  expect(seen.qr).toEqual(["?for=app&id=code-a", "?for=browser&id=code-a"]); // by the code's id: a new code, a new picture
+  expect(seen.urls.filter((address) => address.includes(CODE))).toEqual([]); // the code itself is in no address (or log)
 });
 
-test("a token given on the hub computer is shown once, with the hub's network address", async ({ page }) => {
+test("a token given on the hub computer is shown once, with the hub's network address, and is no pairing", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const seen = await mockHub(page);
   await page.goto("/devices");
@@ -113,8 +136,12 @@ test("a token given on the hub computer is shown once, with the hub's network ad
   await expect(reveal.getByRole("link", { name: "How to set up the iPhone Shortcuts" })).toBeVisible();
   await expect(page.locator(".code-digits")).toHaveCount(0); // the code is used up
   await reveal.getByRole("button", { name: "Done, I've saved it" }).click();
-  await expect(page.locator(".token")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Show a pairing code" })).toBeVisible();
+  // The next code isn't mistaken for a pairing: the hub says whether it was used.
+  await page.getByRole("button", { name: "Show a pairing code" }).click();
+  await expect(page.locator(".code-digits")).toHaveText("802 211");
+  await page.waitForTimeout(4_500);
+  await expect(page.locator(".pair-success")).toHaveCount(0);
+  await expect(page.locator(".code-digits")).toHaveText("802 211");
 });
 
 test("a code runs out after 5 minutes, and a new one can be shown", async ({ page }) => {
@@ -129,26 +156,70 @@ test("a code runs out after 5 minutes, and a new one can be shown", async ({ pag
   await page.clock.runFor(240_000);
   await expect(page.locator(".pair-code")).toContainText("This code has run out.");
   await expect(page.locator(".qr")).toHaveCount(0); // an old picture is never shown to scan
+  const checks = seen.statuses;
+  await page.clock.runFor(10_000);
+  expect(seen.statuses).toBe(checks); // nothing is checked for a code that has run out
   await page.getByRole("button", { name: "New code" }).click();
   await expect(page.locator(".code-digits")).toHaveText("802 211");
   await expect(page.locator(".pair-code")).toContainText("5:00 left");
   expect(seen.starts).toBe(2);
 });
 
-test("a device paired while the code is out ends the code and is announced", async ({ page }) => {
+test("when the hub says the code was used, the page says by what and closes the code", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const state = { paired: false };
-  await mockHub(page, {
-    devices: () => (state.paired ? [...DEVICES(), device("viewer-2", "Galaxy phone (Chrome)", "viewer", { last_seen: new Date().toISOString() })] : DEVICES()),
+  const state = { used: false };
+  const seen = await mockHub(page, {
+    status: (id) => (state.used ? { id, active: false, used: true, claimed_by: { device_id: "viewer-2", name: "Galaxy phone (Chrome)", device_type: "viewer" } } : { id, active: true, used: false, claimed_by: null }),
   });
   await page.goto("/devices");
-  await expect(page.getByRole("list", { name: "Paired devices" }).getByRole("listitem")).toHaveCount(4);
   await page.getByRole("button", { name: "Show a pairing code" }).click();
   await expect(page.locator(".code-digits")).toBeVisible();
-  state.paired = true; // the phone claims the code
-  await expect(page.locator(".pair-success")).toHaveText("Galaxy phone (Chrome) is paired.", { timeout: 6_000 }); // checked every 3 s
+  const lists = seen.devices;
+  state.used = true; // the phone claims the code
+  await expect(page.locator(".pair-success")).toHaveText("Galaxy phone (Chrome) is paired.", { timeout: 4_000 }); // checked every 2 s
   await expect(page.locator(".code-digits")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Pair another device" })).toBeVisible();
+  await expect.poll(() => seen.devices).toBeGreaterThan(lists); // and the list is loaded again
+});
+
+test("a newer code started elsewhere (another tab) retires this one", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const state = { elsewhere: false };
+  await mockHub(page, { status: (id) => ({ id: state.elsewhere ? "code-from-another-tab" : id, active: true, used: false, claimed_by: null }) });
+  await page.goto("/devices");
+  await page.getByRole("button", { name: "Show a pairing code" }).click();
+  await expect(page.getByRole("img", { name: "QR code for the Daytrace app" })).toBeVisible();
+  state.elsewhere = true;
+  await expect(page.locator(".pair-code")).toContainText("A newer code was started, in another tab or window", { timeout: 4_000 });
+  await expect(page.locator(".qr")).toHaveCount(0); // never the other code's picture next to these digits
+  await expect(page.getByRole("tab")).toHaveCount(0);
+});
+
+test("without a network address, nothing tells a phone to use localhost", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockHub(page, { url: null });
+  await page.goto("/devices");
+  await page.getByRole("button", { name: "Show a pairing code" }).click();
+  const card = page.getByRole("region", { name: "Pair a device" });
+  await expect(card).toContainText("This computer has no address a phone can reach right now.");
+  await expect(page.locator(".qr")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Phone browser" }).click();
+  await expect(card).toContainText("A phone can pair once this computer has an address it can reach");
+  await page.getByRole("tab", { name: "Token" }).click();
+  await page.getByRole("button", { name: "Get the token" }).click();
+  await expect(page.locator(".token-reveal")).toContainText("The hub has no address a phone can reach yet");
+  await expect(page.locator("main")).not.toContainText("localhost");
+});
+
+test("when the hub can't be reached at first, the page tries again", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const state = { down: true };
+  await mockHub(page, { health: () => (state.down ? { status: 500 } : null) });
+  await page.goto("/devices");
+  await expect(page.getByRole("region", { name: "Pair a device" })).toContainText("The hub can't be reached", { timeout: 10_000 });
+  state.down = false;
+  await page.getByRole("region", { name: "Pair a device" }).getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("button", { name: "Show a pairing code" })).toBeVisible();
 });
 
 // --- the device list --------------------------------------------------------------------------------------------
@@ -165,12 +236,16 @@ test("each device shows its platform, when it was in touch, and what it sent", a
   await expect(card("Galaxy phone")).toContainText("Last seen just now");
   await expect(card("Galaxy phone").locator(".live-dot.live")).toHaveCount(1);
   await expect(card("Galaxy phone")).toContainText("synced in the last minute");
-  await expect(card("Galaxy phone").locator(".device-stats")).toContainText("Last seq1203Last 24 h64All events1,204");
+  await expect(card("Galaxy phone").locator(".device-stats")).toContainText("Last seq1203Last 24 h64All events1,204"); // a seq is an id
   await expect(card("Desk PC")).toContainText("Tracked on the hub computer");
   await expect(card("iPhone (demo)")).toContainText("Demo data, made on the hub");
   await expect(card("Android phone (Chrome)")).toContainText("Last seen 3 h ago");
   await expect(card("Android phone (Chrome)").locator(".live-dot")).toHaveCount(0);
   await expect(card("Android phone (Chrome)").locator(".platform-viewer")).toHaveCount(1);
+  // Only devices with a token can be revoked: the tracker and the demo data write on the hub directly.
+  await expect(page.getByRole("button", { name: /^Revoke/ })).toHaveCount(2);
+  await expect(card("Desk PC").getByRole("button")).toHaveCount(0);
+  await expect(card("iPhone (demo)").getByRole("button")).toHaveCount(0);
   const revoked = page.locator(".revoked");
   await expect(revoked.locator("summary")).toHaveText(/Revoked devices\s*1/);
   await revoked.locator("summary").click();
@@ -178,10 +253,17 @@ test("each device shows its platform, when it was in touch, and what it sent", a
   await expect(revoked).toContainText("revoked 3 days ago, 58 events kept");
 });
 
-test("revoking asks first, and the device leaves the list", async ({ page }) => {
+test("revoking asks first, can't be cancelled once on its way, and the device leaves the list", async ({ page }) => {
   const state = { revoked: false };
+  let release: () => void = () => undefined;
   const seen = await mockHub(page, {
     devices: () => DEVICES().map((item) => (item.device_id === "android-1" && state.revoked ? { ...item, revoked_at: new Date().toISOString() } : item)),
+  });
+  await page.route("**/api/v1/devices/android-1", async (route) => {
+    await new Promise<void>((resolve) => (release = resolve)); // held until the test lets it through
+    state.revoked = true;
+    seen.deleted.push("android-1");
+    await route.fulfill({ status: 204 });
   });
   await page.goto("/devices");
   const list = page.getByRole("list", { name: "Paired devices" });
@@ -193,13 +275,27 @@ test("revoking asks first, and the device leaves the list", async ({ page }) => 
   await expect(dialog).toBeHidden();
   expect(seen.deleted).toEqual([]);
   await page.getByRole("button", { name: "Revoke Galaxy phone" }).click();
-  state.revoked = true;
   await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Revoking..." })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Keep it" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible(); // it can't pretend to stop a revoke already on its way
+  release();
   await expect(dialog).toBeHidden();
   expect(seen.deleted).toEqual(["android-1"]);
   await expect(page.getByText("Galaxy phone is revoked. Its data stays.")).toBeVisible();
   await expect(list.getByRole("listitem")).toHaveCount(3);
   await expect(page.locator(".revoked summary")).toHaveText(/Revoked devices\s*2/);
+});
+
+test("the list refreshes as soon as the page is looked at again", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const seen = await mockHub(page);
+  await page.goto("/devices");
+  await expect(page.getByRole("list", { name: "Paired devices" })).toBeVisible();
+  const before = seen.devices;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect.poll(() => seen.devices).toBe(before + 1);
 });
 
 // --- pairing from a phone ---------------------------------------------------------------------------------------
@@ -210,7 +306,7 @@ test("a phone's browser pairs by typing the code, and then shows your data", asy
   const seen = await mockHub(page, { local: false, devices: () => (state.paired ? DEVICES() : { status: 401 }) });
   await page.goto("/devices");
   await expect(page.getByRole("region", { name: "Pair this device" })).toBeVisible();
-  await expect(page.getByText("Pair this browser (above) to see your devices.")).toBeVisible();
+  await expect(page.getByText("This browser isn't paired. Pair it above to see your devices.")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Revoke/ })).toHaveCount(0); // only the hub computer revokes
   await expect(page.getByRole("radio", { name: /View the dashboard in this browser/ })).toBeChecked();
   await page.getByLabel("Pairing code").fill("493 817");
@@ -238,7 +334,7 @@ test("a wrong code says so, and the form stays", async ({ page }) => {
   await expect(page.getByRole("alert").filter({ hasText: "The code is the 6 digits" })).toBeVisible();
 });
 
-test("the camera's link pairs at once and takes the code out of the address", async ({ page }) => {
+test("the camera's link pairs at once, takes the code out of the address and keeps it nowhere", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const seen = await mockHub(page, { local: false, devices: () => ({ status: 401 }) });
   await page.goto(`/devices#pair=${CODE}`);
@@ -246,27 +342,68 @@ test("the camera's link pairs at once and takes the code out of the address", as
   expect(seen.claims).toHaveLength(1);
   expect(seen.claims[0]).toMatchObject({ code: CODE, device_type: "viewer" });
   expect(new URL(page.url()).hash).toBe("");
-  expect(await page.evaluate(() => sessionStorage.getItem("daytrace.pairLink"))).toBeNull(); // tried: forgotten
+  expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }))).not.toContain(CODE);
 });
 
-test("the camera's link still pairs after a reload before it was used (a service worker taking over)", async ({ page }) => {
+test("the camera's link opened again in the same tab pairs with the new code", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const state = { calls: 0 };
-  await mockHub(page, {
+  const seen = await mockHub(page, {
     local: false,
     devices: () => ({ status: 401 }),
-    claim: async (body) => {
-      state.calls += 1;
-      if (state.calls === 1) await new Promise(() => undefined); // the page reloads before this one answers
-      return { status: 201, json: { device_id: "viewer-2", device_type: "viewer", name: body.device_name, token: "tok-2", profile: "demo" } };
-    },
+    claim: (body) => (body.code === CODE ? { status: 400, json: { error: { code: "invalid_code", message: "that code is not valid any more" } } } : { status: 201, json: { device_id: "viewer-3", device_type: "viewer", name: body.device_name, token: "tok-3", profile: "demo" } }),
   });
   await page.goto(`/devices#pair=${CODE}`);
-  await expect.poll(() => state.calls).toBe(1);
-  expect(new URL(page.url()).hash).toBe(""); // already out of the address
-  await page.reload();
+  await expect(page.getByRole("alert").filter({ hasText: "that code is not valid any more" })).toBeVisible();
+  await page.evaluate(() => (window.location.hash = "#pair=802211")); // the same document: no reload
   await expect(page.locator(".pair-success")).toContainText("This browser is paired");
-  expect(state.calls).toBe(2);
+  expect(seen.claims.map((body) => body.code)).toEqual([CODE, "802211"]);
+});
+
+test("a browser that is already paired isn't paired again by the camera's link on its own", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("daytrace.token", "tok-existing"));
+  const seen = await mockHub(page, { local: false });
+  await page.goto(`/devices#pair=${CODE}`);
+  await expect(page.getByRole("list", { name: "Paired devices" })).toBeVisible();
+  await expect(page.getByText("This browser is already paired. To pair it again with the code from the link")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(seen.claims).toEqual([]); // an old viewer isn't left behind by a rescan
+  await expect(page.getByLabel("Pairing code")).toHaveValue(CODE);
+  await page.getByRole("button", { name: "Pair this browser" }).click();
+  await expect(page.locator(".pair-success")).toBeVisible();
+  expect(seen.claims).toHaveLength(1);
+});
+
+test("a browser that is already paired is told so, and offers a token first", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("daytrace.token", "tok-existing"));
+  await mockHub(page, { local: false });
+  await page.goto("/devices");
+  await expect(page.getByText("This browser is already paired. You can still get a token")).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Get a token for iPhone Shortcuts/ })).toBeChecked();
+});
+
+test("a browser whose pairing was revoked is offered pairing again, not a token", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("daytrace.token", "tok-revoked"));
+  await mockHub(page, { local: false, devices: () => ({ status: 401 }) });
+  await page.goto("/devices");
+  await expect(page.getByRole("radio", { name: /View the dashboard in this browser/ })).toBeChecked();
+  await expect(page.getByText("This browser is already paired.")).toHaveCount(0);
+  await expect(page.getByLabel("Name in the device list")).not.toHaveValue("iPhone Shortcuts");
+});
+
+test("a browser revoked while on the page stops showing the old list", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("daytrace.token", "tok-existing"));
+  const state = { revoked: false };
+  await mockHub(page, { local: false, devices: () => (state.revoked ? { status: 401 } : DEVICES()) });
+  await page.goto("/devices");
+  await expect(page.getByRole("list", { name: "Paired devices" })).toBeVisible();
+  state.revoked = true;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); // the next refresh
+  await expect(page.getByText("This browser isn't paired any more. Pair it above to see your devices.")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Paired devices" })).toHaveCount(0);
 });
 
 test("a phone can get a token for iPhone Shortcuts, and copy it", async ({ page, context, browserName }) => {
@@ -286,15 +423,6 @@ test("a phone can get a token for iPhone Shortcuts, and copy it", async ({ page,
   await reveal.getByRole("button", { name: "Copy the token" }).click();
   await expect(reveal.getByRole("button", { name: "Copied" })).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("tok-SECRET-1234");
-});
-
-test("a browser that is already paired is told so, and offers a token first", async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.addInitScript(() => localStorage.setItem("daytrace.token", "tok-existing"));
-  await mockHub(page, { local: false });
-  await page.goto("/devices");
-  await expect(page.getByText("This browser is already paired.")).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Get a token for iPhone Shortcuts/ })).toBeChecked();
 });
 
 test("pairing celebrates with confetti drawn on the page, not in a blob: worker the hub's CSP refuses", async ({ page }) => {

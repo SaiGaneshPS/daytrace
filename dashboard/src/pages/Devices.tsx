@@ -3,18 +3,20 @@
 // - On the hub computer (GET /health says `local`: the same check pairing and revoking make), a pairing code with a
 //   ring for its 5 minutes, two QR codes (for the Daytrace app, DT-22, and for a phone's camera, which opens this
 //   page on the phone and pairs its browser), and the hub's addresses. It can also give a token right there, for
-//   the browser extension or iPhone Shortcuts. When a new device shows up, the code is done and the page says so.
+//   the browser extension or iPhone Shortcuts. The hub says when the code has been used and by what (GET
+//   /pair/status, by the code's id, never the code itself), and when a newer code (another tab) replaced it.
 // - Anywhere else, "Pair this device": type the code (or arrive from the camera's QR code, which fills it in and
-//   pairs at once) to view the dashboard in this browser, or to get a token for iPhone Shortcuts or the browser
-//   extension. A token is shown once, with a Copy button (plain http on the Wi-Fi has no Clipboard API, so an older
-//   way is used there).
-// - The paired devices: platform, last seen, a live dot, their last seq and events, and, on the hub computer, Revoke
-//   (asked every time). A revoked device leaves the list with a little animation; its data stays, listed apart.
+//   pairs at once, unless this browser is already paired) to view the dashboard in this browser, or to get a token
+//   for iPhone Shortcuts or the browser extension. A token is shown once, with a Copy button (plain http on the
+//   Wi-Fi has no Clipboard API, so an older way is used there).
+// - The paired devices: platform, last contact, a live dot, their last seq and events, and, on the hub computer,
+//   Revoke for devices with a token (asked every time). A revoked device leaves the list with a little animation;
+//   its data stays, listed apart. The hub's own tracker and the demo data write directly: nothing to revoke.
 // - Help to put the dashboard on a phone's home screen, and the Shortcuts guide.
 import { AnimatePresence, motion } from "motion/react";
 import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
-import { ApiError, api, getToken, setToken, toast, useApi } from "../api/client";
+import { ApiError, api, getToken, setToken, toast, useApi, usePolling } from "../api/client";
 import type { components } from "../api/schema";
 import ChartCard from "../components/ChartCard";
 import QrCode from "../components/QrCode";
@@ -27,10 +29,9 @@ type Device = components["schemas"]["DeviceInfo"];
 type DeviceType = Claimed["device_type"];
 
 const CODE_LIFETIME_MS = 5 * 60_000; // the hub's pairing codes last 5 minutes
-const LINK_KEY = "daytrace.pairLink"; // a code from the camera's link, kept until it has been tried
 const LIVE_MS = 60_000;
 const REFRESH_MS = 15_000;
-const REFRESH_PAIRING_MS = 3_000; // while a code is out, a new device shows within seconds
+const STATUS_MS = 2_000; // while a code is out: has it been used?
 const SHORTCUTS_GUIDE = "https://github.com/SaiGaneshPS/daytrace/blob/development/ios/shortcuts/SETUP.md";
 const TYPE_LABELS: Record<string, string> = {
   windows: "Windows PC",
@@ -88,8 +89,10 @@ const EXTENSION: Purpose = {
   hint: "Paste it into the extension's options.",
   name: () => "Browser extension",
 };
+const FOR_A_NEW_BROWSER = [VIEW, SHORTCUTS, EXTENSION];
+const FOR_A_PAIRED_BROWSER = [SHORTCUTS, EXTENSION, VIEW];
+const TOKENS_ONLY = [SHORTCUTS, EXTENSION];
 
-const noop = () => undefined;
 const spaced = (code: string) => `${code.slice(0, 3)} ${code.slice(3)}`;
 const spoken = (code: string) => code.split("").join(" ");
 const digits = (text: string) => text.replace(/[\s-]/g, "");
@@ -107,14 +110,11 @@ function ago(iso: string, now: number): string {
   return new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
-/** When the device was last in touch, or where its data comes from when it never is: the demo data and this
+/** When the device was last in touch, or where its data comes from when it never is: the demo data and the hub
  * computer's own tracker write on the hub directly, without a token, so they never "check in". */
 function contact(device: Device, now: number): string {
   if (device.last_seen) return `Last seen ${ago(device.last_seen, now)}`;
-  if (device.device_id.startsWith("seed-")) return "Demo data, made on the hub";
-  if (device.event_count > 0) {
-    return device.device_type === "windows" || device.device_type === "macos" ? "Tracked on the hub computer" : "Writes on the hub itself";
-  }
+  if (!device.has_token) return device.device_id.startsWith("seed-") ? "Demo data, made on the hub" : "Tracked on the hub computer";
   return "Hasn't been in touch yet";
 }
 
@@ -165,15 +165,6 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-/** Runs `run` every `ms` while the page is visible (null: never). */
-function useEvery(ms: number | null, run: () => void) {
-  useEffect(() => {
-    if (ms === null) return;
-    const timer = window.setInterval(() => document.visibilityState === "visible" && run(), ms);
-    return () => window.clearInterval(timer);
-  }, [ms, run]);
-}
-
 /** The time of day (ms), ticking every `ms`, for "last seen 2 min ago". */
 function useWallClock(ms: number): number {
   const [now, setNow] = useState(() => Date.now());
@@ -184,7 +175,7 @@ function useWallClock(ms: number): number {
   return now;
 }
 
-/** The monotonic time, ticking every `ms` (null: frozen). */
+/** The monotonic time, ticking every `ms` (null: stopped). */
 function useTicking(ms: number | null): number {
   const [now, setNow] = useState(() => performance.now());
   useEffect(() => {
@@ -242,7 +233,8 @@ function PlatformIcon({ type }: { type: string }) {
 
 // --- getting a token -------------------------------------------------------------------------------------------
 
-function TokenReveal({ claimed, hubUrl, onDone }: { claimed: Claimed; hubUrl: string; onDone: () => void }) {
+/** A new token, shown once. `hubUrl`: the address to use it at; null when the hub has none a phone can reach. */
+function TokenReveal({ claimed, hubUrl, onDone }: { claimed: Claimed; hubUrl: string | null; onDone: () => void }) {
   return (
     <div className="token-reveal" role="status">
       <p>
@@ -252,12 +244,19 @@ function TokenReveal({ claimed, hubUrl, onDone }: { claimed: Claimed; hubUrl: st
         <code className="token">{claimed.token}</code>
         <CopyButton text={claimed.token} label="Copy the token" />
       </div>
-      <div className="copy-row">
-        <span>
-          Hub address: <code>{hubUrl}</code>
-        </span>
-        <CopyButton text={hubUrl} label="Copy the address" />
-      </div>
+      {hubUrl ? (
+        <div className="copy-row">
+          <span>
+            Hub address: <code>{hubUrl}</code>
+          </span>
+          <CopyButton text={hubUrl} label="Copy the address" />
+        </div>
+      ) : (
+        <p className="muted">
+          The hub has no address a phone can reach yet: connect this computer to your Wi-Fi or a network cable, and its
+          address shows under Pair a device.
+        </p>
+      )}
       <p className="muted">
         Keep the token private: anyone who has it can send data as this device. If it leaks, revoke the device below and
         pair again.
@@ -280,21 +279,19 @@ type ClaimProps = {
   purposes: Purpose[];
   /** A code already known (the hub computer's own), so it isn't asked for. */
   code?: string;
-  /** A code to start with (from the camera's QR code). */
-  initialCode?: string;
-  /** Pair at once with `initialCode`, for the first purpose (the camera's QR code). */
+  /** A code from the camera's link. A new one can arrive while the form is open (the link opened again). */
+  linkCode?: string;
+  /** Pair at once with `linkCode`, for the first purpose. */
   autoSubmit?: boolean;
-  /** Called once that automatic try is over, however it went. */
-  onAutoDone?: () => void;
-  hubUrl: string;
+  hubUrl: string | null;
   onPaired: (claimed: Claimed) => void;
   /** Show a new token somewhere else (the pairing panel shows it in place of the code); here by default. */
   onToken?: (claimed: Claimed) => void;
 };
 
-function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = false, onAutoDone, hubUrl, onPaired, onToken }: ClaimProps) {
+function ClaimForm({ purposes, code: fixedCode, linkCode = "", autoSubmit = false, hubUrl, onPaired, onToken }: ClaimProps) {
   const ids = { code: useId(), name: useId(), hint: useId() };
-  const [code, setCode] = useState(initialCode);
+  const [code, setCode] = useState(linkCode);
   const [purpose, setPurpose] = useState<Purpose>(purposes[0]);
   const [name, setName] = useState(() => purposes[0].name());
   const [named, setNamed] = useState(false); // the person typed a name: keep it when the purpose changes
@@ -302,7 +299,7 @@ function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = f
   const [failure, setFailure] = useState<string | null>(null);
   const [token, setTokenShown] = useState<Claimed | null>(null);
   const [viewing, setViewing] = useState<Claimed | null>(null);
-  const tried = useRef(false);
+  const tried = useRef(""); // the link code last tried by itself: each is single use
 
   const claim = useCallback(
     async (chosen: Purpose, typed: string, deviceName: string) => {
@@ -317,7 +314,6 @@ function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = f
         const claimed = await api.post("/api/v1/pair/claim", {
           body: { code: value, device_name: deviceName.trim() || chosen.name(), device_type: chosen.type },
         });
-        onPaired(claimed);
         if (chosen.type === "viewer") {
           setToken(claimed.token);
           setViewing(claimed);
@@ -328,6 +324,7 @@ function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = f
           setTokenShown(claimed);
         }
         setCode("");
+        onPaired(claimed);
       } catch (error) {
         setFailure(error instanceof ApiError ? error.message : String(error));
       } finally {
@@ -337,11 +334,20 @@ function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = f
     [fixedCode, onPaired, onToken],
   );
 
+  // A new code from the link (the camera's QR code again, in the same tab) fills the box, and pairs by itself when
+  // this browser isn't paired yet. Only a new link code runs this: the name and purpose are read, not watched.
+  const latest = useRef({ purposes, claim, name, named });
+  latest.current = { purposes, claim, name, named };
   useEffect(() => {
-    if (!autoSubmit || tried.current || !/^\d{6}$/.test(digits(initialCode))) return;
-    tried.current = true; // once: the code is single use
-    void claim(purposes[0], initialCode, purposes[0].name()).finally(() => onAutoDone?.());
-  }, [autoSubmit, initialCode, purposes, claim, onAutoDone]);
+    if (!linkCode) return;
+    setCode(linkCode);
+    setViewing(null);
+    if (!autoSubmit || tried.current === linkCode) return;
+    tried.current = linkCode;
+    const now = latest.current;
+    setPurpose(now.purposes[0]);
+    void now.claim(now.purposes[0], linkCode, now.named ? now.name : now.purposes[0].name());
+  }, [linkCode, autoSubmit]);
 
   const choose = (next: Purpose) => {
     setPurpose(next);
@@ -358,7 +364,8 @@ function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = f
       <div className="pair-success" role="status">
         <p className="pair-success-title">This browser is paired as {viewing.name}.</p>
         <p>
-          Your days are on <Link to="/">Today</Link>. The hub keeps this browser paired until it is revoked here.
+          Your days are on <Link to="/">Today</Link>. The hub keeps this browser paired until it is revoked on the hub
+          computer.
         </p>
       </div>
     );
@@ -425,43 +432,57 @@ function ClaimForm({ purposes, code: fixedCode, initialCode = "", autoSubmit = f
 
 // --- the hub computer's pairing panel --------------------------------------------------------------------------
 
-/** A code on show: when it was started (monotonic), and the devices there were then (null until the list loads). */
-type Code = { reply: Started; at: number; known: Set<string> | null };
+/** A code on show, and when it was started (monotonic). */
+type Code = { reply: Started; at: number };
 
-function PairPanel({ devices, onActive }: { devices: Device[] | undefined; onActive: (active: boolean) => void }) {
+function PairPanel({ onChanged }: { onChanged: () => void }) {
   const [code, setCode] = useState<Code | null>(null);
+  const [ranOut, setRanOut] = useState(false);
+  const [superseded, setSuperseded] = useState(false); // a newer code (another tab) replaced this one
   const [kind, setKind] = useState("app");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [paired, setPaired] = useState<string | null>(null);
   // A token given here, with the address to use it at (the code's network address, gone with the code).
-  const [issued, setIssued] = useState<{ claimed: Claimed; hubUrl: string } | null>(null);
-  const now = useTicking(code ? 1000 : null);
+  const [issued, setIssued] = useState<{ claimed: Claimed; hubUrl: string | null } | null>(null);
+  const live = code !== null && !ranOut && !superseded;
+  const now = useTicking(live ? 1000 : null); // stops once the code has run out
   const left = code ? Math.min(CODE_LIFETIME_MS, Math.max(0, CODE_LIFETIME_MS - (now - code.at))) : 0;
-  const active = code !== null && left > 0;
+  const active = live && left > 0;
 
-  useEffect(() => onActive(active), [active, onActive]);
-
-  // A device that wasn't there when the code was shown: a phone has used the code.
   useEffect(() => {
-    if (!code || !devices) return;
-    if (code.known === null) {
-      setCode({ ...code, known: new Set(devices.map((device) => device.device_id)) });
-      return;
+    if (live && left === 0) setRanOut(true);
+  }, [live, left]);
+
+  // Ask the hub whether this code has been used, and by what. It knows (the list of devices only lets one guess).
+  const checking = useRef(false);
+  const lanUrl = code?.reply.url ?? null;
+  const codeId = code?.reply.id ?? null;
+  const check = useCallback(async () => {
+    if (!codeId || checking.current) return;
+    checking.current = true;
+    try {
+      const status = await api.get("/api/v1/pair/status");
+      if (status.id !== codeId) {
+        setSuperseded(true);
+      } else if (status.used && status.claimed_by) {
+        setPaired(status.claimed_by.name);
+        setCode(null);
+        onChanged();
+        void celebrate();
+      }
+    } catch {
+      // the next check tries again
+    } finally {
+      checking.current = false;
     }
-    const known = code.known;
-    const fresh = devices.find((device) => !known.has(device.device_id) && device.revoked_at === null);
-    if (!fresh) return;
-    setPaired(fresh.name);
-    setCode(null);
-    void celebrate();
-  }, [devices, code]);
+  }, [codeId, onChanged]);
+  usePolling(active ? STATUS_MS : null, check);
 
   // A token given right here: show it in place of the code (which it used up), until it has been saved.
-  const lanUrl = code?.reply.url ?? null;
   const onToken = useCallback(
     (claimed: Claimed) => {
-      setIssued({ claimed, hubUrl: lanUrl ?? window.location.origin });
+      setIssued({ claimed, hubUrl: lanUrl });
       setCode(null);
     },
     [lanUrl],
@@ -471,10 +492,12 @@ function PairPanel({ devices, onActive }: { devices: Device[] | undefined; onAct
     setBusy(true);
     setFailure(null);
     setPaired(null);
+    setIssued(null);
     try {
       const reply = await api.post("/api/v1/pair/start");
-      setIssued(null);
-      setCode({ reply, at: performance.now(), known: devices ? new Set(devices.map((device) => device.device_id)) : null });
+      setCode({ reply, at: performance.now() });
+      setRanOut(false);
+      setSuperseded(false);
     } catch (error) {
       setFailure(error instanceof ApiError ? error.message : String(error));
     } finally {
@@ -483,8 +506,8 @@ function PairPanel({ devices, onActive }: { devices: Device[] | undefined; onAct
   };
 
   const reply = code?.reply;
-  const hubUrl = reply?.url ?? window.location.origin;
-  const qr = (target: "app" | "browser") => `${reply?.qr ?? "/api/v1/pair/qr.png"}?for=${target}&code=${reply?.code ?? ""}`;
+  const qr = (target: "app" | "browser") => `${reply?.qr ?? "/api/v1/pair/qr.png"}?for=${target}&id=${reply?.id ?? ""}`;
+  const showQr = active && Boolean(reply?.qr);
 
   return (
     <ChartCard
@@ -518,7 +541,11 @@ function PairPanel({ devices, onActive }: { devices: Device[] | undefined; onAct
             <p className="code-digits number" aria-label={`Pairing code ${spoken(code.reply.code)}`}>
               {spaced(code.reply.code)}
             </p>
-            {active ? (
+            {superseded ? (
+              <p className="form-error" role="status">
+                A newer code was started, in another tab or window, so this one no longer works.
+              </p>
+            ) : active ? (
               <p className="muted">
                 <span className="number">{clock(left)}</span> left
               </p>
@@ -554,62 +581,64 @@ function PairPanel({ devices, onActive }: { devices: Device[] | undefined; onAct
               )}
             </div>
           </div>
-          <Tabs
-            label="Pair with"
-            value={kind}
-            onChange={setKind}
-            className="pair-tabs"
-            tabs={[
-              {
-                id: "app",
-                label: "Daytrace app",
-                content: (
-                  <div className="pair-way">
-                    {active && reply?.qr ? (
-                      <QrCode src={qr("app")} alt="QR code for the Daytrace app" left={left / CODE_LIFETIME_MS} />
-                    ) : null}
-                    <ol className="howto">
-                      <li>Open Daytrace on the Android phone.</li>
-                      <li>Tap Pair with the hub, then Scan the QR code.</li>
-                      <li>Or type the code there, with the address above.</li>
-                    </ol>
-                  </div>
-                ),
-              },
-              {
-                id: "browser",
-                label: "Phone browser",
-                content: (
-                  <div className="pair-way">
-                    {active && reply?.qr ? (
-                      <QrCode src={qr("browser")} alt="QR code that opens this page on a phone and pairs its browser" left={left / CODE_LIFETIME_MS} />
-                    ) : null}
-                    <ol className="howto">
-                      <li>Point the phone&apos;s camera at this QR code and open the link.</li>
-                      <li>
-                        Or open <code>{hubUrl}/devices</code> on the phone and type the code.
-                      </li>
-                    </ol>
-                  </div>
-                ),
-              },
-              {
-                id: "token",
-                label: "Token",
-                content: active ? (
-                  <div className="pair-way">
-                    <p className="muted">
-                      For iPhone Shortcuts or the browser extension. You can also get the token on the device that needs
-                      it: open <code>{hubUrl}/devices</code> there.
-                    </p>
-                    <ClaimForm purposes={[SHORTCUTS, EXTENSION]} code={code.reply.code} hubUrl={hubUrl} onPaired={noop} onToken={onToken} />
-                  </div>
-                ) : (
-                  <p className="muted">Show a new code first.</p>
-                ),
-              },
-            ]}
-          />
+          {active && (
+            <Tabs
+              label="Pair with"
+              value={kind}
+              onChange={setKind}
+              className="pair-tabs"
+              tabs={[
+                {
+                  id: "app",
+                  label: "Daytrace app",
+                  content: (
+                    <div className="pair-way">
+                      {showQr && <QrCode src={qr("app")} alt="QR code for the Daytrace app" left={left / CODE_LIFETIME_MS} />}
+                      <ol className="howto">
+                        <li>Open Daytrace on the Android phone.</li>
+                        <li>Tap Pair with the hub, then Scan the QR code.</li>
+                        <li>Or type the code there, with the address above.</li>
+                      </ol>
+                    </div>
+                  ),
+                },
+                {
+                  id: "browser",
+                  label: "Phone browser",
+                  content: (
+                    <div className="pair-way">
+                      {showQr && (
+                        <QrCode src={qr("browser")} alt="QR code that opens this page on a phone and pairs its browser" left={left / CODE_LIFETIME_MS} />
+                      )}
+                      {lanUrl ? (
+                        <ol className="howto">
+                          <li>Point the phone&apos;s camera at this QR code and open the link.</li>
+                          <li>
+                            Or open <code>{lanUrl}/devices</code> on the phone and type the code.
+                          </li>
+                        </ol>
+                      ) : (
+                        <p className="muted">A phone can pair once this computer has an address it can reach (see the addresses).</p>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  id: "token",
+                  label: "Token",
+                  content: (
+                    <div className="pair-way">
+                      <p className="muted">
+                        For iPhone Shortcuts or the browser extension. You can also get the token on the device that needs
+                        it, from this hub&apos;s Devices page there.
+                      </p>
+                      <ClaimForm purposes={TOKENS_ONLY} code={code.reply.code} hubUrl={lanUrl} onPaired={onChanged} onToken={onToken} />
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          )}
         </div>
       )}
     </ChartCard>
@@ -628,11 +657,17 @@ function ConfirmRevoke({ device, busy, onCancel, onConfirm }: { device: Device |
     if (!device && element.open) element.close();
   }, [device]);
   return (
-    <dialog ref={dialog} className="dialog" aria-labelledby={title} onClose={onCancel}>
+    <dialog
+      ref={dialog}
+      className="dialog"
+      aria-labelledby={title}
+      onCancel={(event) => busy && event.preventDefault()} // Escape can't pretend to stop a revoke already on its way
+      onClose={onCancel}
+    >
       <h2 id={title}>Revoke {device?.name}?</h2>
       <p>It stops sending, and it has to pair again to come back. Everything it already sent stays.</p>
       <div className="row dialog-actions">
-        <button type="button" className="button button-ghost" onClick={onCancel} autoFocus>
+        <button type="button" className="button button-ghost" onClick={onCancel} disabled={busy} autoFocus>
           Keep it
         </button>
         <button type="button" className="button button-danger" onClick={onConfirm} disabled={busy}>
@@ -681,7 +716,7 @@ function DeviceCard({ device, now, local, onRevoke }: { device: Device; now: num
           <dd className="number">{device.event_count.toLocaleString()}</dd>
         </div>
       </dl>
-      {local && (
+      {local && device.has_token && (
         <button type="button" className="button button-ghost device-revoke" onClick={onRevoke} aria-label={`Revoke ${device.name}`}>
           Revoke
         </button>
@@ -701,24 +736,29 @@ function DeviceList({ devices, error, local, reload }: { devices: Device[] | und
     try {
       await api.delete("/api/v1/devices/{device_id}", { path: { device_id: revoking.device_id } });
       toast(`${revoking.name} is revoked. Its data stays.`, "info");
+      setBusy(false);
       setRevoking(null);
       reload();
     } catch (failure) {
       toast(failure instanceof ApiError ? failure.message : String(failure));
-    } finally {
       setBusy(false);
     }
   };
 
-  if (!devices) {
-    if (error?.status === 401) return <p className="muted">Pair this browser (above) to see your devices.</p>;
-    if (error) return <p className="muted">The devices couldn&apos;t load: {error.message}</p>;
-    return null;
+  // Not (or no longer) paired: an old list must not stay up as if nothing had happened.
+  if (error?.status === 401) {
+    return <p className="muted">This browser isn&apos;t paired{devices ? " any more" : ""}. Pair it above to see your devices.</p>;
   }
+  if (!devices) return error ? <p className="muted">The devices couldn&apos;t load: {error.message}</p> : null;
   const paired = devices.filter((device) => device.revoked_at === null);
   const revoked = devices.filter((device) => device.revoked_at !== null);
   return (
     <>
+      {error && (
+        <p className="muted" role="status">
+          The list couldn&apos;t be refreshed: {error.message}
+        </p>
+      )}
       {paired.length === 0 ? (
         <p className="muted">No devices are paired yet. Show a pairing code on the hub computer to add one.</p>
       ) : (
@@ -748,7 +788,7 @@ function DeviceList({ devices, error, local, reload }: { devices: Device[] | und
           </ul>
         </details>
       )}
-      <ConfirmRevoke device={revoking} busy={busy} onCancel={() => setRevoking(null)} onConfirm={revoke} />
+      <ConfirmRevoke device={revoking} busy={busy} onCancel={() => busy || setRevoking(null)} onConfirm={revoke} />
     </>
   );
 }
@@ -793,52 +833,57 @@ function InstallHelp({ hubUrl }: { hubUrl: string | null }) {
 
 // --- the page --------------------------------------------------------------------------------------------------
 
-/** The code from the camera's QR code (`/devices#pair=123456`), taken out of the address at once. It is kept for
- * this tab until it has been tried: the service worker reloads the page once when it takes over (after a first
- * visit or a dashboard update), and the code must still be there after that. The second value forgets it. */
-function useCodeFromLink(): [string, () => void] {
-  const [code] = useState(() => {
-    const match = /(?:^#|&)pair=(\d{6})\b/.exec(window.location.hash);
-    if (match) {
-      try {
-        sessionStorage.setItem(LINK_KEY, JSON.stringify({ code: match[1], at: Date.now() }));
-      } catch {
-        // without storage a reload loses it; the code can still be typed
+const readLinkCode = () => /(?:^#|&)pair=(\d{6})\b/.exec(window.location.hash)?.[1] ?? "";
+const stripLinkCode = () => {
+  if (/(?:^#|&)pair=/.test(window.location.hash)) {
+    window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+  }
+};
+
+/** The code from the camera's QR code (`/devices#pair=123456`). Read while rendering (a pure read: React may render
+ * more than once before the page shows), taken out of the address only once the page is on screen, and read again
+ * when the link is opened again in the same tab (a change of the part after `#` doesn't reload the page). */
+function useLinkCode(): string {
+  const [code, setCode] = useState(readLinkCode);
+  useEffect(() => {
+    stripLinkCode();
+    const onHash = () => {
+      const next = readLinkCode();
+      if (next) {
+        setCode(next);
+        stripLinkCode();
       }
-      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
-      return match[1];
-    }
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(LINK_KEY) ?? "null") as { code?: unknown; at?: unknown } | null;
-      const fresh = typeof saved?.at === "number" && Date.now() - saved.at < CODE_LIFETIME_MS;
-      return fresh && typeof saved?.code === "string" && /^\d{6}$/.test(saved.code) ? saved.code : "";
-    } catch {
-      return "";
-    }
-  });
-  const forget = useCallback(() => {
-    try {
-      sessionStorage.removeItem(LINK_KEY);
-    } catch {
-      // nothing kept
-    }
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
-  return [code, forget];
+  return code;
 }
+
+type PairState = "paired" | "unpaired" | "checking";
 
 export default function Devices() {
   const health = useApi("/api/v1/health", { quiet: true });
   const devices = useApi("/api/v1/devices", { quiet: true });
-  const [pairing, setPairing] = useState(false);
-  const [linked, forgetLink] = useCodeFromLink();
+  const linkCode = useLinkCode();
   const local = health.data?.local === true;
   const { reload } = devices;
+  const { reload: reloadHealth } = health;
   const busy = useRef(false);
   busy.current = devices.loading;
-  const refresh = useCallback(() => busy.current || reload(), [reload]);
-  useEvery(pairing ? REFRESH_PAIRING_MS : REFRESH_MS, refresh);
-  const onActive = useCallback((active: boolean) => setPairing(active), []);
-  const alreadyPaired = getToken() !== null;
+  const refresh = useCallback(() => {
+    if (!busy.current) reload();
+    if (health.error) reloadHealth(); // a hub that was down when the page opened is picked up again
+  }, [reload, reloadHealth, health.error]);
+  usePolling(REFRESH_MS, refresh);
+
+  // Is this browser paired? With a token, the device list answers: it loads (yes) or says 401 (no: the client drops
+  // a refused token). The first answer picks the form's choices, and later ones don't swap them under the person.
+  const token = getToken();
+  const current: PairState = !token ? "unpaired" : devices.error?.status === 401 ? "unpaired" : devices.data || devices.error ? "paired" : "checking";
+  const decided = useRef<PairState>("checking");
+  if (decided.current === "checking" && current !== "checking") decided.current = current;
+  const pairState = decided.current;
 
   return (
     <div className="stack">
@@ -851,21 +896,35 @@ export default function Devices() {
 
       {!health.data ? (
         <ChartCard title="Pair a device" loading={!health.error}>
-          {health.error && <p className="muted">The hub can&apos;t be reached: {health.error.message}</p>}
+          {health.error && (
+            <div className="pair-start">
+              <p className="muted">The hub can&apos;t be reached: {health.error.message}</p>
+              <button type="button" className="button button-ghost" onClick={reloadHealth}>
+                Try again
+              </button>
+            </div>
+          )}
         </ChartCard>
       ) : local ? (
-        <PairPanel devices={devices.data?.devices} onActive={onActive} />
+        <PairPanel onChanged={reload} />
       ) : (
-        <ChartCard title="Pair this device" info="Pairing needs a code from the hub computer's Devices page. A code works once, for 5 minutes.">
-          {alreadyPaired && !linked && <p className="muted">This browser is already paired. You can still get a token here for another device.</p>}
-          <ClaimForm
-            purposes={alreadyPaired && !linked ? [SHORTCUTS, EXTENSION, VIEW] : [VIEW, SHORTCUTS, EXTENSION]}
-            initialCode={linked}
-            autoSubmit={linked !== ""}
-            onAutoDone={forgetLink}
-            hubUrl={window.location.origin}
-            onPaired={reload}
-          />
+        <ChartCard title="Pair this device" loading={pairState === "checking"} info="Pairing needs a code from the hub computer's Devices page. A code works once, for 5 minutes.">
+          {pairState === "paired" && (
+            <p className="muted">
+              This browser is already paired.{" "}
+              {linkCode ? "To pair it again with the code from the link, press Pair this browser." : "You can still get a token here for another device."}
+            </p>
+          )}
+          {pairState !== "checking" && (
+            <ClaimForm
+              key={pairState}
+              purposes={pairState === "paired" && !linkCode ? FOR_A_PAIRED_BROWSER : FOR_A_NEW_BROWSER}
+              linkCode={linkCode}
+              autoSubmit={pairState === "unpaired"}
+              hubUrl={window.location.origin}
+              onPaired={reload}
+            />
+          )}
         </ChartCard>
       )}
 
