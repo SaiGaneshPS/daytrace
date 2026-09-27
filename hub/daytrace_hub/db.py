@@ -102,6 +102,9 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        # DT-46: whatever a connection deletes or replaces (a span the tracker rewrites, a title redacted) is
+        # overwritten with zeros, not left in the file's free space.
+        conn.execute("PRAGMA secure_delete = ON")
         return conn
 
     @contextmanager
@@ -219,6 +222,13 @@ def migrate(conn: sqlite3.Connection, migrations: list[Migration] | None = None)
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
     return applied
+
+
+def data_version(conn: sqlite3.Connection) -> int:
+    """The database's change counter (migration 0005): triggers add one for every event added, replaced or
+    deleted, every category choice, and every device paired, renamed or revoked, in any process. One row to read,
+    so a cache of worked-out numbers (insights, streaks) can check it on every request."""
+    return conn.execute("SELECT changes FROM data_changes WHERE id = 1").fetchone()[0]
 
 
 def utc_text(moment: datetime) -> str:

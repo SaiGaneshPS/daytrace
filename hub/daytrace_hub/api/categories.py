@@ -21,6 +21,7 @@ from ..categories import (
     Categorizer,
     CategorySource,
     canonical_key,
+    decline,
     delete_override,
     load_overrides,
     override_key,
@@ -158,6 +159,9 @@ def put_category(
 def delete_category(key: AppKey, _: Editor, database: Annotated[Database, Depends(get_database)]) -> Response:
     cleaned = _clean_key(key)
     with database.connect() as conn, transaction(conn):
-        if not delete_override(conn, cleaned):
+        row = conn.execute("SELECT source FROM category_overrides WHERE app_key = ?", (cleaned,)).fetchone()
+        if row is None or not delete_override(conn, cleaned):
             raise ApiError(404, "not_found", f"no category override for {cleaned!r}")
+        if row["source"] == "ai":
+            decline(conn, cleaned)  # DT-42: a guess the user took off isn't made again
     return Response(status_code=204)

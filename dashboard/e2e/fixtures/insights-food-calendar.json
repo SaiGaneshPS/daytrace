@@ -1,0 +1,2591 @@
+{
+ "food": {
+  "14d": {
+   "tab": "food",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-12",
+    "last": "2026-09-25",
+    "days": 14,
+    "label": "Last 14 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "meals",
+     "label": "Meals logged",
+     "value": 42,
+     "unit": "meals",
+     "explain": "Meals sent from your phone's health app or the Log Meal shortcut.",
+     "estimated": false
+    },
+    {
+     "id": "days_with_meals",
+     "label": "Days with a meal logged",
+     "value": 14,
+     "unit": "days",
+     "explain": "Days in the range with at least one meal.",
+     "estimated": false
+    },
+    {
+     "id": "top_item",
+     "label": "Most logged",
+     "value": "rice",
+     "unit": "item",
+     "explain": "The food logged most often.",
+     "estimated": false
+    },
+    {
+     "id": "late_meals",
+     "label": "Late-night meals",
+     "value": 0,
+     "unit": "meals",
+     "explain": "Meals logged from 22:00 to 04:00, each counted for its night (a snack at 01:00 is the night before's).",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "meals_by_day": {
+     "kind": "stacked",
+     "title": "Meals by day",
+     "unit": "meals",
+     "explain": "Meals logged each day, by type; a gap is a day the hub heard nothing from.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Breakfast",
+       "key": "breakfast",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      },
+      {
+       "name": "Lunch",
+       "key": "lunch",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      },
+      {
+       "name": "Dinner",
+       "key": "dinner",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "meal_times": {
+     "kind": "scatter",
+     "title": "When you ate",
+     "unit": "hour of the day",
+     "explain": "Each meal at its time of day (0 to 24), by day, with its type in `group`.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": null,
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": [
+      {
+       "x": 0.0,
+       "y": 7.62,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 0.0,
+       "y": 12.75,
+       "label": "chicken wrap, apple",
+       "group": "lunch"
+      },
+      {
+       "x": 0.0,
+       "y": 19.05,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 1.0,
+       "y": 9.12,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 1.0,
+       "y": 12.78,
+       "label": "pasta, garlic bread",
+       "group": "lunch"
+      },
+      {
+       "x": 1.0,
+       "y": 19.2,
+       "label": "two rotis, dal, sabzi",
+       "group": "dinner"
+      },
+      {
+       "x": 2.0,
+       "y": 8.02,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 2.0,
+       "y": 12.8,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 2.0,
+       "y": 18.98,
+       "label": "pizza, salad",
+       "group": "dinner"
+      },
+      {
+       "x": 3.0,
+       "y": 9.63,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 3.0,
+       "y": 12.52,
+       "label": "pasta, garlic bread",
+       "group": "lunch"
+      },
+      {
+       "x": 3.0,
+       "y": 19.05,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 4.0,
+       "y": 9.28,
+       "label": "poha, chai",
+       "group": "breakfast"
+      },
+      {
+       "x": 4.0,
+       "y": 12.83,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 4.0,
+       "y": 19.42,
+       "label": "two rotis, dal, sabzi",
+       "group": "dinner"
+      },
+      {
+       "x": 5.0,
+       "y": 7.62,
+       "label": "poha, chai",
+       "group": "breakfast"
+      },
+      {
+       "x": 5.0,
+       "y": 12.58,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 5.0,
+       "y": 19.25,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 6.0,
+       "y": 7.8,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 6.0,
+       "y": 12.82,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 6.0,
+       "y": 19.1,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 7.0,
+       "y": 7.57,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 7.0,
+       "y": 12.78,
+       "label": "pasta, garlic bread",
+       "group": "lunch"
+      },
+      {
+       "x": 7.0,
+       "y": 19.33,
+       "label": "pizza, salad",
+       "group": "dinner"
+      },
+      {
+       "x": 8.0,
+       "y": 7.85,
+       "label": "yogurt, granola",
+       "group": "breakfast"
+      },
+      {
+       "x": 8.0,
+       "y": 12.72,
+       "label": "chicken wrap, apple",
+       "group": "lunch"
+      },
+      {
+       "x": 8.0,
+       "y": 19.27,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 9.0,
+       "y": 7.67,
+       "label": "yogurt, granola",
+       "group": "breakfast"
+      },
+      {
+       "x": 9.0,
+       "y": 12.83,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 9.0,
+       "y": 19.02,
+       "label": "two rotis, dal, sabzi",
+       "group": "dinner"
+      },
+      {
+       "x": 10.0,
+       "y": 10.03,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 10.0,
+       "y": 12.52,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 10.0,
+       "y": 19.32,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 11.0,
+       "y": 7.78,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 11.0,
+       "y": 12.55,
+       "label": "rice, dal, salad",
+       "group": "lunch"
+      },
+      {
+       "x": 11.0,
+       "y": 19.37,
+       "label": "two rotis, dal, sabzi",
+       "group": "dinner"
+      },
+      {
+       "x": 12.0,
+       "y": 7.58,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 12.0,
+       "y": 12.62,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 12.0,
+       "y": 19.33,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 13.0,
+       "y": 7.45,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 13.0,
+       "y": 12.83,
+       "label": "pasta, garlic bread",
+       "group": "lunch"
+      },
+      {
+       "x": 13.0,
+       "y": 19.42,
+       "label": "ramen",
+       "group": "dinner"
+      }
+     ],
+     "value": null,
+     "max": null,
+     "stats": {
+      "late_from": 22,
+      "late_until": 4
+     },
+     "note": null,
+     "reason": null
+    },
+    "top_items": {
+     "kind": "bars",
+     "title": "Most logged foods",
+     "unit": "times",
+     "explain": "Foods by how often they were logged.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": [
+      {
+       "name": "rice",
+       "value": 8.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "broccoli",
+       "value": 7.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "salmon",
+       "value": 7.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "sushi",
+       "value": 7.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "banana",
+       "value": 5.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "coffee",
+       "value": 5.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "dal",
+       "value": 5.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "eggs",
+       "value": 5.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "oatmeal",
+       "value": 5.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "toast",
+       "value": 5.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      }
+     ],
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-12T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  },
+  "7d": {
+   "tab": "food",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-19",
+    "last": "2026-09-25",
+    "days": 7,
+    "label": "Last 7 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "meals",
+     "label": "Meals logged",
+     "value": 21,
+     "unit": "meals",
+     "explain": "Meals sent from your phone's health app or the Log Meal shortcut.",
+     "estimated": false
+    },
+    {
+     "id": "days_with_meals",
+     "label": "Days with a meal logged",
+     "value": 7,
+     "unit": "days",
+     "explain": "Days in the range with at least one meal.",
+     "estimated": false
+    },
+    {
+     "id": "top_item",
+     "label": "Most logged",
+     "value": "rice",
+     "unit": "item",
+     "explain": "The food logged most often.",
+     "estimated": false
+    },
+    {
+     "id": "late_meals",
+     "label": "Late-night meals",
+     "value": 0,
+     "unit": "meals",
+     "explain": "Meals logged from 22:00 to 04:00, each counted for its night (a snack at 01:00 is the night before's).",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "meals_by_day": {
+     "kind": "stacked",
+     "title": "Meals by day",
+     "unit": "meals",
+     "explain": "Meals logged each day, by type; a gap is a day the hub heard nothing from.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Breakfast",
+       "key": "breakfast",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      },
+      {
+       "name": "Lunch",
+       "key": "lunch",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      },
+      {
+       "name": "Dinner",
+       "key": "dinner",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "meal_times": {
+     "kind": "scatter",
+     "title": "When you ate",
+     "unit": "hour of the day",
+     "explain": "Each meal at its time of day (0 to 24), by day, with its type in `group`.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": null,
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": [
+      {
+       "x": 0.0,
+       "y": 7.57,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 0.0,
+       "y": 12.78,
+       "label": "pasta, garlic bread",
+       "group": "lunch"
+      },
+      {
+       "x": 0.0,
+       "y": 19.33,
+       "label": "pizza, salad",
+       "group": "dinner"
+      },
+      {
+       "x": 1.0,
+       "y": 7.85,
+       "label": "yogurt, granola",
+       "group": "breakfast"
+      },
+      {
+       "x": 1.0,
+       "y": 12.72,
+       "label": "chicken wrap, apple",
+       "group": "lunch"
+      },
+      {
+       "x": 1.0,
+       "y": 19.27,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 2.0,
+       "y": 7.67,
+       "label": "yogurt, granola",
+       "group": "breakfast"
+      },
+      {
+       "x": 2.0,
+       "y": 12.83,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 2.0,
+       "y": 19.02,
+       "label": "two rotis, dal, sabzi",
+       "group": "dinner"
+      },
+      {
+       "x": 3.0,
+       "y": 10.03,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 3.0,
+       "y": 12.52,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 3.0,
+       "y": 19.32,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 4.0,
+       "y": 7.78,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 4.0,
+       "y": 12.55,
+       "label": "rice, dal, salad",
+       "group": "lunch"
+      },
+      {
+       "x": 4.0,
+       "y": 19.37,
+       "label": "two rotis, dal, sabzi",
+       "group": "dinner"
+      },
+      {
+       "x": 5.0,
+       "y": 7.58,
+       "label": "oatmeal, banana, coffee",
+       "group": "breakfast"
+      },
+      {
+       "x": 5.0,
+       "y": 12.62,
+       "label": "sushi",
+       "group": "lunch"
+      },
+      {
+       "x": 5.0,
+       "y": 19.33,
+       "label": "salmon, rice, broccoli",
+       "group": "dinner"
+      },
+      {
+       "x": 6.0,
+       "y": 7.45,
+       "label": "toast, eggs",
+       "group": "breakfast"
+      },
+      {
+       "x": 6.0,
+       "y": 12.83,
+       "label": "pasta, garlic bread",
+       "group": "lunch"
+      },
+      {
+       "x": 6.0,
+       "y": 19.42,
+       "label": "ramen",
+       "group": "dinner"
+      }
+     ],
+     "value": null,
+     "max": null,
+     "stats": {
+      "late_from": 22,
+      "late_until": 4
+     },
+     "note": null,
+     "reason": null
+    },
+    "top_items": {
+     "kind": "bars",
+     "title": "Most logged foods",
+     "unit": "times",
+     "explain": "Foods by how often they were logged.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": [
+      {
+       "name": "rice",
+       "value": 4.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "broccoli",
+       "value": 3.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "dal",
+       "value": 3.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "eggs",
+       "value": 3.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "salmon",
+       "value": 3.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "sushi",
+       "value": 3.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "toast",
+       "value": 3.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "banana",
+       "value": 2.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "coffee",
+       "value": 2.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "garlic bread",
+       "value": 2.0,
+       "key": null,
+       "category": null,
+       "share": null,
+       "children": null,
+       "spark": null,
+       "change": null
+      }
+     ],
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-19T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  }
+ },
+ "calendar": {
+  "14d": {
+   "tab": "calendar",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-12",
+    "last": "2026-09-25",
+    "days": 14,
+    "label": "Last 14 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "planned",
+     "label": "Planned time",
+     "value": 1320.0,
+     "unit": "minutes",
+     "explain": "Time in calendar events (not all-day ones), overlaps counted once.",
+     "estimated": false
+    },
+    {
+     "id": "on_plan",
+     "label": "Spent as planned",
+     "value": 71,
+     "unit": "percent",
+     "explain": "Of the planned time on days with screen data: work, study or a meeting app on screen.",
+     "estimated": false
+    },
+    {
+     "id": "events",
+     "label": "Events",
+     "value": 14,
+     "unit": "events",
+     "explain": "Calendar events in the range (not all-day ones).",
+     "estimated": false
+    },
+    {
+     "id": "busiest_day",
+     "label": "Busiest day",
+     "value": "2026-09-14",
+     "unit": "date",
+     "explain": "The day with the most planned time.",
+     "estimated": false
+    },
+    {
+     "id": "meetings",
+     "label": "In meetings",
+     "value": 0.0,
+     "unit": "minutes",
+     "explain": "Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once, and time listening without touching anything included.",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "plan_by_day": {
+     "kind": "stacked",
+     "title": "Planned time and where it went",
+     "unit": "minutes",
+     "explain": "Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen; on a day no device sent screen data, what it went to is unknown.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "On plan",
+       "key": "on_plan",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        101.62,
+        82.52,
+        94.55,
+        82.68,
+        88.08,
+        0.0,
+        0.0,
+        127.25,
+        76.65,
+        111.58,
+        87.15,
+        90.6
+       ]
+      },
+      {
+       "name": "Off plan",
+       "key": "off_plan",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        0.0,
+        16.9,
+        27.83,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        19.22,
+        0.0,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "name": "Other screen time",
+       "key": "other",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        18.85,
+        11.58,
+        15.28,
+        13.55,
+        9.1,
+        0.0,
+        0.0,
+        9.78,
+        13.13,
+        9.33,
+        15.0,
+        8.33
+       ]
+      },
+      {
+       "name": "No screen",
+       "key": "idle",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        29.53,
+        9.0,
+        12.33,
+        23.77,
+        22.82,
+        0.0,
+        0.0,
+        12.97,
+        11.0,
+        29.08,
+        17.85,
+        21.07
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "blocks": {
+     "kind": "bars",
+     "title": "Longest events",
+     "unit": "minutes",
+     "explain": "The longest calendar events, each split into what the time went to (on plan, off plan, other screen time, no screen), which adds up to the event's length, with the share spent as planned.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": [
+      {
+       "name": "Study: operating systems",
+       "value": 120.0,
+       "key": "2026-09-14",
+       "category": null,
+       "share": 66.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 78.65,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 12.48,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 28.87,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: statistics",
+       "value": 120.0,
+       "key": "2026-09-15",
+       "category": null,
+       "share": 69.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 82.52,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 16.9,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 11.58,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 9.0,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: algorithms",
+       "value": 120.0,
+       "key": "2026-09-16",
+       "category": null,
+       "share": 63.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 75.13,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 17.58,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 15.28,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 12.0,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: databases",
+       "value": 120.0,
+       "key": "2026-09-17",
+       "category": null,
+       "share": 69.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 82.68,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 13.55,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 23.77,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: linear algebra",
+       "value": 120.0,
+       "key": "2026-09-18",
+       "category": null,
+       "share": 73.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 88.08,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 9.1,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 22.82,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: algorithms",
+       "value": 120.0,
+       "key": "2026-09-21",
+       "category": null,
+       "share": 81.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 97.25,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 9.78,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 12.97,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: databases",
+       "value": 120.0,
+       "key": "2026-09-22",
+       "category": null,
+       "share": 64.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 76.65,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 19.22,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 13.13,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 11.0,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: linear algebra",
+       "value": 120.0,
+       "key": "2026-09-23",
+       "category": null,
+       "share": 68.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 81.92,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 9.33,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 28.75,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: operating systems",
+       "value": 120.0,
+       "key": "2026-09-24",
+       "category": null,
+       "share": 73.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 87.15,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 15.0,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 17.85,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: statistics",
+       "value": 120.0,
+       "key": "2026-09-25",
+       "category": null,
+       "share": 76.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 90.6,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 8.33,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 21.07,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      }
+     ],
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "meetings_by_day": {
+     "kind": "bars",
+     "title": "Meetings each day",
+     "unit": "minutes",
+     "explain": "Time in meeting apps each day, on any device (a call on two at once counted once).",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "In meetings",
+       "key": "meetings",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "hours": {
+     "kind": "heatmap",
+     "title": "When your calendar is busy",
+     "unit": "minutes",
+     "explain": "Planned time by weekday and hour of the day, the whole range added up (overlaps counted once).",
+     "estimated": false,
+     "x": [
+      "00",
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23"
+     ],
+     "y": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+     ],
+     "lines": null,
+     "items": null,
+     "cells": [
+      {
+       "x": 11,
+       "y": 0,
+       "value": 60.0
+      },
+      {
+       "x": 11,
+       "y": 2,
+       "value": 60.0
+      },
+      {
+       "x": 15,
+       "y": 0,
+       "value": 120.0
+      },
+      {
+       "x": 15,
+       "y": 1,
+       "value": 120.0
+      },
+      {
+       "x": 15,
+       "y": 2,
+       "value": 120.0
+      },
+      {
+       "x": 15,
+       "y": 3,
+       "value": 120.0
+      },
+      {
+       "x": 15,
+       "y": 4,
+       "value": 120.0
+      },
+      {
+       "x": 16,
+       "y": 0,
+       "value": 120.0
+      },
+      {
+       "x": 16,
+       "y": 1,
+       "value": 120.0
+      },
+      {
+       "x": 16,
+       "y": 2,
+       "value": 120.0
+      },
+      {
+       "x": 16,
+       "y": 3,
+       "value": 120.0
+      },
+      {
+       "x": 16,
+       "y": 4,
+       "value": 120.0
+      }
+     ],
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-12T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  },
+  "7d": {
+   "tab": "calendar",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-19",
+    "last": "2026-09-25",
+    "days": 7,
+    "label": "Last 7 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "planned",
+     "label": "Planned time",
+     "value": 660.0,
+     "unit": "minutes",
+     "explain": "Time in calendar events (not all-day ones), overlaps counted once.",
+     "estimated": false
+    },
+    {
+     "id": "on_plan",
+     "label": "Spent as planned",
+     "value": 75,
+     "unit": "percent",
+     "explain": "Of the planned time on days with screen data: work, study or a meeting app on screen.",
+     "estimated": false
+    },
+    {
+     "id": "events",
+     "label": "Events",
+     "value": 7,
+     "unit": "events",
+     "explain": "Calendar events in the range (not all-day ones).",
+     "estimated": false
+    },
+    {
+     "id": "busiest_day",
+     "label": "Busiest day",
+     "value": "2026-09-21",
+     "unit": "date",
+     "explain": "The day with the most planned time.",
+     "estimated": false
+    },
+    {
+     "id": "meetings",
+     "label": "In meetings",
+     "value": 0.0,
+     "unit": "minutes",
+     "explain": "Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once, and time listening without touching anything included.",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "plan_by_day": {
+     "kind": "stacked",
+     "title": "Planned time and where it went",
+     "unit": "minutes",
+     "explain": "Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen; on a day no device sent screen data, what it went to is unknown.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "On plan",
+       "key": "on_plan",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        127.25,
+        76.65,
+        111.58,
+        87.15,
+        90.6
+       ]
+      },
+      {
+       "name": "Off plan",
+       "key": "off_plan",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        0.0,
+        19.22,
+        0.0,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "name": "Other screen time",
+       "key": "other",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        9.78,
+        13.13,
+        9.33,
+        15.0,
+        8.33
+       ]
+      },
+      {
+       "name": "No screen",
+       "key": "idle",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        12.97,
+        11.0,
+        29.08,
+        17.85,
+        21.07
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "blocks": {
+     "kind": "bars",
+     "title": "Longest events",
+     "unit": "minutes",
+     "explain": "The longest calendar events, each split into what the time went to (on plan, off plan, other screen time, no screen), which adds up to the event's length, with the share spent as planned.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": [
+      {
+       "name": "Study: algorithms",
+       "value": 120.0,
+       "key": "2026-09-21",
+       "category": null,
+       "share": 81.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 97.25,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 9.78,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 12.97,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: databases",
+       "value": 120.0,
+       "key": "2026-09-22",
+       "category": null,
+       "share": 64.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 76.65,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 19.22,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 13.13,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 11.0,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: linear algebra",
+       "value": 120.0,
+       "key": "2026-09-23",
+       "category": null,
+       "share": 68.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 81.92,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 9.33,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 28.75,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: operating systems",
+       "value": 120.0,
+       "key": "2026-09-24",
+       "category": null,
+       "share": 73.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 87.15,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 15.0,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 17.85,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Study: statistics",
+       "value": 120.0,
+       "key": "2026-09-25",
+       "category": null,
+       "share": 76.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 90.6,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 8.33,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 21.07,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Team sync",
+       "value": 30.0,
+       "key": "2026-09-21",
+       "category": null,
+       "share": 100.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 30.0,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 0.0,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 0.0,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      },
+      {
+       "name": "Team sync",
+       "value": 30.0,
+       "key": "2026-09-23",
+       "category": null,
+       "share": 99.0,
+       "children": [
+        {
+         "name": "On plan",
+         "value": 29.67,
+         "key": "on_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Off plan",
+         "value": 0.0,
+         "key": "off_plan",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "Other screen time",
+         "value": 0.0,
+         "key": "other",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        },
+        {
+         "name": "No screen",
+         "value": 0.33,
+         "key": "idle",
+         "category": null,
+         "share": null,
+         "children": null,
+         "spark": null,
+         "change": null
+        }
+       ],
+       "spark": null,
+       "change": null
+      }
+     ],
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "meetings_by_day": {
+     "kind": "bars",
+     "title": "Meetings each day",
+     "unit": "minutes",
+     "explain": "Time in meeting apps each day, on any device (a call on two at once counted once).",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "In meetings",
+       "key": "meetings",
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "hours": {
+     "kind": "heatmap",
+     "title": "When your calendar is busy",
+     "unit": "minutes",
+     "explain": "Planned time by weekday and hour of the day, the whole range added up (overlaps counted once).",
+     "estimated": false,
+     "x": [
+      "00",
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23"
+     ],
+     "y": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+     ],
+     "lines": null,
+     "items": null,
+     "cells": [
+      {
+       "x": 11,
+       "y": 0,
+       "value": 30.0
+      },
+      {
+       "x": 11,
+       "y": 2,
+       "value": 30.0
+      },
+      {
+       "x": 15,
+       "y": 0,
+       "value": 60.0
+      },
+      {
+       "x": 15,
+       "y": 1,
+       "value": 60.0
+      },
+      {
+       "x": 15,
+       "y": 2,
+       "value": 60.0
+      },
+      {
+       "x": 15,
+       "y": 3,
+       "value": 60.0
+      },
+      {
+       "x": 15,
+       "y": 4,
+       "value": 60.0
+      },
+      {
+       "x": 16,
+       "y": 0,
+       "value": 60.0
+      },
+      {
+       "x": 16,
+       "y": 1,
+       "value": 60.0
+      },
+      {
+       "x": 16,
+       "y": 2,
+       "value": 60.0
+      },
+      {
+       "x": 16,
+       "y": 3,
+       "value": 60.0
+      },
+      {
+       "x": 16,
+       "y": 4,
+       "value": 60.0
+      }
+     ],
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-19T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  }
+ }
+}

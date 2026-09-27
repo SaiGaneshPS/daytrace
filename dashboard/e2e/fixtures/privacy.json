@@ -1,0 +1,91 @@
+{
+ "rules": {
+  "redacted": "[redacted]",
+  "rules": [
+   {
+    "id": "banking",
+    "name": "Banking and payments",
+    "description": "Online banking, account pages, statements and transfers, and the big banks and payment apps.",
+    "builtin": true,
+    "enabled": true,
+    "words": []
+   },
+   {
+    "id": "health",
+    "name": "Health portals and appointments",
+    "description": "Patient portals, records and results, prescriptions, and appointments with doctors, dentists and therapists.",
+    "builtin": true,
+    "enabled": true,
+    "words": []
+   },
+   {
+    "id": "passwords",
+    "name": "Password managers",
+    "description": "Every title in a password manager (the names of saved logins), and pages that name one.",
+    "builtin": true,
+    "enabled": true,
+    "words": []
+   },
+   {
+    "id": "private",
+    "name": "Private and incognito windows",
+    "description": "Browser windows opened as InPrivate, Incognito or Private Browsing.",
+    "builtin": true,
+    "enabled": true,
+    "words": []
+   }
+  ]
+ },
+ "check": {
+  "redacted": true,
+  "stored_as": "[redacted]",
+  "rule": "banking",
+  "rule_name": "Banking and payments"
+ },
+ "tokens": {
+  "e-mail": [
+   "e",
+   "mail"
+  ],
+  "E mail": [
+   "e",
+   "mail"
+  ],
+  "--": [],
+  "Caf\u00e9": [
+   "caf\u00e9"
+  ],
+  "STRASSE": [
+   "strasse"
+  ],
+  "Stra\u00dfe": [
+   "strasse"
+  ],
+  "Q3 2026": [
+   "q",
+   "3",
+   "2026"
+  ],
+  "na\u00efve": [
+   "na\u00efve"
+  ],
+  "x_y": [
+   "x",
+   "y"
+  ],
+  "Project-X12": [
+   "project",
+   "x",
+   "12"
+  ],
+  "\u00c9COLE": [
+   "\u00e9cole"
+  ],
+  "\u03a3\u03af\u03c3\u03c5\u03c6\u03bf\u03c2": [
+   "\u03c3\u03af\u03c3\u03c5\u03c6\u03bf\u03c3"
+  ],
+  "\u65e5\u672c\u8a9e": [
+   "\u65e5\u672c\u8a9e"
+  ]
+ }
+}

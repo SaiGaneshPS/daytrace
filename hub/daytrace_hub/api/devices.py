@@ -1,7 +1,8 @@
 """DT-12: pairing and device management.
 
 Pairing: on the hub computer, POST /pair/start shows a 6-digit code (and a QR code with the hub URL). The
-phone sends that code to POST /pair/claim and gets its own token. Codes live in memory, one at a time:
+phone sends that code to POST /pair/claim and gets its own token. The QR code comes in two kinds: for the Daytrace
+app (JSON it reads) and for a phone's camera (the Devices page's web address, which pairs that browser). Codes live in memory, one at a time:
 single use and 5 minutes. Wrong guesses are limited per client (5) and per code (20), so nobody can guess
 the code, and one noisy device on the Wi-Fi cannot lock everyone else out.
 """
@@ -18,10 +19,10 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 import qrcode
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from ..auth import DeviceType, Reader, get_database, register_device, require_local
@@ -46,6 +47,13 @@ router = APIRouter(prefix=API_PREFIX, tags=["devices"])
 
 
 @dataclass
+class ClaimedBy:
+    device_id: str
+    name: str
+    device_type: str
+
+
+@dataclass
 class ActiveCode:
     code: str
     url: str | None
@@ -53,6 +61,9 @@ class ActiveCode:
     expires_monotonic: float  # used for the check, so clock changes cannot extend a code
     wrong_by_client: dict[str, int] = field(default_factory=dict)
     used: bool = False
+    # Names this code for the dashboard (its status, its QR picture) without the code itself in any URL or log.
+    id: str = field(default_factory=lambda: secrets.token_hex(8))
+    claimed_by: ClaimedBy | None = None
 
     @property
     def wrong_tries(self) -> int:
@@ -90,6 +101,11 @@ class PairingCodes:
         with self._lock:
             return self._active if self._open(self._active) else None
 
+    def latest(self) -> tuple[ActiveCode, bool] | None:
+        """The last code started, used or not, and whether it can still be claimed; None before the first."""
+        with self._lock:
+            return (self._active, self._open(self._active)) if self._active is not None else None
+
     def claim(self, code: str, client: str, register: Callable[[], PairClaimed]) -> PairClaimed:
         """Check the code for this client and, if right, run `register` (which stores the device).
 
@@ -112,6 +128,7 @@ class PairingCodes:
                 raise ApiError(400, "invalid_code", f"wrong code; {left} {'try' if left == 1 else 'tries'} left")
             claimed = register()
             active.used = True
+            active.claimed_by = ClaimedBy(claimed.device_id, claimed.name, claimed.device_type)
             return claimed
 
 
@@ -140,6 +157,7 @@ def _trimmed(value: object) -> object:
 
 
 class PairStarted(BaseModel):
+    id: str = Field(description="Names this code in GET /pair/status and GET /pair/qr.png (instead of the code).")
     code: str
     expires_at: datetime
     url: str | None = Field(
@@ -178,6 +196,10 @@ class DeviceInfo(BaseModel):
     device_id: str
     name: str
     device_type: str
+    has_token: bool = Field(
+        description="False for the hub computer's own tracker and the demo data, which write on the hub directly "
+        "(nothing to revoke: they never send with a token)."
+    )
     paired_at: str
     last_seen: str | None
     revoked_at: str | None
@@ -190,10 +212,31 @@ class DeviceList(BaseModel):
     devices: list[DeviceInfo]
 
 
+class ClaimedDevice(BaseModel):
+    device_id: str
+    name: str
+    device_type: str
+
+
+class PairStatus(BaseModel):
+    id: str = Field(description="The last code started; a different id than yours means a newer code replaced it.")
+    active: bool = Field(description="It can still be claimed (not used, not run out, not locked by wrong tries).")
+    used: bool
+    claimed_by: ClaimedDevice | None = Field(description="The device that used it, once it has been used.")
+
+
 # --- pairing --------------------------------------------------------------------------------------------------
 
 
-def qr_payload(active: ActiveCode) -> str:
+QrKind = Literal["app", "browser"]
+
+
+def qr_payload(active: ActiveCode, kind: QrKind = "app") -> str:
+    """What the QR code says. "app": JSON for the Daytrace app's scanner. "browser": the Devices page with the code
+    after the `#`, so a phone's camera opens it and the page pairs that browser (a browser never sends the part
+    after `#` to any server)."""
+    if kind == "browser":
+        return f"{active.url}/devices#pair={active.code}"
     return json.dumps({"daytrace": 1, "url": active.url, "code": active.code}, separators=(",", ":"))
 
 
@@ -229,6 +272,7 @@ def pair_start(
     active = pairing.start(urls[0] if urls else None)
     response.headers.update(NO_STORE)
     return PairStarted(
+        id=active.id,
         code=active.code,
         expires_at=active.expires_at.astimezone(),
         url=active.url,
@@ -245,13 +289,36 @@ def pair_start(
     responses={200: {"content": {"image/png": {}}}},
     summary="QR code for the active pairing code (hub computer only)",
 )
-def pair_qr(pairing: Annotated[PairingCodes, Depends(get_pairing)]) -> Response:
+def pair_qr(
+    pairing: Annotated[PairingCodes, Depends(get_pairing)],
+    kind: Annotated[QrKind, Query(alias="for", description="app: for the Daytrace app; browser: for a phone's camera")] = "app",
+    code_id: Annotated[str | None, Query(alias="id", description="The code's id from POST /pair/start: 404 when it is not the active code")] = None,
+) -> Response:
     active = pairing.current()
-    if active is None or active.url is None:
+    if active is None or active.url is None or (code_id is not None and not hmac.compare_digest(code_id, active.id)):
         raise ApiError(404, "not_found", "no pairing code is active; start pairing again")
     buffer = io.BytesIO()
-    qrcode.make(qr_payload(active), box_size=8, border=2).save(buffer)
+    qrcode.make(qr_payload(active, kind), box_size=8, border=2).save(buffer)
     return Response(content=buffer.getvalue(), media_type="image/png", headers=NO_STORE)
+
+
+@router.get(
+    "/pair/status",
+    response_model=PairStatus,
+    dependencies=[Depends(require_local)],
+    summary="Whether the last pairing code was used, and by which device (hub computer only)",
+)
+def pair_status(response: Response, pairing: Annotated[PairingCodes, Depends(get_pairing)]) -> PairStatus:
+    latest = pairing.latest()
+    if latest is None:
+        raise ApiError(404, "not_found", "no pairing code has been started")
+    active, still_open = latest
+    by = active.claimed_by
+    response.headers.update(NO_STORE)
+    return PairStatus(
+        id=active.id, active=still_open, used=active.used,
+        claimed_by=ClaimedDevice(device_id=by.device_id, name=by.name, device_type=by.device_type) if by else None,
+    )
 
 
 @router.post("/pair/claim", response_model=PairClaimed, status_code=201, summary="Trade a pairing code for a token")
@@ -277,7 +344,8 @@ def list_devices(_: Reader, database: Annotated[Database, Depends(get_database)]
     since = utc_text(datetime.now(UTC) - timedelta(hours=24))
     with database.connect() as conn:
         rows = conn.execute(
-            "SELECT d.device_id, d.name, d.device_type, d.paired_at, d.last_seen, d.revoked_at,"
+            "SELECT d.device_id, d.name, d.device_type, d.token_hash IS NOT NULL AS has_token, d.paired_at, d.last_seen,"
+            " d.revoked_at,"
             " (SELECT MAX(seq) FROM events e WHERE e.device_id = d.device_id) AS last_seq,"
             " (SELECT COUNT(*) FROM events e WHERE e.device_id = d.device_id) AS event_count,"
             " (SELECT COUNT(*) FROM events e WHERE e.device_id = d.device_id AND e.start_utc >= ?) AS events_24h"

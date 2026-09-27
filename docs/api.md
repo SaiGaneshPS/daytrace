@@ -12,16 +12,17 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | Topic | Rule |
 |---|---|
 | Base URL | `http://<hub-host>:<port>/api/v1` (HTTPS once DT-47 lands). |
+| Dashboard | Every path outside `/api` is the dashboard (DT-30): its files, and `index.html` for any page, so reloading `/insights` works. An unknown `/api` path is still a JSON `404`. Dashboard responses carry a strict Content-Security-Policy (only this hub is contacted). |
 | Profiles and ports | personal `8765`: your real data, reachable from your own home Wi-Fi (your phone syncs here) but never over Tailscale. shared-dev `8766`: seed and test data, the only port your teammate reaches over Tailscale. demo `8767`: seeded demo data. |
 | Body format | JSON, UTF-8. |
 | Times | ISO 8601 with an offset, for example `2026-09-25T14:03:10-04:00`. Seconds and up to 9 fractional digits are optional, `T` and `Z` may be lowercase. Times without an offset, Unix numbers and impossible dates are rejected. |
 | Days | `YYYY-MM-DD`, interpreted in the time zone given by `tz` (an IANA name such as `America/Toronto`). Default: the hub computer's time zone. |
-| Auth | `Authorization: Bearer <token>`. Devices get a token when they pair (DT-12); the dashboard on phones pairs as a `viewer`. |
-| Networks | The hub listens on IPv4 (`0.0.0.0`). Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, and `fc00::/7`, `fe80::/10` for IPv6-mapped peers). On Wi-Fi you do not trust (venue, cafe), set `DAYTRACE_LAN_NETWORKS` to your own subnet, for example `192.168.1.0/24`, or stop the personal profile. Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. HTTP and WebSocket are checked the same way. |
+| Auth | `Authorization: Bearer <token>`. Devices get a token when they pair (DT-12); the dashboard on phones pairs as a `viewer`. In the Endpoints table, **viewer** means any paired device's token (a collector's as well as a viewer's), or no token from the hub computer itself; **dashboard** means a `viewer` token or the hub computer, never a collector's token. |
+| Networks | The hub listens only on this computer (`127.0.0.1`, `::1`) and the addresses phones use (the LAN adapter's, not a VPN's or a virtual machine's; the tailnet's only for shared-dev), never on a public address or every interface, and follows them as Wi-Fi and DHCP change (DT-45). Every profile accepts requests only from loopback and private LAN addresses (`10/8`, `172.16/12`, `192.168/16`, `169.254/16`, and `fc00::/7`, `fe80::/10` for IPv6-mapped peers). On Wi-Fi you do not trust (venue, cafe), set `DAYTRACE_LAN_NETWORKS` to your own subnet, for example `192.168.1.0/24`, or stop the personal profile. Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted only by shared-dev. Anything else gets `403 forbidden_network`. A request from another web page (an `Origin` that isn't the hub's own or a browser extension's, including another page on this computer, `null`, or one that doesn't parse) gets `403 forbidden_origin`. The dashboard's dev server sends the hub's own origin through its proxy. No CORS headers are ever sent. HTTP and WebSocket are checked the same way. |
 | Host names | To block DNS rebinding, the `Host` header must be an IP address, a single-label name (`localhost`, the PC name), a private name (`*.local`, `*.home.arpa`, `*.internal`, `*.lan`, `*.home`, `*.localdomain`) or, on shared-dev only, a Tailscale MagicDNS name (`*.ts.net`). Anything else gets `403 forbidden_host`. |
 | Forwarding | Never forward the personal port with a VS Code tunnel, `tailscale serve` / `funnel` or `ssh -L`: forwarded traffic arrives from `127.0.0.1` and would look like the hub computer itself. Tunnel and `ts.net` host names are refused on personal, but `ssh -L` to `localhost` is not. |
 | Local only | Endpoints marked *local only* (and dashboard reads without a token) accept requests only from the hub computer talking to itself: the client is `127.0.0.1` / `::1`, the `Host` is `localhost`, `127.0.0.1` or `[::1]`, an `Origin` (when sent) is a loopback origin, and `Sec-Fetch-Site` is not `cross-site`. So open the dashboard at `http://localhost:<port>` on the hub computer. Web pages from other sites, and DNS rebinding through LAN names, get `403 local_only`. |
-| Accuracy | Every response that feeds a chart or a number on screen includes `meta`: `{ "unit", "range": { "start", "end", "tz" }, "source": "real" \| "seed" \| "mixed", "estimated": true \| false }`. |
+| Accuracy | Every response that feeds a chart or a number on screen includes `meta`: `{ "unit", "range": { "start", "end", "tz" }, "source": "real" \| "seed" \| "mixed", "estimated": true \| false }`: the timeline, the day summary, every Insights tab, one app's detail, Wrapped, streaks, goals, achievements, the day's story, and an answer to a question (the days its tools read; null when none was read) (DT-59's `test_reconciliation.py` checks each, and that every split of the numbers adds up to the same totals). `unit` is the headline numbers' unit (minutes, days, badges), null when each number has its own (the goals, the story's facts). A range read from the evening before (a night's bedtime, Screens down) starts there. `estimated` is true when a number behind the answer was inferred: a streak's current and best runs count, not only the days listed. |
 
 ### Errors
 
@@ -64,8 +65,14 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 | `PUT /categories/{key}`, `DELETE /categories/{key}` | dashboard (viewer token or the hub computer) | DT-14 |
 | `GET /ai/status`, `GET /story`, `POST /ask` | viewer | DT-37, DT-39, DT-40 |
 | `GET /insights/{tab}`, `GET /wrapped` | viewer | DT-41 |
-| `GET /streaks`, `GET /goals`, `PUT /goals/{goal_id}`, `GET /achievements` | viewer | DT-53 |
+| `GET /streaks`, `GET /goals`, `GET /achievements` | viewer | DT-53 |
+| `PUT /goals/{goal_id}` | dashboard (viewer token or the hub computer) | DT-53 |
+| `GET /nudges` | viewer | DT-43 |
+| `PUT /nudges` | dashboard (viewer token or the hub computer) | DT-43 |
+| `GET /privacy/redaction`, `POST /privacy/redaction/check`, `GET /privacy/redaction/stored` | viewer | DT-44 |
+| `PUT /privacy/redaction`, `POST /privacy/redaction/apply` | dashboard (viewer token or the hub computer) | DT-44 |
 | `GET /privacy/network` | viewer | DT-45 |
+| `GET /privacy/storage` | viewer (the folder only for the hub computer) | DT-36 |
 | `GET /privacy/export`, `POST /privacy/delete` | local only | DT-46 |
 
 ### GET /health
@@ -73,8 +80,12 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 No token needed; the network and Host checks still apply.
 
 ```json
-{ "status": "ok", "profile": "personal", "version": "0.1.0" }
+{ "status": "ok", "profile": "personal", "version": "0.1.0", "local": true }
 ```
+
+`local` (DT-32) is true when the request comes from the hub computer's own dashboard, by the same check that
+`POST /pair/start`, `GET /pair/qr.png` and `DELETE /devices/{id}` make. The Devices page uses it to show the
+pairing code there and a "Pair this device" form anywhere else.
 
 ### POST /events
 
@@ -112,7 +123,7 @@ Response (`200` whenever the body has the right shape, even if some events were 
 ```json
 { "accepted": 1, "replaced": 0, "duplicates": 0,
   "rejected": [ { "index": 3, "code": "invalid", "seq": 812, "external_id": null, "reason": "data.stage: sleep data.stage must be one of [...]" } ],
-  "last_seq": 4812, "nudge": null }
+  "last_seq": 4812, "nudge": null, "meals": [] }
 ```
 
 - `rejected` lists events the hub did not store, each with a `code`:
@@ -122,8 +133,68 @@ Response (`200` whenever the body has the right shape, even if some events were 
     after `last_seq` and send them again; nothing is lost.
 - Besides the schema, the hub rejects (`invalid`) text with broken characters (half of an emoji), numbers that
   are not finite (`1e400`), and `data` over 16 KB as compact UTF-8 JSON.
-- When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "...", "body": "...", "created_at": "..." }`.
-- DT-42 adds the parsed meal items to the response for `meal` events.
+- When a rule fires (DT-43), `nudge` is `{ "rule": "focus_block", "title": "Time to focus", "body": "TikTok during
+  \"Study: calculus\", which runs until 17:00.", "created_at": "2026-09-25T19:30:00Z" }`, and the device shows it.
+  See [Nudges](#nudges).
+- **Meals sent as text (DT-42).** A `meal` event with `data.text` and no `items` or no `meal_type` is read by the
+  hub, and `meals` lists what it read, one entry per such meal (by `index`), so a Shortcut can say "Logged: two
+  rotis, dal":
+
+  ```json
+  "meals": [ { "index": 0, "items": ["two rotis", "dal"], "meal_type": "lunch", "items_by": "ai", "type_by": "time" } ]
+  ```
+
+  - **Items:** the local model lists the foods as the text names them (`items_by: "ai"`), with no calories, weights
+    or portions. An answer that names a food the text doesn't (every item must share a word with the text) is
+    not used, and without a model the text is split on commas, "and", "+" and new lines (`"text"`). Items the event
+    sent itself are kept (`"event"`).
+  - **Meal type:** the event's own; else a meal the text names explicitly, "for dinner", "as a snack", "at lunch"
+    (the last one wins) or a leading "Lunch:" (`type_by: "text"`), never a food named after a meal ("breakfast
+    burrito for dinner" is dinner); else the hour on the device's clock (`"time"`): breakfast from 04:00, lunch from
+    11:00, a snack from 15:00, dinner from 17:00, a snack again from 22:00. A time sent in UTC is read in the hub's
+    own zone.
+  - **Stored** with the event as `data.parsed` (`items`, `meal_type`, `items_by`, `type_by`), which Insights, the
+    timeline and the other readers use where the event lacks its own. It is never part of the event's key or of
+    any comparison of two copies (`models.identity_data`): a resend is a duplicate, isn't read again, and gets the
+    stored reading back, also after the privacy rules re-key it. Collectors never send `data.parsed` (`invalid`).
+  - **Never a long wait:** the model has 20 s for all of a request's meals, and reads at most 5 of them. The first
+    sign it can't be used (not running, an error) ends its turn; whatever it didn't read is split. A device revoked
+    while its meals were read stores nothing (401).
+  - `DAYTRACE_AI_MEALS=off` keeps meal text from the model: it is only split.
+
+### Nudges
+
+An event sent to `POST /events` can come back with one `nudge` (DT-43), for what is happening now: activity that
+ended more than 10 minutes ago (a phone catching up) nudges no one. The rules, checked in this order:
+
+| Rule | Fires for | Says |
+|---|---|---|
+| `focus_block` | a social, video or game app during a timed calendar event whose title is about focus (study, work, deep work, an exam, revision, homework, an assignment, a lecture, a thesis, an essay, a deadline; whole words) | the app, the event and when it ends |
+| `late_scroll` | a social or video app after the bedtime goal (23:30 unless changed) and before 04:00 | the time, the bedtime, and the first event of the coming day (tomorrow before midnight, today after it) |
+| `streak_at_risk` | from 20:00, a streak to reach (Focus flame, Logged it, Synced) with a run going and today not kept yet, if it can still be kept (not more minutes than the day has left) | the real amount left, rounded up ("20 more focused minutes keeps your 3-day Focus flame streak going") |
+| `social_cap` | a social app once today's social time is over the social goal, in whole minutes | today's social time and the goal, the numbers the Streaks page shows |
+
+- Each rule rests 20 minutes after it fires, and no nudge follows another within 5 minutes, across every device
+  (the checks and the log entry are one transaction, so two requests at once nudge once). Every nudge is logged in
+  `nudge_log`; applying redaction rules to stored data (`POST /privacy/redaction/apply`) hides the words of logged
+  nudges too.
+- The hub's own desktop tracker never goes through `POST /events`: its nudges show as a desktop notification on the
+  hub computer (a Windows toast, a macOS notification, `notify-send` on Linux) when `desktop` is on. The words are
+  data, never part of a script: Windows reads them from environment variables into the toast as text. A
+  notification that couldn't be shown is taken back from the log, so its rule doesn't rest for the phones.
+- Times are the hub computer's clock.
+
+`GET /nudges` (viewer):
+
+```json
+{ "rules": [ { "id": "focus_block", "name": "Focus time", "description": "A social, video or game app during ...", "enabled": true }, "..." ],
+  "desktop": true, "cooldown_minutes": 20,
+  "recent": [ { "rule": "focus_block", "device_id": "android-1", "title": "Time to focus", "body": "...", "created_at": "2026-09-25T19:30:00Z" } ] }
+```
+
+`recent` is the latest 20 nudges, newest first. `PUT /nudges` (the dashboard) with `{ "disabled": ["late_scroll"],
+"desktop": true }` switches rules off (the others on) and desktop notifications on or off. Both fields are needed
+(a missing or unknown field is `422`, not a reset), and an unknown rule is `400`.
 
 ### GET /devices/{device_id}/cursor
 
@@ -159,8 +230,12 @@ collector checks what the hub already has.
 - `mdns_url` is set only when mDNS is on.
 - Only one code is active at a time; starting again replaces it. The response is sent with `Cache-Control: no-store`.
 
-`GET /pair/qr.png` (local only) is a PNG of `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`
-for the active code, or `404` when no code can be claimed.
+`GET /pair/qr.png?for=app|browser` (local only) is a PNG for the active code, or `404` when no code can be claimed:
+
+- `for=app` (the default), for the Daytrace app's scanner: `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`.
+- `for=browser` (DT-32), for a phone's camera: `http://192.168.1.23:8765/devices#pair=493817`, which opens the
+  Devices page on the phone and pairs that browser as a viewer. A browser never sends the part after `#` to any
+  server, so the code stays out of requests and logs.
 
 `POST /pair/claim` (no token; the network rules still apply):
 
@@ -247,12 +322,13 @@ Example with two devices (the `...` stands for more sessions of the same shape):
 {
   "date": "2026-09-25", "tz": "America/Toronto",
   "lanes": [
-    { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true, "seconds": 4500, "minutes": 75.0,
+    { "device_id": "windows-1", "device_type": "windows", "name": "Desk PC", "counted": true,
+      "last_seen": "2026-09-25T22:41:07.000000Z", "seconds": 4500, "minutes": 75.0,
       "sessions": [ { "start": "2026-09-25T09:00:00-04:00", "end": "2026-09-25T09:40:00-04:00", "seconds": 2400,
         "minutes": 40.0, "app": "Code", "app_id": null, "title": "stats.py", "category": "work", "kind": "app",
         "estimated": false }, "..." ] },
-    { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "counted": true, "seconds": 2100, "minutes": 35.0,
-      "sessions": [ "..." ] } ],
+    { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "counted": true,
+      "last_seen": null, "seconds": 2100, "minutes": 35.0, "sessions": [ "..." ] } ],
   "calendar": [ { "start": "2026-09-25T15:00:00-04:00", "end": "2026-09-25T17:00:00-04:00", "title": "Study: algorithms",
     "all_day": false, "device_id": "iphone-1" } ],
   "sleep": [ { "start": "2026-09-24T23:40:00-04:00", "end": "2026-09-25T07:05:00-04:00", "minutes": 445.0,
@@ -266,6 +342,9 @@ Example with two devices (the `...` stands for more sessions of the same shape):
     "tz": "America/Toronto" }, "source": "real", "estimated": false }
 }
 ```
+
+A lane's `last_seen` is when its device last reached the hub (UTC, updated at most once a minute; null for a device
+that never has, like a seeded one). The Today tab marks a device that synced in the last minute as live.
 
 How the numbers are made (`hub/daytrace_hub/sessions.py`):
 
@@ -313,6 +392,24 @@ Keys are compared Unicode-normalized and without case, `.exe`, `www.`, a port or
 consumer of sessions (timeline, stats, goals, insights) gets them already categorized from
 `sessions.sessions_for()`, so they always agree.
 
+**The local AI's guesses (DT-42).** In the background, 30 s after new events arrive and every 10 minutes, the hub
+asks the local model about apps and sites of the last 92 days that nothing above knows, the most used first, 10 at a
+time (a few seconds each, so a meal or a question never waits long behind it). The question gives each one's name, id
+or site and the fixed categories with what each means, and asks for structured JSON (temperature 0).
+
+- **Saved** as an override with `source: "ai"`, `other` included, so every app is asked about once. Just before
+  saving, each app is checked again in the same transaction (still seen, still unknown, still visible under the
+  privacy rules), so a delete-all, a new rule or the user's own choice made while the model thought wins.
+- **A bad answer** (cut off, not JSON, fewer than half answered) saves nothing, and those apps wait 6 hours while
+  the next batch is asked. Without a model nothing is saved and it is tried again at the next run. A run waits its
+  turn when the model is answering something else, stops between batches when the hub shuts down, and is skipped
+  when nothing changed since the last run found no more work.
+- **The user decides:** a guess never replaces the user's choice, and the user can always change one
+  (`PUT /categories/{key}`). Removing a guess (`DELETE /categories/{key}`) means "no guess": that app isn't asked
+  about again (settings `ai_categories.declined`).
+- **Privacy:** names the privacy rules hide are never sent, and applying the rules drops guesses kept under such a
+  name. `DAYTRACE_AI_CATEGORIES=off` turns it off.
+
 `GET /categories` (any paired device's token, or no token from the hub computer) lists the categories and every
 app or site seen in the last 30 days, most used first (at most 500):
 
@@ -341,46 +438,384 @@ app or site seen in the last 30 days, most used first (at most 500):
 
 ### AI
 
-- `GET /ai/status` returns `{ "model": "...", "reachable": true, "tool_calling": true }`.
-- `GET /story?date=` returns `{ "date": "...", "story": "...", "facts_used": [ { "label": "...", "value": 125, "unit": "minutes" } ], "model": "...", "cached": false }`.
-- `POST /ask` with `{ "question": "...", "tz": "..." }` returns `{ "answer": "...", "facts_used": [...], "tools_called": ["get_totals"], "chart": null }`. `chart`, when present, is a small series the dashboard can draw.
+- `GET /ai/status` (DT-37) always answers `200`:
 
-Every number in `story` and `answer` appears in `facts_used` (the number check, DT-39). When the model is
-down these return 503 `ai_unavailable`.
+  ```json
+  { "base_url": "http://127.0.0.1:1234/v1", "model": "qwen3-14b", "reachable": true, "tool_calling": true,
+    "models": ["qwen3-14b"], "error": null }
+  ```
+
+  - `reachable` is whether a model server answers `GET /models` (asked once, so a stopped server shows up quickly).
+  - `model` is `DAYTRACE_LLM_MODEL` when it is loaded, otherwise the first model listed.
+  - `tool_calling` is whether that model calls a tool when asked to. It is checked with one short reply and
+    remembered for 10 minutes; it is `null` when there is no usable model.
+  - `error` says, in plain words, what is wrong: no server, the model not loaded, or an address that isn't local.
+  - The model server must be on this computer or the profile's LAN ranges (`DAYTRACE_LAN_NETWORKS` narrows them),
+    or on the tailnet for profiles without real data (never personal): `DAYTRACE_LLM_BASE_URL` (default LM Studio
+    `http://127.0.0.1:1234/v1`; Ollama is `http://127.0.0.1:11434/v1`). Host names are resolved by the hub, every
+    address is checked, and the connection goes to a checked address. Cloud metadata addresses are always refused.
+    Only plain request headers are sent, never credentials.
+  - A malformed `DAYTRACE_LLM_BASE_URL` does not stop the hub: `error` explains it.
+- `GET /story?date=&tz=` (DT-39, viewer) returns a 4 to 6 sentence story of the day:
+
+  ```json
+  { "date": "2026-09-25", "tz": "America/Toronto", "story": "...",
+    "facts_used": [ { "label": "screen time", "value": 155, "unit": "minutes" } ],
+    "model": "qwen3-14b", "cached": false, "fallback": false, "reason": null, "in_progress": false }
+  ```
+
+  - The facts come from the stats engine. `unit` is one of `minutes`, `times`, `score`, `percent`, `per hour`
+    or `time` (HH:MM, local). A session still going at midnight is not the day's first or last screen use.
+  - Every amount in `story` is read whole and must match one fact of the same kind:
+    - Durations are read however they are written ("2 hours 35 minutes", "2h35m", "two and a half hours", "a
+      three-hour block"). So are clock times ("11:40 pm", "9 am", "half past eight"), percents, scores ("81 out
+      of 100"), counts ("12 times", "twice"), rates ("4 switches an hour"), dates and number words.
+    - A duration matches to the minute (plus or minus 1), or at the precision it was said in ("about 2 hours",
+      "2.6 hours"). A clock time matches to the minute, "9 am" to the hour; without am or pm, either half of the
+      day. Scores and percents match within 1, counts exactly.
+    - A number with a unit no fact has ("155 seconds", "81 apps") only matches an amount written in a fact's
+      label ("10+ minutes"). A date must be the story's day.
+  - A story with any other number, the wrong length, or cut off is retried once, told what was wrong. After that,
+    or when the model is away, the answer is a plain template story from the same facts, with `fallback: true`,
+    `model: null` and `reason` saying why. It is still `200`.
+  - Stories the model wrote are cached per day and time zone (`cached: true`, with the facts they were written
+    from). A new one is written when the facts, the prompt, the number check or the configured model change. A
+    second request while one is being written waits for it instead of asking the model again.
+  - `in_progress: true` means the day is not over: the story is of the day so far, has no "last screen use",
+    and is written again at most every 15 minutes. A day without data gets a short note and no model call.
+- `POST /ask` (DT-40, viewer) with `{ "question": "How much YouTube after 11 pm last week?", "tz": "America/Toronto" }`
+  (up to 500 characters) answers from your data:
+
+  ```json
+  { "answer": "Last week you watched 1 hour 50 minutes of YouTube after 11 pm, ...",
+    "facts_used": [ { "label": "time in apps matching YouTube between 23:00 and 03:00, from Monday 2026-09-21 to Sunday 2026-09-27",
+                      "value": 110, "unit": "minutes" } ],
+    "tools_called": ["get_totals"],
+    "chart": { "kind": "bar", "title": "...", "unit": "minutes", "points": [ { "label": "2026-09-21", "value": 30 } ] },
+    "model": "qwen3-14b", "fallback": false, "declined": false, "reason": null }
+  ```
+
+  - The model calls tools that read the stats engine, at most 4 per question, each over at most 31 days and
+    returning at most 40 facts (summaries first):
+    - `get_totals`: screen time grouped by app, category, device, hour or day. It can be narrowed to an app or
+      site (a word of its name, or part of it for 4 letters or more), a category, phones or computers, and a
+      time of day. 23:00 to 03:00 runs into the next morning and counts for the evening it started on. A range
+      with no data gets no total: missing is not zero. When an app filter matches several apps and sites
+      (YouTube and youtube.com), the total and all cut from it say "(all N together)", and each one's time is
+      "of that total", rounded so the parts add up to it.
+    - `get_sessions`: the sessions themselves, with their times.
+    - `get_focus`: focused time, focus score, pickups and switches per hour, per day.
+    - `get_sleep`: sleep per night, and screen time after 11 pm the night before.
+    - `get_calendar`: calendar events with their times, upcoming ones included (not all-day events).
+    - `compare_plan`: how calendar time was spent, up to now.
+    - `get_streaks`: the Streaks page's numbers now: each streak's days in a row up to today, its longest run,
+      what today still needs (rounded up) or what is left under a limit (rounded down), and each goal's target
+      and today's reading. It takes no range.
+  - `facts_used` is every fact the tools returned, and the answer goes through the story's number check against
+    them. Dates must be days the tools looked at.
+  - An answer that fails is retried once. After that, the facts themselves are the answer (`fallback: true`,
+    `model: null`, `reason` says why).
+  - A question that is not about your day is declined politely (`declined: true`).
+  - `chart`, when present, is a small series from the last tool that had one.
+
+Every number in `story` and `answer` appears in `facts_used` (the number check, DT-39). `/story` falls back to a
+template when the model is down; `/ask` returns 503 `ai_unavailable` then (400 for an empty question).
 
 ### Insights and Wrapped
 
-`GET /insights/{tab}?range=7d&tz=...` where `tab` is `overview`, `apps`, `devices`, `focus`, `sleep`, `food`
-or `calendar`, and `range` is `today`, `7d`, `30d` or `YYYY-MM-DD..YYYY-MM-DD`:
+`GET /insights/day?date=2026-09-25&tz=America/Toronto` (DT-31, viewer) gives the Today tab's numbers from the stats
+engine, so the dashboard never works one out itself:
 
 ```json
-{ "tab": "overview",
-  "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "..." }, "source": "seed", "estimated": false },
-  "metrics": [ { "id": "screen_time", "label": "Screen time", "value": 3120, "unit": "minutes",
-    "explain": "All app and window time across devices, AFK removed.", "estimated": false } ],
-  "series": { "trend": { "type": "stacked_area", "x": ["2026-09-19", "..."], "stacks": { "windows-1": [301, "..."] } } } }
+{ "date": "2026-09-25", "tz": "America/Toronto", "in_progress": false,
+  "screen_minutes": 157.5, "phone_minutes": 37.5, "computer_minutes": 120.0,
+  "focused_minutes": 45.0, "focus_score": 36, "work_or_study_minutes": 60.0, "distracted_minutes": 65.0,
+  "pickups": 3, "switches_per_hour": 2.3,
+  "sleep_minutes": 447.0, "sleep_estimated": true, "steps": 8412,
+  "top_apps": [ { "app": "Minecraft", "category": "games", "minutes": 60.0 } ],
+  "screen_estimated": false, "estimated": true,
+  "meta": { "unit": "minutes", "range": { "...": "the day" }, "source": "seed", "estimated": true } }
 ```
 
-`GET /wrapped?week=2026-W39` returns `{ "week": "...", "stats": [...], "streaks": [...], "lines": ["...", "...", "..."], "meta": {...} }`.
+- `screen_minutes` is the timeline's total (per device, added up); `phone_minutes` and `computer_minutes` add up to it.
+  All three are null on a day without screen data (missing, not zero).
+- `work_or_study_minutes` and `distracted_minutes` are the focus score's parts (DT-33 charts them next to the story):
+  time in work or study apps and in social, video or game apps, on any device, overlaps counted once.
+  `focus_score = round(100 x focused / (work_or_study + distracted))`; focused time is part of work or study.
+- `top_apps`: up to 10 apps and sites, most time first, each with the category holding most of its time.
+- `sleep_minutes`: last night (the night ending this morning). `steps`: the day's steps; when two phones send
+  steps, the larger total.
+- `screen_estimated` is true when some of the screen time was inferred (an iPhone app with no close event);
+  `estimated` is true when anything was (screen time or sleep), so a badge on screen time follows `screen_estimated`.
+- `in_progress` is true only for a day that has begun and not yet ended (today): every number is the day so far.
+  A future day is false, with no data.
+
+`GET /insights/{tab}?range=7d&tz=America/Toronto` (DT-41, viewer) gives an Insights tab its metrics and its
+chart-ready series. `tab` is `overview`, `apps`, `devices`, `focus`, `sleep`, `food` or `calendar`. `range` is
+`today`, a number of days ending today such as `7d` or `30d` (1 to 92), or `YYYY-MM-DD..YYYY-MM-DD` (up to 92
+days); anything else is `400`.
+
+```json
+{ "tab": "overview", "tz": "America/Toronto", "in_progress": true, "cached": false,
+  "range": { "first": "2026-09-19", "last": "2026-09-25", "days": 7, "label": "Last 7 days" },
+  "metrics": [ { "id": "screen_time", "label": "Screen time", "value": 3120.5, "unit": "minutes",
+    "explain": "All app and site time across devices, each device counted, away time removed.", "estimated": false } ],
+  "series": {
+    "screen_by_device": { "kind": "stacked", "title": "Screen time by device", "unit": "minutes", "explain": "...",
+      "estimated": false, "x": ["2026-09-19", "..."], "lines": [ { "name": "Desk PC", "key": "windows-1", "values": [301.5, null, "..."] } ] },
+    "categories": { "kind": "donut", "items": [ { "name": "Work", "key": "work", "category": "work", "value": 1450.0 } ], "...": "..." },
+    "hours": { "kind": "heatmap", "x": ["00", "...", "23"], "y": ["Mon", "...", "Sun"], "cells": [ { "x": 9, "y": 0, "value": 42.0 } ] } },
+  "meta": { "unit": "minutes", "range": { "start": "...", "end": "...", "tz": "..." }, "source": "seed", "estimated": false } }
+```
+
+- Every metric has a unit and a line saying what it means (`explain`), and `value` is null when there is no data
+  for it in the range (missing, not zero). Counts that need no screen (meals, calendar events, nights) are 0 only
+  on days the hub could have heard about: a device sent something for the day, or one was paired then. Before
+  recording began, and on days still to come, they are null.
+- Categories are named as the dashboard names them (`comms` is "Chat and calls"; the rest are the key, capitalized).
+- A series has a `kind` and what that kind needs:
+  - `trend`, `stacked`: `x` labels and `lines`, one value per label (null where a day had no data; in a line per
+    device, also where that device sent nothing that day). A device's line has its `device_type`.
+  - `bars`: `x` and one line, or `items` by name.
+  - `donut`: `items`. `treemap`: `items` with `children`.
+  - `heatmap`: `x`, `y` and `cells` (indexes into them).
+  - `sankey`: `nodes` and `links`. Node names are unique: a device name two devices share, or one that is also a
+    category's, gets the device id, as in `Galaxy phone (android-3)`. Lines and heatmap rows use the same names.
+  - `scatter`: `points` (each with an optional `group`), with `stats` (rho, p, n, and the trend line's slope and intercept), a `note` for a
+    correlation, and a `reason` when rho is missing.
+  - `gauge`: `value` and `max`.
+  - `leaderboard`: `items` in order, each with its minutes (`value`), `spark` (minutes on each of the series' `x`
+    days, null on a day no device sent screen data) and `change` (as below, or null).
+  - `strip`: `x` days, `y` rows and `cells`: 1 sent screen data that day, 0 sent none although it was around (paired
+    then, or between two days it sent data), no cell when it wasn't.
+- The tabs and their series:
+  - **overview:** screen time by device and day, categories, the focus score by day, weekday by hour, and phone
+    against computer by day (null where no phone, or no computer, had data). Its metrics add the best day (most
+    focused minutes, `best_day` and `best_day_focused`) and the toughest (most screen time after 11 pm,
+    `toughest_day` and `toughest_day_late`), each with its reason in `explain`.
+  - **apps:** top apps and sites, categories with their apps (treemap), categories by day, app switches an hour,
+    and the leaderboard (DT-55): the top 10, each with its last 7 days up to the range's end, and its minutes a day
+    against the days just before the range (whole days with screen data, the overview's rule for how many), better
+    down for social, video and games, up for work and study, and `neutral` otherwise.
+  - **devices:** each device's share, by day, by hour, and device to category (Sankey). DT-55 adds switching between
+    devices (`handoffs`, a Sankey from what you left on one device to what you took up on another within 5 minutes:
+    `Galaxy phone · Social` to `then Desk PC · Chat and calls`, the 12 most common, with each node's category key in
+    `node_categories`; a switch over midnight counts for the day it lands in), when each device sent data (`sync`, a
+    strip), and the metrics `handoffs` (the count), `top_handoff` and `last_seen:<device>` (when the hub last heard
+    from it, UTC, or null: read fresh for every answer, a cached one too).
+  - **focus:** the average score (gauge, its `explain` spelling out the formula); focused, other work or study, and
+    distracted time by day; switches by hour; late nights against the next day's focus (scatter, with Spearman's rho
+    and "correlation, not cause"). DT-56 adds switches an hour by day (`switches_by_day`), when distractions happen
+    (`distraction_hours`: social, video and games by weekday and hour, time on two devices at once counted once, as in
+    the focus score), and the scatter's trend line (`stats.slope`, points of focus per late minute, and
+    `stats.intercept`: Theil-Sen's, the median of the slopes between nights, so one odd night can't swing it; given
+    only with rho). With no rho the scatter's `reason` says why (fewer than 3 nights, or nothing varied). The focus
+    lines have keys `focused`, `rest` and `distracted`.
+  - **sleep:** each night, measured or estimated; bedtime and wake time (minutes after 18:00 the evening before);
+    after 11 pm.
+  - **food:** meals by day and type, when you ate (each point's `group` is the meal's type), the most logged foods
+    (items as logged, never calories), and the metric `late_meals` (meals from 22:00 to 04:00 on the range's nights,
+    each counted for its night: a snack at 01:00 is the night before's; the window is in `meal_times.stats`; DT-57).
+  - **calendar:** planned time by day and where it went (on plan, off plan, other screen time, no screen); the
+    longest events with their on-plan share, each split in `children` into those four parts, which add up to the
+    event's length (null on a day no device sent screen data: unknown, not 0% on plan; planned time on such a day is
+    its own `unknown` line in `plan_by_day`); weekday by hour; and meetings each day (`meetings_by_day`, time in
+    meeting apps such as Zoom, Teams, Google Meet or Webex on any device, known by whole words of the app's name or
+    id, a call on two at once counted once, and time listening without touching anything included) with the metric
+    `meetings` (DT-57).
+- The overview also has `changes`: each headline number against the same number of days just before, as
+  `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down|neutral, days }`, where `now`
+  and `before` are day averages. Only whole days count: today, still going, is left out, and so is a night
+  (11 pm to 3 am) until 3 am. Each side needs 4 of them with data (half the range, rounded up, for a range
+  under 8 days); otherwise that number has no change, and a range with too few whole days has none at all. `direction` is `same` when the change rounds to nothing, and `better`
+  says which way is good (less screen time, more focus and sleep). Other tabs have an empty list.
+- Every series is cut from the same pieces as the stats engine's totals (`Stats.crosstab`), so a tab's charts add up
+  to its totals and agree with Today and each other.
+- Answers are cached per range and time zone until the data changes (`cached: true`). The database keeps a change
+  counter (migration `0005`): its triggers count events added, replaced or deleted, category choices, and devices
+  paired, renamed or revoked, whichever process makes the change, so a seed run from the command line counts too.
+  A range that is not over (today in it, or days still to come) is also worked out again after a minute.
+- On 14 seeded days every tab answers in about 0.3 s.
+
+`GET /insights/apps/detail?app=YouTube&range=7d&tz=America/Toronto` (DT-55, viewer) is one app or site over a
+range, as the Apps tab names it (a site by its domain): `{ app, category, tz, range, in_progress, metrics, series,
+longest, meta, cached }`. Metrics: `total`, `days_used`, `a_day_used` and `longest` (minutes). Series: `daily` (bars,
+null on a day no device sent screen data, 0 on one it wasn't used), `hours` (minutes by hour of the day, the range
+added up; null when no day had data) and `devices` (a donut). `longest` is its longest stretch on one device, breaks
+under a minute joined and over midnight too: `{ start, end, minutes, device_id, device }`, or null. It is cut from the same pieces as the tabs, so its total is
+the leaderboard's. An app with no time is 200 with zeros; `app` must be 1 to 300 characters (else 422).
+
+`GET /wrapped?week=2026-W38&tz=America/Toronto` (DT-41, viewer) is the week in review, Monday to Sunday. Without
+`week`, it is last week (the last whole one).
+
+```json
+{ "week": "2026-W38", "first": "2026-09-14", "last": "2026-09-20", "tz": "America/Toronto", "in_progress": false,
+  "metrics": [ "the overview's metrics for the week" ], "top_apps": [ { "app": "Code", "category": "work", "minutes": 1494.0 } ],
+  "lines": [ "You spent 3942 minutes on screens this week.", "...", "..." ],
+  "facts_used": [ { "label": "screen time this week", "value": 3942, "unit": "minutes" } ],
+  "model": "google/gemma-4-e4b", "cached": false, "fallback": false, "reason": null, "streaks": [ { "id": "focus_flame", "met": 5, "days_with_data": 7, "longest": 4, "...": "..." } ], "meta": { "...": "..." } }
+```
+
+- `lines` are always three: highlight lines by the local model from the week's facts. Every number in them is
+  checked like the story's (DT-39); lines that fail are retried once, then replaced by three plain lines from the
+  same facts (`fallback: true`, `model: null`, `reason` says why).
+- `in_progress` is true only while the week is going: a week still to come says false, as `/insights` does.
+- The facts compare the week with the one before only a day for a day (average screen time a day), over whole days,
+  and only when both weeks have at least 4 whole days with data. A week that only began being recorded, or this week
+  on a Monday morning, would make any change look huge.
+- The lines are cached per week and time zone like the story: until the facts or what wrote them change, and for a
+  week not over yet at most every 15 minutes.
+- `streaks` has each streak's week (DT-53): the days that met its rule (`met`, `dates`), the days with data, and the
+  longest run inside the week.
+- The first answer takes as long as the model writes (about 15 s with Gemma 4 E4B on this PC); cached answers are
+  instant.
 
 ### Streaks, goals and achievements
 
-`GET /streaks`:
+DT-53. The rules are in `hub/daytrace_hub/data/streak_rules.json`, and every number comes from the stats engine,
+so a streak agrees with Today and Insights. Every streak, goal and badge says its rule in words and the days that
+counted.
+
+`GET /streaks?tz=America/Toronto&days=30` (viewer):
 
 ```json
-{ "streaks": [ { "id": "focus_flame", "name": "Focus flame", "rule": "120 or more focused minutes in a day",
-  "current": 5, "best": 9, "today": "at_risk", "remaining": { "value": 45, "unit": "minutes" },
-  "days": [ { "date": "2026-09-24", "status": "met" } ] } ] }
+{ "tz": "America/Toronto", "date": "2026-09-25", "since": "2026-09-12",
+  "streaks": [ { "id": "focus_flame", "name": "Focus flame", "rule": "240 or more focused minutes in a day",
+    "needs": "a computer's data for the day", "kind": "at_least", "unit": "minutes", "target": 240.0,
+    "current": 3, "best": 5, "today": "met", "value": 384.6, "remaining": null,
+    "counted": ["2026-09-23", "2026-09-24", "2026-09-25"],
+    "best_dates": ["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21"],
+    "days": [ { "date": "2026-09-22", "status": "missed", "value": 140.0, "estimated": false }, "..." ], "estimated": false } ],
+  "meta": { "unit": "days", "range": { "...": "the days listed" }, "source": "seed", "estimated": false } }
 ```
 
-`today` is `met`, `at_risk` or `no_data`; days with no data from the needed device neither extend nor break
-a streak.
+- A day's `estimated` is true when its reading was partly inferred (a bedtime from a night guessed from the phone,
+  minutes from an app whose close was never seen), and a streak's when any listed day's was (DT-59).
 
-- `GET /goals` returns `{ "goals": [ { "id": "social_cap", "label": "Social apps", "target": 60, "unit": "minutes", "progress": 0.42 } ] }`; `PUT /goals/{goal_id}` with `{ "target": 45 }` saves a new target.
-- `GET /achievements` returns `{ "achievements": [ { "id": "first_sync", "name": "First sync", "rule": "...", "unlocked_at": null } ] }`.
+- The streaks: **Focus flame** (the focus target, in focused minutes), **Screens down** (15 minutes or less on the
+  phone after 11 pm the night before), **Logged it** (a meal logged), **Balanced** (the social cap) and **Synced**
+  (every paired phone and computer sent data that day).
+- Each day is `met`, `missed` or `no_data`. No data means what the rule needs (`needs`) sent nothing for that day,
+  such as no computer on a Sunday for Focus flame, a phone that sent nothing all day for Logged it, or for Screens down
+  a night the phone didn't show up both that evening (from 18:00) and on the day. Such a day neither extends nor
+  breaks a streak.
+- `today` is `met` as soon as today qualifies. A limit (Screens down, Balanced, the bedtime) qualifies only once what
+  it measures is over: the day, the night (03:00), or the sleep window (12:00, or as soon as the health app sends the
+  night). Until then today is `at_risk`, and `remaining` says what is left: the minutes still to go (`kind`
+  `at_least`: a target to reach), or the room left under the limit (`kind` `at_most`). `current` counts the days up to yesterday while today is at risk. Once today can no longer
+  qualify (the limit passed), it is `missed` and `current` is 0.
+- `best` is the longest run in the hub's history, up to a year back (`since` is the first day judged: the first day
+  with screen data). `days` lists the last `days` days (1 to 366), oldest first.
+- Goals apply to the whole history: a new target judges the past days again, so a streak always means what its rule
+  says now.
+
+`GET /goals?tz=` (viewer) is the daily goals with today's progress. `PUT /goals/{goal_id}` (the dashboard) with
+`{ "target": 45 }`, or `{ "target": "23:00" }` for the bedtime, saves a new target; out of range is `400`, an unknown
+goal is `404`.
+
+```json
+{ "tz": "America/Toronto", "date": "2026-09-25", "goals": [
+  { "id": "social_cap", "label": "Social apps", "rule": "60 minutes or less in social apps in a day",
+    "explain": "...", "kind": "at_most", "unit": "minutes", "target": 60.0, "default": 60, "min": 5.0, "max": 600.0,
+    "today": { "value": 17.98, "status": "at_risk", "progress": 30, "estimated": false } } ],
+  "meta": { "unit": "each goal's own", "range": { "...": "today" }, "source": "seed", "estimated": false } }
+```
+
+- `focus_target` (focused minutes, at least; 10 to 720, default 120), `social_cap` (social minutes, at most; 5 to
+  600, default 60) and `bedtime` (asleep by, the night before; 20:00 to 03:00, default 23:30).
+- `progress` is 0 to 100: toward a target, or how much of a limit is used. A bedtime is 100 when met, 0 when missed,
+  and null while the night can still change. The bedtime is read by the wall clock, DST nights included.
+- The demo profile's seed sets the focus target to 240 minutes, the goal its 5-day focus streak is built around.
+
+`GET /achievements?tz=` (viewer):
+
+```json
+{ "tz": "America/Toronto", "unlocked": 4, "achievements": [
+  { "id": "streak_7", "name": "One week strong", "rule": "Any streak reached 7 days.", "unlocked": true,
+    "earned_on": "2026-09-18", "unlocked_at": "2026-09-25T21:00:00Z", "dates": ["2026-09-12", "...", "2026-09-18"],
+    "progress": { "value": 7, "target": 7, "unit": "days" } } ],
+  "meta": { "unit": "badges", "range": { "...": "the history" }, "source": "seed", "estimated": false } }
+```
+
+- The badges: first sync, a full set (a Windows PC, a Mac, an Android phone and an iPhone all sent data), 7-day and
+  30-day streaks, 1,000 focused minutes, and a perfect week (Monday to Sunday with no goal missed and every goal met
+  on at least 5 days; a day without data for a goal doesn't count against it).
+- A badge, once earned, is kept with the day it was earned and when the hub first saw it (the `achievements`
+  table, migration `0006`): later data never takes it back, and its `progress` shows complete. Locked badges show
+  how far along they are. Re-running the seed clears them, since it replaces the history they came from.
+- Streaks, goals and badges are worked out together, once for requests that arrive together, and reused for the
+  rest of the minute unless the data or a goal changes. A day's readings that can't change any more are kept until
+  new data arrives, so a new minute only reads today (and last night until 03:00). 90 seeded days take about
+  0.15 s to work out from nothing on this PC.
 
 ### Privacy
 
-- `GET /privacy/network` returns `{ "since": "...", "allowed": { "localhost": 120, "lan": 44, "tailscale": 0 }, "blocked": { "count": 0, "destinations": [] } }`.
-- `GET /privacy/export` (local only) streams all of the profile's data as JSON.
-- `POST /privacy/delete` (local only) needs `{ "confirm": "delete all my daytrace data" }` on every call; any other phrase returns 400.
+Redaction (DT-44): a window, app or calendar title that matches a rule is stored as `[redacted]`, with the app name and
+the times kept, and so is a browser extension's site. Your own words are hidden wherever they appear: a title, an app's
+name or id, or a site (docs/privacy.md has the rules).
+
+- `GET /privacy/redaction` (viewer) lists the rules in force:
+  `{ "redacted": "[redacted]", "rules": [ { "id": "banking", "name": "Banking and payments", "description": "...", "builtin": true, "enabled": true, "words": [] }, ... ] }`.
+  Your own rules come last, as `custom-1`, `custom-2` and so on, with their words.
+- `PUT /privacy/redaction` (the dashboard) with `{ "disabled": ["health"], "custom": [ { "name": "Work client", "words": ["Acme", "Project Falcon"] } ] }`
+  replaces your choices. Built-in rules can be switched off by id, and you can have up to 20 rules of your own, each
+  with up to 50 words or phrases of 2 to 100 characters. A word matches the same letters or digits, ignoring case,
+  and never as a regular expression. "Acme" hides `acme_notes.docx` and `Acme2026` but not `Acmeville`, and a phrase
+  matches across spaces, underscores, hyphens and dots. A list longer than the limits is `422`. Any other problem is
+  `400`, with the reason. The change applies to the next event stored.
+- `POST /privacy/redaction/check` (viewer) with `{ "title": "Online Banking - TD Bank", "app": "Edge" }` (or
+  `{ "domain": "mychart.example.org" }` for a site) says what would be stored:
+  `{ "redacted": true, "stored_as": "[redacted]", "rule": "banking", "rule_name": "Banking and payments" }`.
+- Saving rules leaves stored events alone. `GET /privacy/redaction/stored` (viewer) counts the stored events the rules
+  in force would hide, as `{ "matches": 12 }`. `POST /privacy/redaction/apply` (the dashboard) with
+  `{ "confirm": true }` hides them, returning `{ "redacted": 12 }`. It can't be undone, and without `confirm: true` it
+  is `400`. It works a batch at a time, so collectors keep writing meanwhile. An event from a stateless collector is
+  keyed again from its redacted form, and two that then match in everything are kept once. Logged nudges whose words
+  the rules would hide keep only their rule (DT-43).
+
+- `GET /privacy/storage` (viewer, DT-36) says where the data lives and how much there is, for the Privacy page:
+  `{ "profile": "demo", "folder": "D:\\Hackathon\\data", "file": "daytrace-demo.db", "size_bytes": 421888, "events": 632,
+  "first_event": "2026-09-14T01:55:00Z", "last_event": "2026-09-27T12:47:07Z", "devices": 11 }`. `folder` is null except
+  on the hub computer, since it names that computer's user folders; `size_bytes` counts the write-ahead log too, and
+  `devices` the ones paired now.
+
+- `GET /privacy/network` (viewer, DT-45) is the proof behind "no internet": every connection since the hub started,
+  by the kind of network at the other end.
+
+```json
+{ "since": "2026-09-27T07:09:24Z", "internet_connections": 0,
+  "outgoing": { "localhost": 2, "lan": 0, "tailscale": 0, "internet": 0 },
+  "blocked": { "count": 1, "destinations": [ { "host": "8.8.8.8", "port": 1234, "count": 1, "last": "..." } ] },
+  "incoming": { "localhost": 120, "lan": 44, "tailscale": 0, "internet": 0 },
+  "refused": { "localhost": 0, "lan": 0, "tailscale": 0, "internet": 3 },
+  "listening": ["127.0.0.1:8767", "[::1]:8767", "192.168.2.179:8767"], "guarded": true }
+```
+
+  - `outgoing` counts connections to the local model, the only thing the hub reaches out to, by the address
+    each one really went to.
+  - `blocked` counts every attempt refused, listing the first 20 destinations. That includes the model transport's
+    refusals and the socket guard's: with `guarded`, which is on in every real hub, nothing in the hub process can
+    open a connection to the internet, whatever code asks.
+  - `incoming` counts requests served. `refused` counts requests turned away: from a network the profile doesn't
+    serve, with a Host name that could be DNS rebinding, or from another site's page.
+  - `internet_connections` is outgoing plus incoming internet, and is always 0. `listening` is where the hub
+    listens right now.
+- `GET /privacy/export` (the hub computer only, DT-46) is everything the profile holds, as one JSON file
+  (`Content-Disposition: attachment`, `daytrace-<profile>-<date>.json`), streamed in pieces:
+  `{ "daytrace_export": 1, "profile": "demo", "exported_at": "...", "schema_version": 6, "note": "...", "tables": { "events": [ ... ], "devices": [ ... ], ... } }`.
+  - It holds every table with your data, including a table a later version adds, as of one moment, so a device
+    syncing during the export doesn't split it. The hub reads a copy it takes first and removes afterwards, so a
+    slow download never holds the database.
+  - JSON columns (an event's `data`, settings, goals, badges) come as JSON. Device tokens are never exported, not
+    even their hashes. The database's own bookkeeping (migrations, the change counter) is left out.
+- `POST /privacy/delete` (the hub computer only, DT-46) needs `{ "confirm": "delete all my daytrace data" }`,
+  exactly, on every call. Any other phrase is `400`, and nothing is deleted.
+  - It empties every data table and keeps the schema, so the hub keeps working. Paired devices must pair again, a
+    pairing code shown before it no longer works, and the desktop tracker starts afresh with nothing it held from
+    before.
+  - Your own redaction rules are kept, so what is recorded next stays protected, unless you send
+    `"keep_redaction_rules": false`.
+  - It returns `{ "deleted": { "events": 1520, ... }, "wiped": true }`. `wiped` means the deleted rows are gone from
+    the file too: compacted, with the write-ahead log folded back. Every connection overwrites what it deletes
+    (`secure_delete`), so a row replaced earlier leaves nothing behind either. `wiped` is `false` only when another
+    connection kept the compacting from finishing just then.

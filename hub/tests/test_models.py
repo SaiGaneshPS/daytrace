@@ -356,5 +356,5 @@ def test_the_hub_can_build_events_from_datetimes() -> None:
 def test_ingest_result_shape() -> None:
     result = IngestResult(accepted=3, duplicates=1, last_seq=44)
     assert result.model_dump() == {
-        "accepted": 3, "replaced": 0, "duplicates": 1, "rejected": [], "last_seq": 44, "nudge": None,
+        "accepted": 3, "replaced": 0, "duplicates": 1, "rejected": [], "last_seq": 44, "nudge": None, "meals": [],
     }

@@ -1,0 +1,143 @@
+/* DT-52: design tokens. The one place colors, sizes and timing are defined: styles.css, the chart theme
+   (theme/charts.ts reads these variables) and confetti use them. The Android palette in
+   android/app/src/main/res/values/colors.xml mirrors the category colors; keep the two in step.
+
+   Every text color here has at least 4.5:1 contrast on the surfaces it sits on, in both themes. Category
+   "fill" colors are for chart marks and swatches (never for text); "ink" colors are the text versions. */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces and text */
+  --bg: #f5f6fb;
+  --surface: #ffffff;
+  --surface-2: #eef0f8;
+  --text: #111827;
+  --muted: #4b5563;
+  --border: #e3e6f0;
+  --accent: #4f46e5;
+  --accent-ink: #4338ca;
+  --on-accent: #ffffff;
+  --ok: #047857;
+  --on-ok: #ffffff; /* a mark on an --ok fill */
+  --bad: #b91c1c;
+  --on-bad: #ffffff; /* text on a --bad fill (a danger button) */
+  --focus: #4f46e5;
+
+  /* gradients (white text stays at 4.5:1 or more across the whole gradient) */
+  --hero: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%);
+  --hero-soft: linear-gradient(135deg, rgb(79 70 229 / 0.1), rgb(219 39 119 / 0.1));
+
+  /* categories: fill for marks, ink for text, tint for chip backgrounds */
+  --cat-social: #ec4899;   --cat-social-ink: #be185d;
+  --cat-video: #f26b4f;    --cat-video-ink: #b63b20;
+  --cat-work: #3b82f6;     --cat-work-ink: #1d4ed8;
+  --cat-study: #8b5cf6;    --cat-study-ink: #6d28d9;
+  --cat-comms: #14b8a6;    --cat-comms-ink: #0f766e;
+  --cat-games: #84cc16;    --cat-games-ink: #3f6212;
+  --cat-health: #22c55e;   --cat-health-ink: #166534;
+  --cat-other: #64748b;    --cat-other-ink: #475569;
+
+  /* shape */
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgb(17 24 39 / 0.06);
+  --shadow: 0 8px 24px -12px rgb(49 46 129 / 0.25), 0 2px 6px rgb(17 24 39 / 0.06);
+
+  /* spacing: 4 px steps */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 48px;
+
+  /* type */
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-numbers: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  /* touch and layout */
+  --touch: 44px;
+  --sidebar: 240px;
+  --bottom-nav: 64px;
+
+  /* motion (switched off under prefers-reduced-motion in styles.css) */
+  --duration-fast: 150ms;
+  --duration: 250ms;
+  --duration-slow: 600ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Dark: brighter fills, lighter inks, deep navy surfaces. Follows the system unless a theme is forced. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0b1020;
+    --surface: #121a2e;
+    --surface-2: #1a2340;
+    --text: #e8eaf2;
+    --muted: #a3acc2;
+    --border: #26314d;
+    --accent: #818cf8;
+    --accent-ink: #a5b4fc;
+    --on-accent: #0b1020;
+    --ok: #34d399;
+    --on-ok: #0b1020;
+    --bad: #f87171;
+    --on-bad: #0b1020;
+    --focus: #a5b4fc;
+    --hero: linear-gradient(135deg, #4338ca 0%, #6d28d9 55%, #be185d 100%);
+    --hero-soft: linear-gradient(135deg, rgb(129 140 248 / 0.14), rgb(244 114 182 / 0.12));
+    --cat-social: #f472b6;   --cat-social-ink: #f9a8d4;
+    --cat-video: #fb8a6e;    --cat-video-ink: #fdbca6;
+    --cat-work: #60a5fa;     --cat-work-ink: #93c5fd;
+    --cat-study: #a78bfa;    --cat-study-ink: #c4b5fd;
+    --cat-comms: #2dd4bf;    --cat-comms-ink: #5eead4;
+    --cat-games: #a3e635;    --cat-games-ink: #bef264;
+    --cat-health: #4ade80;   --cat-health-ink: #86efac;
+    --cat-other: #94a3b8;    --cat-other-ink: #cbd5e1;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow: 0 10px 30px -14px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --surface: #121a2e;
+  --surface-2: #1a2340;
+  --text: #e8eaf2;
+  --muted: #a3acc2;
+  --border: #26314d;
+  --accent: #818cf8;
+  --accent-ink: #a5b4fc;
+  --on-accent: #0b1020;
+  --ok: #34d399;
+  --on-ok: #0b1020;
+  --bad: #f87171;
+  --on-bad: #0b1020;
+  --focus: #a5b4fc;
+  --hero: linear-gradient(135deg, #4338ca 0%, #6d28d9 55%, #be185d 100%);
+  --hero-soft: linear-gradient(135deg, rgb(129 140 248 / 0.14), rgb(244 114 182 / 0.12));
+  --cat-social: #f472b6;   --cat-social-ink: #f9a8d4;
+  --cat-video: #fb8a6e;    --cat-video-ink: #fdbca6;
+  --cat-work: #60a5fa;     --cat-work-ink: #93c5fd;
+  --cat-study: #a78bfa;    --cat-study-ink: #c4b5fd;
+  --cat-comms: #2dd4bf;    --cat-comms-ink: #5eead4;
+  --cat-games: #a3e635;    --cat-games-ink: #bef264;
+  --cat-health: #4ade80;   --cat-health-ink: #86efac;
+  --cat-other: #94a3b8;    --cat-other-ink: #cbd5e1;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow: 0 10px 30px -14px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.3);
+}

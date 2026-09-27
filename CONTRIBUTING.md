@@ -11,8 +11,10 @@
 5. **Every PR is reviewed for bugs before it is merged.** Post the findings on the PR, fix them on the same
    branch, and post a reply saying what happened to each one (fixed, or why no change is needed). Only
    then tick the review box in the PR description and merge.
-6. CI must pass. Once DT-5 is in place, the PR title moves the Notion ticket automatically
-   (opened: In review, merged: Done).
+6. The required checks must pass (listed below; **notion-sync** isn't one of them). That check moves the Notion
+   ticket named in the PR title (or branch) for you, forward only: opening, reopening or editing the PR moves a
+   Not started ticket to **In progress** with the PR link, and merging into `development` moves it to **Done**.
+   Closing without merging changes nothing, and a Done ticket is never moved back.
 7. Merge with **Squash and merge** (the only merge method the repo allows). The squash commit takes the PR
    title, so `development` gets one `DT-<id>: ...` commit per ticket.
 
@@ -23,6 +25,20 @@ own PRs and most tickets have a single owner. The bug review in step 5 is the ga
 The required checks (`hub`, `dashboard`, `android setup check`, `android`) are **strict**: a PR can only merge
 when its branch is up to date with `development`. If GitHub says *"This branch is out-of-date with the base
 branch"*, press **Update branch** (or merge `development` into your branch) and wait for CI again.
+
+### Notion sync setup (once, by the repo owner)
+
+[scripts/notion_sync.py](scripts/notion_sync.py) runs in [notion-sync.yml](.github/workflows/notion-sync.yml) on
+the free Notion API. It needs:
+
+1. A Notion internal integration, added to the Tasks database (open it, then **...**, then **Connections**).
+2. Two repository secrets, set from a terminal so they never pass through chat or a file:
+   `gh secret set NOTION_TOKEN --repo SaiGaneshPS/daytrace` (the integration's secret) and
+   `gh secret set NOTION_TICKETS_DB --repo SaiGaneshPS/daytrace` (the Tasks Tracker's data source ID; its
+   database ID or a link to it works too).
+
+Without them, and on PRs from forks (which get no secrets), the check skips with a notice and passes. It is not
+a required check, so a Notion outage never blocks a merge.
 
 ### Cloned before the rename to `development`?
 
@@ -43,11 +59,19 @@ Run from the **repo root**:
 |---|---|---|
 | Hub lint | `hub\.venv\Scripts\python.exe -m ruff check hub` | `hub/.venv/bin/python -m ruff check hub` |
 | Hub tests | `hub\.venv\Scripts\python.exe -m pytest hub` | `hub/.venv/bin/python -m pytest hub` |
-| Dashboard | `npm --prefix dashboard run build` | `npm --prefix dashboard run build` |
+| Dashboard build | `npm.cmd --prefix dashboard run build` | `npm --prefix dashboard run build` |
+| Dashboard unit tests | `npm.cmd --prefix dashboard test` | `npm --prefix dashboard test` |
+| Dashboard e2e (after the build) | `npm.cmd --prefix dashboard run test:e2e` | `npm --prefix dashboard run test:e2e` |
 | Android (after DT-19) | `android\gradlew.bat -p android assembleDebug` | `./android/gradlew -p android assembleDebug` |
 
 One-time setup for each part is in its own README ([hub](hub/README.md), [dashboard](dashboard/README.md),
 [android](android/README.md)).
+- **Hub:** the lint and tests need the dev extras: `pip install -e "./hub[dev]"` with the venv's Python.
+- **Windows:** `npm.cmd`, because PowerShell's default policy blocks the `npm.ps1` script that plain `npm` runs.
+  After `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` ([setup-windows.md](docs/setup-windows.md)), plain
+  `npm` works too.
+- **e2e on macOS and Linux:** run `npx playwright install chromium` in `dashboard/` once. On Windows the tests use
+  the installed Edge.
 
 ## Never commit
 

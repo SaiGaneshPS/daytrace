@@ -6,6 +6,8 @@ local midnight. Every number is whole seconds first; minutes are rounded from th
 """
 from __future__ import annotations
 
+import sqlite3
+import sys
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import lru_cache
@@ -18,8 +20,8 @@ from pydantic import BaseModel, Field
 
 from ..auth import Reader, get_database
 from ..categories import Categorizer
-from ..db import Database
-from ..sessions import Session, StoredEvent, build_sessions, load_events, snap, with_categories
+from ..db import Database, utc_text
+from ..sessions import Session, StoredEvent, build_sessions, load_events, parse_utc, snap, with_categories
 from . import API_PREFIX, ApiError
 
 LANE_ORDER = {"windows": 0, "macos": 1, "android": 2, "ios": 3, "browser": 4, "viewer": 5}
@@ -50,6 +52,7 @@ class Lane(BaseModel):
     device_type: str
     name: str
     counted: bool = Field(description="False for browser-extension lanes, whose time is inside the desktop lane.")
+    last_seen: datetime | None = Field(default=None, description="When the device last sent anything (for live dots).")
     seconds: int
     minutes: float
     sessions: list[TimelineSession]
@@ -98,10 +101,14 @@ class TimeRange(BaseModel):
 
 
 class Meta(BaseModel):
-    unit: Literal["minutes"] = "minutes"
+    """What every answer about a range of time says about its numbers (DT-59 checks each carries it)."""
+
+    unit: str | None = Field(default="minutes", description=(
+        "The unit of the answer's headline numbers (minutes, days, badges); null when they differ (the goals), and each "
+        "metric, series or goal still states its own."))
     range: TimeRange
-    source: Literal["real", "seed", "mixed"]
-    estimated: bool
+    source: Literal["real", "seed", "mixed"] = Field(description="Your devices' data, the demo seed's, or both.")
+    estimated: bool = Field(description="True when some of it was inferred (an app with no close seen, a night guessed from the phone).")
 
 
 class Timeline(BaseModel):
@@ -124,8 +131,50 @@ def known_zones() -> frozenset[str]:
     return frozenset(available_timezones())
 
 
+def icu_zone(windows_id: str, region: str | None) -> str | None:
+    """The IANA name Windows' own ICU gives a Windows zone in a region, as browsers do ("Eastern Standard Time" in CA
+    is America/Toronto, in the US America/New_York); None where there is no icu.dll (before Windows 10 1903)."""
+    import ctypes
+
+    try:
+        icu = ctypes.WinDLL("icu.dll")  # type: ignore[attr-defined]
+    except (OSError, AttributeError):
+        return None
+    lookup = icu.ucal_getTimeZoneIDForWindowsID
+    lookup.restype = ctypes.c_int32
+    lookup.argtypes = [ctypes.c_wchar_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_wchar_p, ctypes.c_int32, ctypes.POINTER(ctypes.c_int)]
+    found = ctypes.create_unicode_buffer(128)
+    status = ctypes.c_int(0)
+    length = lookup(windows_id, len(windows_id), region.encode("ascii") if region else None, found, 128, ctypes.byref(status))
+    return found.value[:length] if status.value <= 0 and length > 0 else None
+
+
+@lru_cache(maxsize=1)
+def _windows_zone_name() -> str | None:
+    """On Windows, this computer's zone as its browsers name it: the Windows zone mapped with the user's region
+    (tzlocal ignores the region, so a Toronto PC would be America/New_York to the hub and America/Toronto to Edge,
+    and the hub's caches, keyed by the name, would never match what the dashboard asks for)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation") as key:
+            windows_id = str(winreg.QueryValueEx(key, "TimeZoneKeyName")[0])
+        region = ctypes.create_unicode_buffer(16)
+        ctypes.windll.kernel32.GetUserDefaultGeoName(region, 16)  # type: ignore[attr-defined]
+        return icu_zone(windows_id, region.value or None)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
 def local_zone_name() -> str:
-    """The hub computer's IANA time zone (for example America/St_Johns), or UTC if it cannot be found."""
+    """The hub computer's IANA time zone (for example America/St_Johns), named as its browsers name it, or UTC if it
+    cannot be found."""
+    name = _windows_zone_name()
+    if name in known_zones():
+        return str(name)
     try:
         name = tzlocal.get_localzone_name()
     except Exception:  # noqa: BLE001 - tzlocal raises different errors on each OS; UTC is the safe answer
@@ -146,6 +195,25 @@ def day_window(day: date, tz: tzinfo) -> tuple[datetime, datetime]:
     start = datetime.combine(day, time(0), tzinfo=tz).astimezone(UTC)
     end = datetime.combine(day + timedelta(days=1), time(0), tzinfo=tz).astimezone(UTC)
     return start, end
+
+
+# Where a range's events came from, by index: spans by their end (events_by_end), points by their start
+# (events_by_start), so neither walks the rest of the history.
+RANGE_SPAN_SOURCES = "SELECT DISTINCT source FROM events WHERE end_utc > ? AND start_utc < ?"
+RANGE_POINT_SOURCES = "SELECT DISTINCT source FROM events INDEXED BY events_by_start WHERE start_utc >= ? AND start_utc < ? AND end_utc IS NULL"
+
+
+def range_meta(conn: sqlite3.Connection, tz: tzinfo, tz_name: str, first: date, last: date, now: datetime, *,
+               unit: str | None, estimated: bool) -> Meta:
+    """The meta for local days `first` to `last` without loading them: the range, and where the data came from (the
+    sources of the events in it, up to now), as Stats.meta says for what it has loaded."""
+    start, _ = day_window(first, tz)
+    _, end = day_window(last, tz)
+    until = max(start, min(end, now.astimezone(UTC)))
+    window = (utc_text(start), utc_text(until))
+    sources = {row[0] for row in conn.execute(RANGE_SPAN_SOURCES, window)} | {row[0] for row in conn.execute(RANGE_POINT_SOURCES, window)}
+    return Meta(unit=unit, range=TimeRange(start=start.astimezone(tz), end=end.astimezone(tz), tz=tz_name),
+                source=source_of(sources), estimated=estimated)
 
 
 def union_seconds(intervals: list[tuple[datetime, datetime]]) -> int:
@@ -173,7 +241,7 @@ def build_timeline(database: Database, day: date, tz: tzinfo, tz_name: str) -> T
     until = min(end, current_time())  # nothing that has not happened yet
     with database.connect() as conn:
         events = load_events(conn, start, end)
-        devices = {row["device_id"]: row for row in conn.execute("SELECT device_id, name, device_type FROM devices")}
+        devices = {row["device_id"]: row for row in conn.execute("SELECT device_id, name, device_type, last_seen FROM devices")}
         categorizer = Categorizer.from_db(conn)
     sessions = with_categories(build_sessions(events, start, until), categorizer) if until > start else []
 
@@ -231,10 +299,16 @@ def _lane(device_id: str, sessions: list[Session], device: object, tz: tzinfo) -
         device_type=device_type,
         name=device["name"] if device else device_id,  # type: ignore[index]
         counted=device_type not in DETAIL_ONLY_TYPES,
+        last_seen=parse_utc(device["last_seen"]) if device and device["last_seen"] else None,  # type: ignore[index]
         seconds=seconds,
         minutes=minutes(seconds),
         sessions=shown,
     )
+
+
+def source_of(sources: set[str]) -> Literal["real", "seed", "mixed"]:
+    """What a set of event sources makes an answer: the demo seed's, your devices', or both."""
+    return "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real"
 
 
 def _source(
@@ -244,8 +318,7 @@ def _source(
     by_id = {e.id: e for e in events}
     used = {i for s in sessions for i in s.event_ids} | {e.id for e in lane_events}
     used |= {e.id for e in events if e.kind == "afk" and e.end is not None and e.start < end and e.end > start}
-    sources = {by_id[i].source for i in used if i in by_id}
-    return "seed" if sources == {"seed"} else "mixed" if "seed" in sources else "real"
+    return source_of({by_id[i].source for i in used if i in by_id})
 
 
 def _shown(session: Session, tz: tzinfo) -> TimelineSession:
@@ -297,12 +370,14 @@ def _sleep_entry(e: StoredEvent, tz: tzinfo) -> SleepEntry:
 
 
 def _meal(e: StoredEvent, tz: tzinfo) -> MealEntry:
-    items = e.data.get("items")
+    """A meal as logged; one sent as text has the items and type the hub read from it (DT-42) where it had none."""
+    reading = e.data.get("parsed") if isinstance(e.data.get("parsed"), dict) else {}
+    items = e.data.get("items") if isinstance(e.data.get("items"), list) else reading.get("items")
     return MealEntry(
         time=e.start.astimezone(tz),
         items=[str(item) for item in items] if isinstance(items, list) else None,
         text=_text(e.data, "text"),
-        meal_type=_text(e.data, "meal_type"),
+        meal_type=_text(e.data, "meal_type") or _text(reading, "meal_type"),
         device_id=e.device_id,
     )
 

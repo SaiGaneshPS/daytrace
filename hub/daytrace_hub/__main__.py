@@ -1,6 +1,7 @@
 """Daytrace hub command line.
 
-`run` starts a profile (DT-10); `seed` (DT-15) and `tracker` (DT-16) are filled in by their tickets.
+`run` starts a profile (DT-10), `seed` fills a demo profile (DT-15), `tracker` runs only the desktop tracker (DT-16),
+`demo` sends what the demo phone would send now (DT-48).
 """
 from __future__ import annotations
 
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     tracker = sub.add_parser("tracker", help="run only the desktop activity tracker (DT-16)")
     tracker.add_argument("--profile", choices=PROFILES, default="personal")
+
+    demo = sub.add_parser("demo", help="send what the demo phone would send now: live apps, or a nudge (DT-48)")
+    demo.add_argument("scenario", choices=("live", "nudge"), help="live: apps ending now; nudge: TikTok during a study block")
+    demo.add_argument("--profile", choices=PROFILES, default="demo")
+    demo.add_argument("--again", action="store_true", help="let a nudge speak now even if one went out in the last minutes")
+    demo.add_argument("--no-toast", action="store_true", help="don't show the nudge as a desktop notification too")
     return parser
 
 
@@ -42,8 +49,46 @@ def main(argv: list[str] | None = None) -> int:
         return run(args.profile)
     if args.command == "seed":
         return seed(args.profile, args.days, args.tz)
+    if args.command == "tracker":
+        return tracker(args.profile)
+    if args.command == "demo":
+        return demo(args.profile, args.scenario, args.again, not args.no_toast)
     print(f"'{args.command}' is not implemented yet. See its ticket.", file=sys.stderr)
     return 2
+
+
+def tracker(profile_name: str) -> int:
+    """Run only the desktop tracker, in the foreground (the hub also runs it itself for the personal profile)."""
+    from .app import desktop_tracker
+    from .db import Database
+    from .tracker.base import AlreadyTracking
+
+    try:
+        settings = load_settings(profile_name)
+    except ValueError as error:
+        print(f"Not tracking: {error}", file=sys.stderr)
+        return 2
+    if not settings.track_desktop:
+        print(f"Not tracking: DAYTRACE_TRACKER is off for the {profile_name} profile (set it to on to track this"
+              " computer there)", file=sys.stderr)
+        return 2
+    database = Database(settings.database_path)
+    database.initialize()
+    service = desktop_tracker(settings, database)
+    if service is None:
+        print(f"Not tracking: there is no desktop tracker for {sys.platform} yet (macOS arrives with DT-17)", file=sys.stderr)
+        return 2
+    print(f"Daytrace tracker: {profile_name} profile, every 2 s. Press Ctrl+C to stop.")
+    print(f"  Database: {settings.database_path}")
+    try:
+        service.run_forever()
+    except AlreadyTracking as error:
+        print(f"Not tracking: {error}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        pass
+    print(f"Stopped. Device: {service.device_id}")
+    return 0
 
 
 def seed(profile_name: str, days: int, tz_name: str | None) -> int:
@@ -81,26 +126,57 @@ def seed(profile_name: str, days: int, tz_name: str | None) -> int:
     return 0
 
 
+def demo(profile_name: str, scenario: str, again: bool, toast: bool) -> int:
+    """What the demo phone would send now (DT-48), with the nudge the hub answered, shown on this computer too."""
+    import sqlite3
+
+    from . import notify
+    from .seed import SeedRefused, demo_events
+
+    try:
+        settings = load_settings(profile_name)
+    except ValueError as error:  # a bad DAYTRACE_* environment variable
+        return _not_sent(str(error))
+    try:
+        result = demo_events(settings, "nudge" if scenario == "nudge" else "live", again=again)
+    except SeedRefused as error:  # anything else is a bug and keeps its traceback
+        return _not_sent(str(error))
+    except sqlite3.OperationalError as error:
+        return _not_sent(f"the {profile_name} database is busy or unreadable ({error})")
+    print(result.sent)
+    if result.note:
+        print(result.note)
+    if scenario == "nudge":
+        if result.nudge is None:
+            if not again:
+                print("Run it again with --again to let it speak now.")
+            return 1
+        print(f"Nudge: {result.nudge.title}. {result.nudge.body}")
+        if toast and not notify.show(result.nudge.title, result.nudge.body, wait=True):
+            print("(The desktop notification couldn't be shown here.)")
+    return 0
+
+
+def _not_sent(message: str) -> int:
+    print(f"Not sent: {message}", file=sys.stderr)
+    return 2
+
+
 def _not_seeded(message: str) -> int:
     print(f"Not seeded: {message}", file=sys.stderr)
     return 2
 
 
 def run(profile_name: str) -> int:
-    """Start one profile's hub on its port, with its own database."""
-    import uvicorn
-
-    from .app import create_app
+    """Start one profile's hub on its port, with its own database, listening only where it is reached (DT-45)."""
+    from .app import serve
 
     settings = load_settings(profile_name)
     profile = settings.profile
     print(f"Daytrace hub: {profile.name} profile on port {profile.port}")
     print(f"  {profile.description}")
     print(f"  Database: {settings.database_path}")
-    # proxy_headers=False: the network check must see the real peer address, never an X-Forwarded-For value.
-    uvicorn.run(
-        create_app(settings), host=profile.host, port=profile.port, log_level="info", proxy_headers=False
-    )
+    serve(settings)
     return 0
 
 
