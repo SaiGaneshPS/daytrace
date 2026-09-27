@@ -454,6 +454,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/privacy/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every connection since the hub started, by network */
+        get: operations["network_status_api_v1_privacy_network_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -621,6 +638,30 @@ export interface components {
              * @description IANA time zone, e.g. America/Toronto; default: the hub's
              */
             tz?: string | null;
+        };
+        /** Blocked */
+        Blocked: {
+            /**
+             * Count
+             * @description Outgoing requests refused, all of them (the first 20 destinations are listed).
+             */
+            count: number;
+            /** Destinations */
+            destinations: components["schemas"]["BlockedDestination"][];
+        };
+        /** BlockedDestination */
+        BlockedDestination: {
+            /** Host */
+            host: string;
+            /** Port */
+            port: number;
+            /** Count */
+            count: number;
+            /**
+             * Last
+             * Format: date-time
+             */
+            last: string;
         };
         /** CalendarEntry */
         CalendarEntry: {
@@ -1106,6 +1147,61 @@ export interface components {
              * @default false
              */
             estimated: boolean;
+        };
+        /** NetworkCounts */
+        NetworkCounts: {
+            /**
+             * Localhost
+             * @default 0
+             */
+            localhost: number;
+            /**
+             * Lan
+             * @default 0
+             */
+            lan: number;
+            /**
+             * Tailscale
+             * @default 0
+             */
+            tailscale: number;
+            /**
+             * Internet
+             * @default 0
+             */
+            internet: number;
+        };
+        /** NetworkStatus */
+        NetworkStatus: {
+            /**
+             * Since
+             * Format: date-time
+             * @description When the hub started counting (when it started).
+             */
+            since: string;
+            /**
+             * Internet Connections
+             * @description Requests to or from the internet the hub made or served. Always 0: the only way out refuses them, and so does the way in.
+             */
+            internet_connections: number;
+            /** @description Requests the hub made (to the local model), by where they went. */
+            outgoing: components["schemas"]["NetworkCounts"];
+            /** @description Requests the hub would have made to an address it doesn't allow, refused. */
+            blocked: components["schemas"]["Blocked"];
+            /** @description Requests the hub served, by where they came from. */
+            incoming: components["schemas"]["NetworkCounts"];
+            /** @description Requests the hub refused, by where they came from: a network the profile doesn't serve, a Host name that could be DNS rebinding, or another web site's page. */
+            refused: components["schemas"]["NetworkCounts"];
+            /**
+             * Listening
+             * @description The addresses the hub listens on right now (empty in tests).
+             */
+            listening: string[];
+            /**
+             * Guarded
+             * @description Whether the socket guard is on: nothing in the hub process can connect to the internet, whatever code asks (a real hub always; not in tests).
+             */
+            guarded: boolean;
         };
         /**
          * Nudge
@@ -2700,6 +2796,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Applied"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    network_status_api_v1_privacy_network_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkStatus"];
                 };
             };
             /** @description Validation Error */

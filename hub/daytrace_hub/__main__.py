@@ -123,20 +123,15 @@ def _not_seeded(message: str) -> int:
 
 
 def run(profile_name: str) -> int:
-    """Start one profile's hub on its port, with its own database."""
-    import uvicorn
-
-    from .app import create_app
+    """Start one profile's hub on its port, with its own database, listening only where it is reached (DT-45)."""
+    from .app import serve
 
     settings = load_settings(profile_name)
     profile = settings.profile
     print(f"Daytrace hub: {profile.name} profile on port {profile.port}")
     print(f"  {profile.description}")
     print(f"  Database: {settings.database_path}")
-    # proxy_headers=False: the network check must see the real peer address, never an X-Forwarded-For value.
-    uvicorn.run(
-        create_app(settings), host=profile.host, port=profile.port, log_level="info", proxy_headers=False
-    )
+    serve(settings)
     return 0
 
 

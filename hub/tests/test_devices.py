@@ -123,21 +123,22 @@ def test_pairing_codes_can_only_be_started_on_the_hub_computer(phone: TestClient
 
 
 @pytest.mark.parametrize(
-    "headers",
+    ("headers", "code"),
     [
-        {"origin": "http://evil.example"},  # a page on another site, fetch(..., {mode: "no-cors"})
-        {"origin": "null"},  # a sandboxed frame or a file
-        {"sec-fetch-site": "cross-site"},  # an <img> or form on another site (no Origin sent)
-        {"host": "evil.local:8765"},  # DNS rebinding through a LAN-answered name
-        {"host": "attacker:8765"},
-        {"host": "evil.lan:8765"},
-        {"host": "192.168.1.23:8765"},  # the LAN address is not "the hub computer talking to itself"
+        # Another site's page, or a sandboxed frame or file: the network guard refuses it first (DT-45).
+        ({"origin": "http://evil.example"}, "forbidden_origin"),  # fetch(..., {mode: "no-cors"})
+        ({"origin": "null"}, "forbidden_origin"),
+        ({"sec-fetch-site": "cross-site"}, "local_only"),  # an <img> or form on another site (no Origin sent)
+        ({"host": "evil.local:8765"}, "local_only"),  # DNS rebinding through a LAN-answered name
+        ({"host": "attacker:8765"}, "local_only"),
+        ({"host": "evil.lan:8765"}, "local_only"),
+        ({"host": "192.168.1.23:8765"}, "local_only"),  # the LAN address is not "the hub computer talking to itself"
     ],
 )
-def test_other_sites_cannot_act_as_the_hub_computer(client: TestClient, headers: dict[str, str]) -> None:
+def test_other_sites_cannot_act_as_the_hub_computer(client: TestClient, headers: dict[str, str], code: str) -> None:
     response = client.post("/api/v1/pair/start", headers=headers)
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "local_only"
+    assert response.json()["error"]["code"] == code
 
 
 @pytest.mark.parametrize(
@@ -145,8 +146,9 @@ def test_other_sites_cannot_act_as_the_hub_computer(client: TestClient, headers:
     [
         {},
         {"origin": "http://localhost:8765", "sec-fetch-site": "same-origin"},
-        {"origin": "http://localhost:5173", "sec-fetch-site": "same-site"},  # the Vite dev server
-        {"origin": "http://127.0.0.1:8765"},
+        # The Vite dev server's page: its proxy sends the hub's own origin (DT-45), from this computer.
+        {"origin": "http://localhost:8765", "sec-fetch-site": "same-site"},
+        {"origin": "http://127.0.0.1:8765"},  # the same hub under another loopback name
         {"host": "127.0.0.1:8765"},
         {"host": "[::1]:8765"},
         {"sec-fetch-site": "none"},  # typed into the address bar

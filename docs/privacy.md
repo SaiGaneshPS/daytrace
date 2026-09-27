@@ -12,7 +12,30 @@ TODO (DT-44 / DT-45 / DT-47)
 
 ## What never leaves your network
 
-TODO (DT-44 / DT-45 / DT-47)
+Nothing does. The hub never talks to the internet, and it can show you (DT-45). The Privacy page reads
+`GET /api/v1/privacy/network`.
+
+- **Where it listens:** only on this computer and on the addresses your phone uses, which are your Wi-Fi or Ethernet
+  adapter's.
+  - It never listens on every interface, on a public address, on a VPN's or a virtual machine's adapter, or, for your
+    own data, on Tailscale. Only the shared-dev profile listens on the tailnet.
+  - When the Wi-Fi changes or the router hands out a new address, the hub starts listening on the new address
+    within about 15 seconds and closes the old one. Phones are only ever told addresses it already answers on.
+  - A carrier-grade NAT address (the range Tailscale also uses) on an ordinary adapter is never listened on.
+- **Who it answers:** requests from this computer and your LAN, and from your tailnet on shared-dev only. It never
+  answers the internet. It also refuses a Host name that could be DNS rebinding, and a request made by another web
+  page, even one on this computer. It sends no CORS headers, so no other site can read what it answers.
+- **What it reaches out to:** only the local model (LM Studio or Ollama), through one transport that lets a request
+  through only to this computer, your LAN, or (shared-dev) your tailnet. It checks every address a name points to,
+  and sends no proxy settings, no redirects and no stray credentials.
+- **The socket guard:** under that, the whole hub process refuses any connection to an internet address before a
+  packet leaves, whatever code asks: a library, an SDK, anything added later. It is a Python audit hook, which
+  can't be switched off once on. The only exceptions are the mDNS multicast group and the documentation address
+  the hub asks its route with, which never sends anything. Name lookups go to your computer's own resolver.
+- **The count:** since it started, the hub counts every connection it made or blocked, and every request it served
+  or refused, by where it went or came from. `internet_connections` is always 0, and a blocked destination is
+  listed by name, so you can see what tried.
+- **mDNS** (how phones find the hub) stays on your LAN's multicast group, and never crosses Tailscale.
 
 ## Redaction rules
 

@@ -45,6 +45,18 @@ def _no_real_desktop_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_socket_guard_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The socket guard (DT-45) is an audit hook, which can't be taken off: a test that starts a real hub (serve())
+    without replacing it fails loudly instead of leaving it on for every later test."""
+    from daytrace_hub import app
+
+    def refuse() -> None:
+        raise AssertionError("tests must not turn the socket guard on in the test process; replace install_network_audit")
+
+    monkeypatch.setattr(app, "install_network_audit", refuse)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_model_server(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """A test that reaches for a real model server (LM Studio on this PC, say) fails loudly instead. The guard's own
     checks still run first; only the final connect is refused. Tests marked real_network may open local sockets."""

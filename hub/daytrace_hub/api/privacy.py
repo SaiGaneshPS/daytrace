@@ -1,11 +1,13 @@
-"""The Privacy page's API. DT-44: the redaction rules (see them, change them, try a title against them).
-DT-45 / DT-46 add the network status, export and delete-all.
+"""The Privacy page's API. DT-44: the redaction rules (see them, change them, try a title against them). DT-45:
+the network status, the proof that the hub talks to nothing but this computer, your LAN and (for shared-dev) your
+tailnet. DT-46 adds export and delete-all.
 
 Reading the rules needs a paired device or the local dashboard; changing them needs the dashboard (a viewer token,
 or the dashboard on the hub computer), as categories and goals do. A change applies to the next event stored.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -13,6 +15,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import Editor, Reader, get_database
+from ..config import LEDGER
 from ..db import Database, transaction
 from ..redaction import (
     MAX_CUSTOM_RULES,
@@ -132,3 +135,51 @@ async def apply_redaction(body: ApplyRules, _: Editor, database: Annotated[Datab
     if not body.confirm:
         raise ApiError(400, "bad_request", "hiding stored words can't be undone: send confirm true to go ahead")
     return Applied(redacted=await run_in_threadpool(stored_matches, database, apply=True))
+
+
+# --- the network status (DT-45) -----------------------------------------------------------------------------------
+
+
+class NetworkCounts(BaseModel):
+    localhost: int = 0
+    lan: int = 0
+    tailscale: int = 0
+    internet: int = 0
+
+
+class BlockedDestination(BaseModel):
+    host: str
+    port: int
+    count: int
+    last: datetime
+
+
+class Blocked(BaseModel):
+    count: int = Field(description="Outgoing requests refused, all of them (the first 20 destinations are listed).")
+    destinations: list[BlockedDestination]
+
+
+class NetworkStatus(BaseModel):
+    since: datetime = Field(description="When the hub started counting (when it started).")
+    internet_connections: int = Field(description="Requests to or from the internet the hub made or served. Always 0: "
+                                                  "the only way out refuses them, and so does the way in.")
+    outgoing: NetworkCounts = Field(description="Requests the hub made (to the local model), by where they went.")
+    blocked: Blocked = Field(description="Requests the hub would have made to an address it doesn't allow, refused.")
+    incoming: NetworkCounts = Field(description="Requests the hub served, by where they came from.")
+    refused: NetworkCounts = Field(description="Requests the hub refused, by where they came from: a network the "
+                                               "profile doesn't serve, a Host name that could be DNS rebinding, or "
+                                               "another web site's page.")
+    listening: list[str] = Field(description="The addresses the hub listens on right now (empty in tests).")
+    guarded: bool = Field(description="Whether the socket guard is on: nothing in the hub process can connect to the "
+                                      "internet, whatever code asks (a real hub always; not in tests).")
+
+
+@router.get("/privacy/network", response_model=NetworkStatus, summary="Every connection since the hub started, by network")
+def network_status(_: Reader) -> NetworkStatus:
+    found = LEDGER.snapshot()
+    outgoing, incoming = NetworkCounts(**found["outgoing"]), NetworkCounts(**found["incoming"])
+    return NetworkStatus(
+        since=found["since"], internet_connections=outgoing.internet + incoming.internet, outgoing=outgoing,
+        blocked=Blocked(count=found["blocked"]["count"], destinations=[BlockedDestination(**entry) for entry in found["blocked"]["destinations"]]),
+        incoming=incoming, refused=NetworkCounts(**found["refused"]), listening=found["listening"], guarded=found["guarded"],
+    )

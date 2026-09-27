@@ -5,14 +5,19 @@ Routers are added by their tickets (DT-11 onwards); DT-30 serves the dashboard a
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import logging
+import os
 import re
 import socket
-from collections.abc import AsyncIterator
+import sys
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -34,18 +39,30 @@ from .api import privacy as privacy_api
 from .api import streaks as streaks_api
 from .api import timeline as timeline_api
 from .auth import is_trusted_local
-from .config import Settings, client_allowed, host_allowed, load_settings
+from .config import (
+    LEDGER,
+    Settings,
+    client_allowed,
+    host_allowed,
+    load_settings,
+    network_of,
+    origin_allowed,
+    parse_ip,
+)
 from .db import Database
-from .discovery import Advertiser
+from .discovery import Advertiser, listen_addresses
 from .llm import LLM, load_llm_settings, model_networks
 from .tracker.base import TrackerService, platform_probe
 
 # 1008 = policy violation; closing before accept makes the server answer the handshake with 403.
 WEBSOCKET_POLICY_VIOLATION = 1008
+# uvicorn's own logger, which its log config shows on the console: where the hub listens is shown with its output.
+LISTEN_LOG = logging.getLogger("uvicorn.error")
 
 
 class NetworkGuard:
-    """Refuses clients from networks the profile does not serve, and Host names that could be DNS rebinding.
+    """Refuses clients from networks the profile does not serve, Host names that could be DNS rebinding, and
+    requests from other web sites' pages (DT-45), and writes each request, served or refused, in the network ledger.
 
     A plain ASGI middleware (not @app.middleware("http")) so WebSocket connections are checked too.
     """
@@ -68,15 +85,27 @@ class NetworkGuard:
     def _check(self, scope: Scope) -> JSONResponse | None:
         profile = self.settings.profile
         client = scope.get("client")
-        if not client_allowed(client[0] if client else None, profile, self.settings.lan_networks):
-            return error_response(
+        address = client[0] if client else None
+        where = network_of(address)
+        headers = Headers(scope=scope)
+        refusal = None
+        if not client_allowed(address, profile, self.settings.lan_networks):
+            refusal = error_response(
                 403, "forbidden_network", f"the {profile.name} profile does not accept requests from this network"
             )
-        if not host_allowed(Headers(scope=scope).get("host"), profile):
-            return error_response(
+        elif not host_allowed(headers.get("host"), profile):
+            refusal = error_response(
                 403, "forbidden_host", "use the hub's IP address, its PC name or its .local name to reach it"
             )
-        return None
+        elif not origin_allowed(headers.get("origin"), headers.get("host")):
+            refusal = error_response(
+                403, "forbidden_origin", "another web page can't call the hub; open the dashboard from the hub itself"
+            )
+        if refusal is not None:
+            LEDGER.refuse(where)
+        else:
+            LEDGER.served(where)
+        return refusal
 
 
 # The dashboard only talks to the hub it came from; inline styles are for charts, data: and blob: images for the
@@ -305,3 +334,162 @@ def create_app(settings: Settings | None = None, llm: LLM | None = None, dashboa
     folder = dashboard_dir or settings.dashboard_dir or default_dashboard_dir()
     app.router.default = Dashboard(folder, api_not_found=app.router.not_found)
     return app
+
+
+# --- listening only where the profile is reached (DT-45) ----------------------------------------------------------
+
+
+def bind_listener(address: str, port: int) -> socket.socket:
+    """A TCP socket bound to one address. On Windows no other program may bind the same address and port while
+    the hub holds it (SO_EXCLUSIVEADDRUSE); elsewhere a restart can bind again at once (SO_REUSEADDR)."""
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        if family == socket.AF_INET6:
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        if os.name == "nt":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)  # type: ignore[attr-defined]
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((address, port))
+    except OSError:
+        sock.close()
+        raise
+    return sock
+
+
+def _shown(address: str, port: int) -> str:
+    return f"[{address}]:{port}" if ":" in address else f"{address}:{port}"
+
+
+def _listening(server: Any) -> bool:
+    """Whether an asyncio server still accepts: closed by us, or its socket closed under it (on Windows asyncio
+    closes a listening socket after a failed accept, and the server doesn't notice)."""
+    return server.is_serving() and all(sock.fileno() != -1 for sock in server.sockets or ())
+
+
+class HubServer(uvicorn.Server):
+    """uvicorn, listening only on the addresses `find_addresses` gives (loopback, the LAN, and Tailscale only for
+    profiles that accept it), never on every interface. The addresses are checked again every `check_every`
+    seconds, on a thread (reading the adapters can be slow while the network changes): a new Wi-Fi or DHCP address
+    gets a listener, one that went away is closed, and one whose socket died is bound again. The app keeps
+    running (its lifespan, the tracker and the model client are not restarted).
+
+    Loopback that can't be bound (the port is taken) stops the start, as uvicorn would. Another address that can't
+    be bound is skipped and tried again at each check; it is reported once, not at every check."""
+
+    def __init__(self, config: Any, find_addresses: Callable[[], list[str]], check_every: float = 15.0) -> None:
+        super().__init__(config)
+        self.find_addresses = find_addresses
+        self.check_every = check_every
+        self.listening: dict[str, Any] = {}  # address -> its asyncio server
+        self._unbound: set[str] = set()
+
+    def _bind_all(self, addresses: list[str]) -> list[tuple[str, socket.socket]]:
+        bound = []
+        for address in addresses:
+            try:
+                bound.append((address, bind_listener(address, self.config.port)))
+                self._unbound.discard(address)
+            except OSError as error:
+                if address == "127.0.0.1":
+                    raise SystemExit(f"can't listen on {_shown(address, self.config.port)}: {error}") from error
+                if address not in self._unbound:
+                    LISTEN_LOG.warning("Daytrace isn't listening on %s for now: %s", _shown(address, self.config.port), error)
+                    self._unbound.add(address)
+        return bound
+
+    def _protocol(self, _loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Protocol:
+        # The same protocol uvicorn's startup() makes for each listener.
+        return self.config.http_protocol_class(config=self.config, server_state=self.server_state,
+                                               app_state=self.lifespan.state, _loop=_loop)
+
+    async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+        bound = self._bind_all(self.find_addresses())
+        await super().startup(sockets=[sock for _, sock in bound])
+        self.listening = {address: server for (address, _), server in zip(bound, self.servers, strict=True)}
+        self._record()
+
+    def _record(self) -> None:
+        shown = [_shown(address, self.config.port) for address in self.listening]
+        LEDGER.listen(shown)
+        LISTEN_LOG.info("Daytrace listening on %s", ", ".join(f"http://{entry}" for entry in shown))
+
+    async def refresh(self) -> None:
+        """Listen on the addresses there are now: new ones added, gone (or dead) ones closed (their open connections
+        finish)."""
+        wanted = set(await asyncio.to_thread(self.find_addresses))
+        changed = False
+        for address, server in list(self.listening.items()):
+            if address not in wanted or not _listening(server):
+                del self.listening[address]
+                server.close()
+                self.servers.remove(server)
+                changed = True
+        loop = asyncio.get_running_loop()
+        for address, sock in self._bind_all([address for address in wanted if address not in self.listening]):
+            server = await loop.create_server(self._protocol, sock=sock, ssl=self.config.ssl, backlog=self.config.backlog)
+            self.servers.append(server)
+            self.listening[address] = server
+            changed = True
+        if changed:
+            self._record()
+
+    async def on_tick(self, counter: int) -> bool:
+        if counter and counter % max(1, round(self.check_every * 10)) == 0:  # uvicorn ticks every 0.1 s
+            try:
+                await self.refresh()
+            except (Exception, SystemExit) as error:  # noqa: BLE001 - keep serving where it already listens; check again later
+                LISTEN_LOG.warning("Daytrace could not update where it listens: %s", error)
+        return await super().on_tick(counter)
+
+
+# --- the socket guard (DT-45) ------------------------------------------------------------------------------------
+
+# Addresses outside the private ranges that are still not the internet: link-local multicast, where mDNS (phones
+# finding the hub) speaks, and TEST-NET-1, which discovery.primary_ipv4() "connects" a UDP socket to only to ask the
+# system for its route, sending nothing.
+NOT_THE_INTERNET = tuple(ipaddress.ip_network(cidr) for cidr in ("224.0.0.0/24", "ff02::/16", "192.0.2.0/24"))
+_guarded = False
+
+
+def network_audit(event: str, args: tuple[Any, ...]) -> None:
+    """Python's audit hook for the hub process: a socket connecting (or sending) to an internet address is refused
+    before a packet leaves, whatever code asks (a library, an SDK, anything added later), and counted as blocked.
+    This computer, private LANs and the tailnet pass; so do the two ranges in NOT_THE_INTERNET. A name instead of
+    an address counts as the internet: the hub's own code connects to the addresses it checked."""
+    if event not in ("socket.connect", "socket.sendto") or len(args) < 2:
+        return
+    address = args[1]
+    if not isinstance(address, tuple) or not address:
+        return  # a Unix socket's path
+    host = str(address[0])
+    if network_of(host) != "internet":
+        return
+    parsed = parse_ip(host)
+    if parsed is not None and any(parsed in network for network in NOT_THE_INTERNET):
+        return
+    LEDGER.block(host, int(address[1]) if len(address) > 1 and isinstance(address[1], int) else 0)
+    raise PermissionError(f"Daytrace never connects to the internet: {host} refused")
+
+
+def install_network_audit() -> None:
+    """Turn the socket guard on for this process (once; Python can't take an audit hook off again)."""
+    global _guarded
+    if not _guarded:
+        sys.addaudithook(network_audit)
+        _guarded = True
+    LEDGER.guarded = True
+
+
+def serve(settings: Settings) -> None:
+    """Run the hub for one profile until it is stopped (Ctrl+C), listening only where the profile is reached, with
+    the socket guard on."""
+    install_network_audit()
+    # A connection that never closes (a phone that dropped off the Wi-Fi) must not keep Ctrl+C waiting.
+    config = uvicorn.Config(create_app(settings), port=settings.profile.port, log_level="info", proxy_headers=False,
+                            timeout_graceful_shutdown=5)
+    try:
+        HubServer(config, lambda: listen_addresses(settings)).run()
+    except KeyboardInterrupt:
+        pass  # Ctrl+C: the hub has shut down cleanly (uvicorn.run() does the same)
