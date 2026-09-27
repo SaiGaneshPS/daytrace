@@ -23,9 +23,9 @@ from daytrace_hub.ask import (
     ToolError,
     answer_problems,
     ask,
+    date_guide,
     facts_answer,
     run_tool,
-    system_prompt,
 )
 from daytrace_hub.auth import register_device
 from daytrace_hub.config import Settings, get_profile
@@ -199,7 +199,7 @@ def test_the_youtube_question_gets_the_right_figure(week: Database, fake_llm: Fa
     first, second = fake_llm.chats()
     prompt = first["body"]["messages"][0]["content"]
     assert "Today is Monday 2026-09-28" in prompt
-    assert '"last week" is Monday 2026-09-21 to Sunday 2026-09-27' in prompt
+    assert "last week: Monday 2026-09-21 to Sunday 2026-09-27;" in prompt
     assert [t["function"]["name"] for t in first["body"]["tools"]] == list(TOOLS)
     sent = second["body"]["messages"][-1]
     assert sent["role"] == "tool" and json.loads(sent["content"])["facts"][0]["value"] == 110
@@ -429,24 +429,63 @@ def test_a_part_of_the_day_sees_devices_without_building_the_whole_day(week: Dat
         assert not any(key == (full.day(date(2026, 9, 21)).start, full.day(date(2026, 9, 21)).end) for key in quick._windows)
 
 
+def test_the_prompt_spells_out_the_dates() -> None:
+    # A Saturday, whole: the phrases, then the past week by name (newest first, so each weekday is there once).
+    assert date_guide(date(2026, 9, 26)).text == (
+        "Weeks run Monday to Sunday. When the question says one of these, use these dates in the tool calls: "
+        "yesterday: Friday 2026-09-25; tomorrow: Sunday 2026-09-27; "
+        "last night: get_sleep's entry for today, Saturday 2026-09-26 (each night is listed under the morning it ends); "
+        "this week: Monday 2026-09-21 to Saturday 2026-09-26; last week: Monday 2026-09-14 to Sunday 2026-09-20; "
+        "this weekend: Saturday 2026-09-26 to Sunday 2026-09-27; last weekend: Saturday 2026-09-19 to Sunday 2026-09-20; "
+        "the last 7 days: the 7 full days Saturday 2026-09-19 to Friday 2026-09-25; "
+        "this month: Tuesday 2026-09-01 to Saturday 2026-09-26; last month: Saturday 2026-08-01 to Monday 2026-08-31. "
+        "A day named without a date (\"on Tuesday\", \"last Friday\") is the one in the past week: "
+        "Friday 2026-09-25, Thursday 2026-09-24, Wednesday 2026-09-23, Tuesday 2026-09-22, Monday 2026-09-21, "
+        "Sunday 2026-09-20, Saturday 2026-09-19. "
+        "For any other day or period, use the dates the question gives."
+    )
+
+
 @pytest.mark.parametrize(
     ("today", "expected"),
     [
-        # A Saturday: this week so far, the whole week before, and a 7-day window that reaches into last week.
-        (date(2026, 9, 26), ["yesterday was Friday 2026-09-25",
-                             '"this week" is Monday 2026-09-21 to Saturday 2026-09-26',
-                             '"last week" is Monday 2026-09-14 to Sunday 2026-09-20',
-                             '"the last 7 days" are Sunday 2026-09-20 to Saturday 2026-09-26']),
-        # A Monday: this week is just today, and last week ended yesterday.
-        (date(2026, 9, 28), ["yesterday was Sunday 2026-09-27",
-                             '"this week" is Monday 2026-09-28 to Monday 2026-09-28',
-                             '"last week" is Monday 2026-09-21 to Sunday 2026-09-27']),
-        # Across a year end.
-        (date(2027, 1, 2), ['"this week" is Monday 2026-12-28 to Saturday 2027-01-02',
-                            '"last week" is Monday 2026-12-21 to Sunday 2026-12-27']),
+        # A Monday: this week is just today, last week and last weekend ended yesterday.
+        (date(2026, 9, 28), ["yesterday: Sunday 2026-09-27;", "this week: just Monday 2026-09-28;",
+                             "last week: Monday 2026-09-21 to Sunday 2026-09-27;",
+                             "last weekend: Saturday 2026-09-26 to Sunday 2026-09-27;",
+                             "the last 7 days: the 7 full days Monday 2026-09-21 to Sunday 2026-09-27;"]),
+        # A Sunday: this week is whole, and the last 7 days are Sunday to Saturday.
+        (date(2026, 9, 27), ["this week: Monday 2026-09-21 to Sunday 2026-09-27;",
+                             "last week: Monday 2026-09-14 to Sunday 2026-09-20;",
+                             "this weekend: Saturday 2026-09-26 to Sunday 2026-09-27;",
+                             "the last 7 days: the 7 full days Sunday 2026-09-20 to Saturday 2026-09-26;"]),
+        # New Year's Day: yesterday, last week and last month are in the year before.
+        (date(2027, 1, 1), ["yesterday: Thursday 2026-12-31;", "tomorrow: Saturday 2027-01-02;",
+                            "this week: Monday 2026-12-28 to Friday 2027-01-01;",
+                            "last week: Monday 2026-12-21 to Sunday 2026-12-27;",
+                            "this month: just Friday 2027-01-01;",
+                            "last month: Tuesday 2026-12-01 to Thursday 2026-12-31."]),
+        # March 1st after a short February.
+        (date(2027, 3, 1), ["last month: Monday 2027-02-01 to Sunday 2027-02-28."]),
     ],
 )
-def test_the_prompt_spells_out_the_dates(today: date, expected: list[str]) -> None:
-    prompt = system_prompt(today, "America/Toronto")
-    for text in expected:
-        assert text in prompt
+def test_the_dates_at_the_edges(today: date, expected: list[str]) -> None:
+    text = date_guide(today).text
+    for part in expected:
+        assert part in text
+
+
+def test_the_prompt_names_every_day_it_lets_an_answer_repeat() -> None:
+    guide = date_guide(date(2026, 9, 26))
+    assert min(guide.days) == date(2026, 8, 1) and max(guide.days) == date(2026, 9, 27)
+    assert len(guide.days) == 58  # every day in between: August, September to the 26th, and tomorrow
+    assert all(day.isoformat() in guide.text for day in (date(2026, 8, 1), date(2026, 9, 19), date(2026, 9, 27)))
+
+
+def test_an_answer_may_repeat_the_dates_the_prompt_gave(week: Database, fake_llm: FakeModelServer) -> None:
+    # The only tool call fails, so no tool covered any day; the dates in the answer come from the prompt.
+    fake_llm.reply_tool_call("get_totals", {**LAST_WEEK, "category": "nonsense"})
+    fake_llm.reply_text("I couldn't look that up for last week (2026-09-21 to 2026-09-27): that category doesn't exist.")
+    result = asked(week, fake_llm)
+    assert (result.fallback, result.answer) == (
+        False, "I couldn't look that up for last week (2026-09-21 to 2026-09-27): that category doesn't exist.")

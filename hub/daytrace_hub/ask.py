@@ -502,25 +502,55 @@ def run_tool(stats: Stats, name: str, arguments: str | None) -> ToolOutput:
 
 
 def _span(first: date, last: date) -> str:
-    return f"{first:%A} {first.isoformat()} to {last:%A} {last.isoformat()}"
+    return f"just {_on(first)}" if first == last else f"{_on(first)} to {_on(last)}"
+
+
+@dataclass(frozen=True)
+class DateGuide:
+    text: str
+    days: frozenset[date]  # every day the text names, which an answer may repeat
+
+
+def date_guide(today: date) -> DateGuide:
+    """The dates behind the relative phrases people use, for the prompt. Small models get "last week" wrong when left
+    to work it out from today's date, so the model looks dates up here instead of counting."""
+    monday = today - timedelta(days=today.weekday())
+    this_month = today.replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    week_back = [today - timedelta(days=n) for n in range(1, 8)]  # newest first: each weekday named once
+    phrases = [
+        ("yesterday", _on(today - timedelta(days=1))),
+        ("tomorrow", _on(today + timedelta(days=1))),
+        ("last night", f"get_sleep's entry for today, {_on(today)} (each night is listed under the morning it ends)"),
+        ("this week", _span(monday, today)),
+        ("last week", _span(monday - timedelta(days=7), monday - timedelta(days=1))),
+        ("this weekend", _span(monday + timedelta(days=5), monday + timedelta(days=6))),
+        ("last weekend", _span(monday - timedelta(days=2), monday - timedelta(days=1))),
+        ("the last 7 days", f"the 7 full days {_span(week_back[-1], week_back[0])}"),
+        ("this month", _span(this_month, today)),
+        ("last month", _span(last_month, this_month - timedelta(days=1))),
+    ]
+    text = (
+        "Weeks run Monday to Sunday. When the question says one of these, use these dates in the tool calls: "
+        + "; ".join(f"{phrase}: {dates}" for phrase, dates in phrases)
+        + ". A day named without a date (\"on Tuesday\", \"last Friday\") is the one in the past week: "
+        + ", ".join(_on(day) for day in week_back) + ". For any other day or period, use the dates the question gives."
+    )
+    # Last month's first day is the earliest day named, tomorrow the latest.
+    days = frozenset(last_month + timedelta(days=n) for n in range((today - last_month).days + 2))
+    return DateGuide(text, days)
 
 
 def system_prompt(today: date, tz_name: str) -> str:
-    # The dates are spelled out: small models get "last week" wrong when left to work it out from today's date.
-    monday = today - timedelta(days=today.weekday())
-    yesterday = today - timedelta(days=1)
     return (
         "You answer questions about the person's own day from their Daytrace data (screen time per app, site, "
         "category and device; sessions; focus; phone pickups; sleep; calendar), speaking to them as \"you\". "
-        f"Today is {today:%A} {today.isoformat()} ({tz_name}); yesterday was {yesterday:%A} {yesterday.isoformat()}. "
-        f"Weeks run Monday to Sunday: \"this week\" is {_span(monday, today)}, \"last week\" is "
-        f"{_span(monday - timedelta(days=7), monday - timedelta(days=1))}, and \"the last 7 days\" are "
-        f"{_span(today - timedelta(days=6), today)}. Use these dates in tool calls. Call the tools to get facts; "
-        f"each covers at most {MAX_RANGE_DAYS} days, and you may call at most {MAX_TOOL_CALLS}. Use only numbers from the tool "
-        "results: never estimate, add up or work out a number yourself (minutes may be written as hours and minutes, "
-        "125 minutes = 2 hours 5 minutes). If the tools found no data, say so. Answer in 1 to 4 short sentences, "
-        "with no lists or headings. If the question is not about the person's own day, screen time, apps, focus, "
-        f"sleep, calendar or habits, reply with just {OFF_TOPIC}."
+        f"Today is {_on(today)} ({tz_name}). {date_guide(today).text} Call the tools to get facts; "
+        f"each covers at most {MAX_RANGE_DAYS} days, and you may call at most {MAX_TOOL_CALLS}. Use only numbers from "
+        "the tool results: never estimate, add up or work out a number yourself (minutes may be written as hours and "
+        "minutes, 125 minutes = 2 hours 5 minutes). If the tools found no data, say so. Answer in 1 to 4 short "
+        "sentences, with no lists or headings. If the question is not about the person's own day, screen time, apps, "
+        f"focus, sleep, calendar or habits, reply with just {OFF_TOPIC}."
     )
 
 
@@ -593,7 +623,7 @@ def ask(database: Database, llm: LLM, question: str, tz: tzinfo, tz_name: str, n
         {"role": "user", "content": question},
     ]
     facts: list[Fact] = []
-    days: set[date] = {today}
+    days: set[date] = {today, *date_guide(today).days}  # an answer may repeat the dates the prompt gave
     called: list[str] = []
     chart: dict[str, Any] | None = None
     retried = False
