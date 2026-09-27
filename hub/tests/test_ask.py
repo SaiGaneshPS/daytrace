@@ -25,6 +25,7 @@ from daytrace_hub.ask import (
     ask,
     facts_answer,
     run_tool,
+    system_prompt,
 )
 from daytrace_hub.auth import register_device
 from daytrace_hub.config import Settings, get_profile
@@ -196,7 +197,9 @@ def test_the_youtube_question_gets_the_right_figure(week: Database, fake_llm: Fa
     assert [(p["label"], p["value"]) for p in result.chart["points"] if p["value"]] == [
         ("2026-09-21", 30), ("2026-09-22", 45), ("2026-09-24", 20), ("2026-09-26", 15)]
     first, second = fake_llm.chats()
-    assert "Today is Monday 2026-09-28" in first["body"]["messages"][0]["content"]
+    prompt = first["body"]["messages"][0]["content"]
+    assert "Today is Monday 2026-09-28" in prompt
+    assert '"last week" is Monday 2026-09-21 to Sunday 2026-09-27' in prompt
     assert [t["function"]["name"] for t in first["body"]["tools"]] == list(TOOLS)
     sent = second["body"]["messages"][-1]
     assert sent["role"] == "tool" and json.loads(sent["content"])["facts"][0]["value"] == 110
@@ -424,3 +427,26 @@ def test_a_part_of_the_day_sees_devices_without_building_the_whole_day(week: Dat
             assert quick._screen_devices(day) == full.day(day).counted_devices_with_data
         quick.totals(date(2026, 9, 21), date(2026, 9, 27), between=(time(23), time(3)))
         assert not any(key == (full.day(date(2026, 9, 21)).start, full.day(date(2026, 9, 21)).end) for key in quick._windows)
+
+
+@pytest.mark.parametrize(
+    ("today", "expected"),
+    [
+        # A Saturday: this week so far, the whole week before, and a 7-day window that reaches into last week.
+        (date(2026, 9, 26), ["yesterday was Friday 2026-09-25",
+                             '"this week" is Monday 2026-09-21 to Saturday 2026-09-26',
+                             '"last week" is Monday 2026-09-14 to Sunday 2026-09-20',
+                             '"the last 7 days" are Sunday 2026-09-20 to Saturday 2026-09-26']),
+        # A Monday: this week is just today, and last week ended yesterday.
+        (date(2026, 9, 28), ["yesterday was Sunday 2026-09-27",
+                             '"this week" is Monday 2026-09-28 to Monday 2026-09-28',
+                             '"last week" is Monday 2026-09-21 to Sunday 2026-09-27']),
+        # Across a year end.
+        (date(2027, 1, 2), ['"this week" is Monday 2026-12-28 to Saturday 2027-01-02',
+                            '"last week" is Monday 2026-12-21 to Sunday 2026-12-27']),
+    ],
+)
+def test_the_prompt_spells_out_the_dates(today: date, expected: list[str]) -> None:
+    prompt = system_prompt(today, "America/Toronto")
+    for text in expected:
+        assert text in prompt

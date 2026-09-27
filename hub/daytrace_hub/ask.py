@@ -501,13 +501,22 @@ def run_tool(stats: Stats, name: str, arguments: str | None) -> ToolOutput:
 # --- asking --------------------------------------------------------------------------------------------------------
 
 
+def _span(first: date, last: date) -> str:
+    return f"{first:%A} {first.isoformat()} to {last:%A} {last.isoformat()}"
+
+
 def system_prompt(today: date, tz_name: str) -> str:
+    # The dates are spelled out: small models get "last week" wrong when left to work it out from today's date.
+    monday = today - timedelta(days=today.weekday())
+    yesterday = today - timedelta(days=1)
     return (
         "You answer questions about the person's own day from their Daytrace data (screen time per app, site, "
         "category and device; sessions; focus; phone pickups; sleep; calendar), speaking to them as \"you\". "
-        f"Today is {today:%A} {today.isoformat()} ({tz_name}). Weeks run Monday to Sunday: \"last week\" is the Monday "
-        "to Sunday before this week, and \"this week\" is Monday to today. Call the tools to get facts; each covers "
-        f"at most {MAX_RANGE_DAYS} days, and you may call at most {MAX_TOOL_CALLS}. Use only numbers from the tool "
+        f"Today is {today:%A} {today.isoformat()} ({tz_name}); yesterday was {yesterday:%A} {yesterday.isoformat()}. "
+        f"Weeks run Monday to Sunday: \"this week\" is {_span(monday, today)}, \"last week\" is "
+        f"{_span(monday - timedelta(days=7), monday - timedelta(days=1))}, and \"the last 7 days\" are "
+        f"{_span(today - timedelta(days=6), today)}. Use these dates in tool calls. Call the tools to get facts; "
+        f"each covers at most {MAX_RANGE_DAYS} days, and you may call at most {MAX_TOOL_CALLS}. Use only numbers from the tool "
         "results: never estimate, add up or work out a number yourself (minutes may be written as hours and minutes, "
         "125 minutes = 2 hours 5 minutes). If the tools found no data, say so. Answer in 1 to 4 short sentences, "
         "with no lists or headings. If the question is not about the person's own day, screen time, apps, focus, "
