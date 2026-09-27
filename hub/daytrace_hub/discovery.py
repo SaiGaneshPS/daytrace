@@ -91,6 +91,18 @@ def detect_phone_addresses(settings: Settings) -> list[str]:
     return phone_addresses(settings, primary_ipv4(), interface_ipv4s())
 
 
+LOOPBACK_LISTEN = ("127.0.0.1", "::1")
+
+
+def listen_addresses(settings: Settings, phones: Iterable[str] | None = None) -> list[str]:
+    """Where the hub listens (DT-45): this computer (IPv4 and IPv6 loopback, so http://localhost works at once)
+    and the addresses phones are told about (phone_addresses: the LAN, Tailscale only on profiles that accept it).
+    Never a public address, a VPN's or a virtual machine's adapter, or, for your own data, the tailnet. It is
+    worked out again as the computer's addresses change (a new Wi-Fi, a DHCP renewal)."""
+    found = detect_phone_addresses(settings) if phones is None else list(phones)
+    return list(dict.fromkeys([*LOOPBACK_LISTEN, *found]))
+
+
 def hub_url(settings: Settings, host: str) -> str:
     return f"http://{host}:{settings.profile.port}"
 

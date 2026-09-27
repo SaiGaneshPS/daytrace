@@ -31,7 +31,17 @@ import httpx
 import openai
 from openai import OpenAI
 
-from .config import DEFAULT_LAN_NETWORKS, LOOPBACK_NETWORKS, TAILSCALE_NETWORKS, IPNetwork, Settings, parse_ip
+from .config import (
+    DEFAULT_LAN_NETWORKS,
+    LEDGER,
+    LOOPBACK_NETWORKS,
+    TAILSCALE_NETWORKS,
+    IPNetwork,
+    NetworkLedger,
+    Settings,
+    network_of,
+    parse_ip,
+)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:1234/v1"  # LM Studio; Ollama serves http://127.0.0.1:11434/v1
 # Connecting is quick on a LAN; a long answer from a big model is not.
@@ -192,15 +202,19 @@ class LocalOnlyBackend(httpcore.SyncBackend):
 
 class LocalOnlyTransport(httpx.BaseTransport):
     """The model guard as an httpx transport. `inner` is for tests (a fake server); by default it is httpx's own
-    transport connecting through `LocalOnlyBackend`."""
+    transport connecting through `LocalOnlyBackend`. Every request it lets through, and every one it refuses, is
+    written in the network ledger (DT-45) by the kind of network it went to."""
 
     def __init__(
         self,
         networks: Iterable[IPNetwork] = LOCAL_NETWORKS,
         resolve: Resolver = system_resolver,
         inner: httpx.BaseTransport | None = None,
+        ledger: NetworkLedger = LEDGER,
     ) -> None:
         self._networks = tuple(networks)
+        self._resolve = resolve
+        self._ledger = ledger
         if inner is None:
             inner = httpx.HTTPTransport()
             pool = getattr(inner, "_pool", None)
@@ -211,12 +225,22 @@ class LocalOnlyTransport(httpx.BaseTransport):
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         host = request.url.host
-        if parse_ip(host) is not None and not address_allowed(host, self._networks):
-            raise _refused(host)  # clear and immediate; names are checked when connecting
-        for name in list(request.headers.keys()):
-            if name.lower() not in SENT_HEADERS:
-                del request.headers[name]
-        return self._inner.handle_request(request)
+        port = request.url.port or (443 if request.url.scheme == "https" else 80)
+        try:
+            if parse_ip(host) is not None:
+                if not address_allowed(host, self._networks):
+                    raise _refused(host)  # clear and immediate
+                where = network_of(host)
+            else:  # the backend checks the name again as it connects; this lookup only says where it goes
+                where = network_of(checked_addresses(host, port, self._networks, self._resolve)[0])
+            for name in list(request.headers.keys()):
+                if name.lower() not in SENT_HEADERS:
+                    del request.headers[name]
+            self._ledger.connected(where)
+            return self._inner.handle_request(request)
+        except LLMRefused:
+            self._ledger.block(host, port)
+            raise
 
     def close(self) -> None:
         self._inner.close()

@@ -268,11 +268,13 @@ def test_two_profiles_can_run_side_by_side(tmp_path: Path) -> None:
 
 
 def test_run_starts_the_chosen_profile_on_its_port(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    calls: list[dict[str, object]] = []
+    started: list[object] = []
     monkeypatch.setenv("DAYTRACE_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr("uvicorn.run", lambda app, **kwargs: calls.append({"app": app, **kwargs}))
+    monkeypatch.setattr("daytrace_hub.app.HubServer.run", lambda server, *args, **kwargs: started.append(server))
+    monkeypatch.setattr("daytrace_hub.discovery.detect_phone_addresses", lambda settings: ["192.168.1.20", "100.101.102.103"])
     assert cli.main(["run", "--profile", "shared-dev"]) == 0
-    assert calls[0]["port"] == 8766
-    assert calls[0]["host"] == "0.0.0.0"
-    assert calls[0]["proxy_headers"] is False
-    assert calls[0]["app"].state.settings.database_path == tmp_path / "daytrace-shared-dev.db"
+    (server,) = started
+    assert server.config.port == 8766
+    assert server.config.proxy_headers is False
+    assert server.config.app.state.settings.database_path == tmp_path / "daytrace-shared-dev.db"
+    assert server.find_addresses() == ["127.0.0.1", "::1", "192.168.1.20", "100.101.102.103"]  # never 0.0.0.0
