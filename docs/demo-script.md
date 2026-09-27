@@ -26,8 +26,9 @@ Without the phone, one command plays its part (`live` or `nudge`), on the hub co
 ```
 
 It sends events as the demo's Android phone, through the same path a phone uses. `nudge` also shows the nudge as a
-desktop notification. A second nudge within 5 minutes stays quiet (the hub sends one at a time); `--again` lets it
-speak.
+desktop notification. The focus nudge rests 20 minutes after it fires, and no nudge follows another within 5, so a
+retry in that time stays quiet and says why; `--again` lets it speak now. The start script's re-seeding clears the
+rehearsal's nudges, so the real demo starts rested.
 
 ## Before the demo (checklist)
 
@@ -45,8 +46,9 @@ speak.
       celebrated badges, so step 5's confetti plays, and no extensions or saved logins show.
 - [ ] **Notifications.** Windows' Do not disturb is off, so the nudge's notification shows.
 - [ ] **Quiet screen.** Close chats, mail and anything else with private titles. Only the demo browser is open.
-- [ ] **Internet cable or Wi-Fi switch within reach** for step 4 (unplug it, or switch Airplane mode on for the PC
-      only, not the network the phone uses).
+- [ ] **The internet within reach** for step 4: the router's internet cable (the one from the wall or the fiber box).
+      Unplugging it cuts the internet but keeps the home network, so the phone still reaches the hub. With the phone
+      on the PC's hotspot instead, check in the rehearsal what cutting the PC's own connection does to the hotspot.
 - [ ] **Rehearsed today** at least twice, all eight steps, with the timings below.
 
 ## 1. Hook (20 s)
@@ -78,8 +80,8 @@ speak.
 ## 4. The AI, with the internet off (35 s)
 
 - **Say:** "Everything you're about to see runs on this PC. I'll unplug the internet."
-- **Do:** unplug the network cable (or switch the PC's Wi-Fi off). Ask: tap "How much YouTube did I watch last
-  week?", or type "When did I sleep last night?".
+- **Do:** unplug the router's internet cable (not the PC's Wi-Fi: the phone reaches the hub through it). Ask: tap
+  "How much YouTube did I watch last week?", or type "When did I sleep last night?".
 - **See:** an answer with its numbers, the facts it used, and the tools it called. Then Privacy: "0 internet
   connections since the hub started".
 - **Fallback:** if the model is slow, open Story for yesterday, already written by the start script. If the model
@@ -121,7 +123,7 @@ speak.
 | Start | the model isn't answering | Start LM Studio, load the model, run the start script with `-NoSeed` |
 | 1 Hook | the page is empty | Run the start script again (it seeds and starts the hub) |
 | 2 Live | the phone doesn't sync | `daytrace_hub demo live` |
-| 3 Nudge | no nudge on the phone | `daytrace_hub demo nudge` (or `--again`) |
+| 3 Nudge | no nudge on the phone | `daytrace_hub demo nudge` (it says why if it stays quiet; `--again` lets it speak) |
 | 4 AI | slow or no model | Story for yesterday (written ahead), then Privacy |
 | 5 Streaks | no confetti | A new InPrivate window |
 | 6 Insights | a slow chart | Stay on Overview |

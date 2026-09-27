@@ -233,8 +233,10 @@ def last_seq(conn: sqlite3.Connection, device_id: str) -> int | None:
 pick_nudge = nudges.pick_nudge
 
 
-def ingest(database: Database, device: AuthenticatedDevice, payload: Any) -> IngestResult:
-    """Validate and store one request body for one device. Raises MalformedBatchError / BatchTooLargeError."""
+def ingest(database: Database, device: AuthenticatedDevice, payload: Any, now: datetime | None = None,
+           again: bool = False) -> IngestResult:
+    """Validate and store one request body for one device. Raises MalformedBatchError / BatchTooLargeError. `now` and
+    `again` are for the demo (DT-48): the moment the nudge rules judge, and a nudge that needn't wait its turn."""
     events, rejected = parse_batch(payload, expected_device_id=device.device_id)
     rejected_indexes = {r.index for r in rejected}
     good_indexes = [i for i in range(len(events) + len(rejected)) if i not in rejected_indexes]
@@ -249,7 +251,7 @@ def ingest(database: Database, device: AuthenticatedDevice, payload: Any) -> Ing
                                headers={"WWW-Authenticate": "Bearer"}) from None
             raise
         highest = last_seq(conn, device.device_id)
-    nudge = pick_nudge(database, device.device_id, stored.changed_events)
+    nudge = pick_nudge(database, device.device_id, stored.changed_events, now=now, again=again)
     return IngestResult(
         accepted=stored.accepted,
         replaced=stored.replaced,

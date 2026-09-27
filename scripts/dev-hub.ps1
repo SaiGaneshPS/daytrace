@@ -38,29 +38,45 @@ if (-not $NoSeed) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+# Something already answering here is not this run's hub: say so instead of taking it for ours.
+try {
+    $already = Ask '/api/v1/health' 2
+    throw "A hub already answers at $hub (the $($already.profile) profile): stop it (Ctrl+C in its window), then run this again."
+} catch [System.Net.WebException] { }
+
 Step "Starting the demo hub at $hub"
 $server = Start-Process -FilePath $python -ArgumentList @('-m', 'daytrace_hub', 'run', '--profile', 'demo') -NoNewWindow -PassThru
+$null = $server.Handle  # kept, so the exit code can be read if it stops
 try {
     $deadline = (Get-Date).AddSeconds(60)
     while ($true) {
-        try { $null = Ask '/api/v1/health' 3; break } catch { }
         if ($server.HasExited) { throw "The hub stopped (exit code $($server.ExitCode)): see its messages above." }
+        try {
+            $health = Ask '/api/v1/health' 3
+            if ($health.profile -ne 'demo') { throw "Something else answers at $hub (the $($health.profile) profile)." }
+            break
+        } catch [System.Net.WebException] { }
         if ((Get-Date) -gt $deadline) { throw "The hub didn't answer at $hub within a minute." }
         Start-Sleep -Milliseconds 500
     }
 
     if (-not $NoWarmUp) {
         Step 'Waking up the local model'
-        $status = Ask '/api/v1/ai/status' 30
-        if ($status.reachable) {
-            Write-Host "The model $($status.model) answers. Writing ahead what the demo shows (the first time can take a minute)..."
-            $yesterday = (Get-Date).AddDays(-1).ToString('yyyy-MM-dd')
-            $took = Measure-Command { $story = Ask "/api/v1/story?date=$yesterday" 600 }
-            Write-Host ("  Yesterday's story: {0:n0} s, {1}" -f $took.TotalSeconds, $(if ($story.fallback) { "plain (the model's didn't pass the number check)" } else { "by $($story.model)" }))
-            $took = Measure-Command { $week = Ask '/api/v1/wrapped' 600 }
-            Write-Host ("  Last week's Wrapped: {0:n0} s, {1}" -f $took.TotalSeconds, $(if ($week.fallback) { 'plain lines' } else { "lines by $($week.model)" }))
-        } else {
-            Write-Warning "The local model isn't answering ($($status.error)). Start LM Studio and load a model, then run this again: until then the AI steps show their plain fallbacks."
+        # Nothing here may stop the demo: at worst the AI steps show their plain fallbacks.
+        try {
+            $status = Ask '/api/v1/ai/status' 180  # loading a model the first time can take a while
+            if ($status.reachable) {
+                Write-Host "The model $($status.model) answers. Writing ahead what the demo shows (the first time can take a minute)..."
+                $yesterday = (Get-Date).AddDays(-1).ToString('yyyy-MM-dd')
+                $took = Measure-Command { $story = Ask "/api/v1/story?date=$yesterday" 600 }
+                Write-Host ("  Yesterday's story: {0:n0} s, {1}" -f $took.TotalSeconds, $(if ($story.fallback) { "plain (the model's didn't pass the number check)" } else { "by $($story.model)" }))
+                $took = Measure-Command { $week = Ask '/api/v1/wrapped' 600 }
+                Write-Host ("  Last week's Wrapped: {0:n0} s, {1}" -f $took.TotalSeconds, $(if ($week.fallback) { 'plain lines' } else { "lines by $($week.model)" }))
+            } else {
+                Write-Warning "The local model isn't answering ($($status.error)). Start LM Studio and load a model, then run this again with -NoSeed: until then the AI steps show their plain fallbacks."
+            }
+        } catch {
+            Write-Warning "Waking the model up didn't finish ($($_.Exception.Message)). The hub keeps running; the AI steps are written when first opened, or show their plain fallbacks."
         }
     }
 

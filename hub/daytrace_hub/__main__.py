@@ -131,19 +131,25 @@ def demo(profile_name: str, scenario: str, again: bool, toast: bool) -> int:
     import sqlite3
 
     from . import notify
-    from .seed import demo_events
+    from .seed import SeedRefused, demo_events
 
     try:
         settings = load_settings(profile_name)
+    except ValueError as error:  # a bad DAYTRACE_* environment variable
+        return _not_sent(str(error))
+    try:
         result = demo_events(settings, "nudge" if scenario == "nudge" else "live", again=again)
-    except (ValueError, RuntimeError) as error:  # SeedRefused is a ValueError
+    except SeedRefused as error:  # anything else is a bug and keeps its traceback
         return _not_sent(str(error))
     except sqlite3.OperationalError as error:
         return _not_sent(f"the {profile_name} database is busy or unreadable ({error})")
     print(result.sent)
+    if result.note:
+        print(result.note)
     if scenario == "nudge":
         if result.nudge is None:
-            print("No nudge: one went out in the last few minutes (the hub sends one at a time). Run it again with --again.")
+            if not again:
+                print("Run it again with --again to let it speak now.")
             return 1
         print(f"Nudge: {result.nudge.title}. {result.nudge.body}")
         if toast and not notify.show(result.nudge.title, result.nudge.body, wait=True):

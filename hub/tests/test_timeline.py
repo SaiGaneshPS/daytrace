@@ -1,6 +1,7 @@
 """Tests for DT-13: the timeline endpoint."""
 from __future__ import annotations
 
+import sys
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -391,3 +392,28 @@ def test_phones_need_a_token_and_viewers_can_read(client: TestClient, db: Databa
     with TestClient(client.app, client=PHONE) as phone:
         assert phone.get("/api/v1/timeline").status_code == 401
         assert phone.get("/api/v1/timeline", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+# --- DT-48: the zone named as browsers name it ------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows' own ICU")
+def test_a_windows_zone_is_named_by_region_as_browsers_do() -> None:
+    from daytrace_hub.api.timeline import icu_zone
+
+    if icu_zone("UTC", None) is None:
+        pytest.skip("this Windows has no icu.dll (before Windows 10 1903)")
+    assert icu_zone("Eastern Standard Time", "CA") == "America/Toronto"  # what Edge says in Canada
+    assert icu_zone("Eastern Standard Time", "US") == "America/New_York"
+    assert icu_zone("Newfoundland Standard Time", "CA") == "America/St_Johns"
+
+
+def test_the_hubs_zone_follows_the_browsers_name_when_windows_gives_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(timeline_api, "_windows_zone_name", lambda: "America/Toronto")
+    monkeypatch.setattr(timeline_api.tzlocal, "get_localzone_name", lambda: "America/New_York")
+    assert timeline_api.local_zone_name() == "America/Toronto"
+    monkeypatch.setattr(timeline_api, "_windows_zone_name", lambda: None)  # not Windows, or no ICU
+    assert timeline_api.local_zone_name() == "America/New_York"
+    monkeypatch.setattr(timeline_api, "_windows_zone_name", lambda: "Not/AZone")
+    assert timeline_api.local_zone_name() == "America/New_York"
+

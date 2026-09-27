@@ -259,7 +259,7 @@ def test_replaced_events_reach_the_nudge_hook(
     from daytrace_hub.api import events as events_api
 
     seen: list[list[Any]] = []
-    monkeypatch.setattr(events_api, "pick_nudge", lambda database, device_id, changed: seen.append(changed))
+    monkeypatch.setattr(events_api, "pick_nudge", lambda database, device_id, changed, **_: seen.append(changed))
     base = {"device_id": "iphone-1", "external_id": "cal:1", "kind": "calendar_event", "source": "calendar",
             "start": "2026-09-25T15:00:00-04:00", "end": "2026-09-25T16:00:00-04:00", "title": "Study"}
     post(client, tokens["iphone-1"], base)

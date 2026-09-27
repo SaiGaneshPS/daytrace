@@ -349,11 +349,11 @@ def _quiet(conn: sqlite3.Connection, now: datetime) -> bool:
     return conn.execute("SELECT 1 FROM nudge_log WHERE created_at > ? LIMIT 1", (utc_text(now - GAP),)).fetchone() is not None
 
 
-def _fire(conn: sqlite3.Connection, rule: str, device_id: str, draft: Draft, now: datetime) -> Nudge | None:
-    """Log the nudge, unless another request sent one meanwhile (checked in the same transaction)."""
+def _fire(conn: sqlite3.Connection, rule: str, device_id: str, draft: Draft, now: datetime, again: bool = False) -> Nudge | None:
+    """Log the nudge, unless another request sent one meanwhile (checked in the same transaction; `again` doesn't wait)."""
     title, body = _clip(draft[0], 80), _clip(draft[1], 240)
     with transaction(conn):
-        if _resting(conn, rule, now) or _quiet(conn, now):
+        if not again and (_resting(conn, rule, now) or _quiet(conn, now)):
             return None
         conn.execute("INSERT INTO nudge_log (rule, device_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)",
                      (rule, device_id, title, body, utc_text(now)))
@@ -376,16 +376,17 @@ def hub_zone() -> tuple[tzinfo, str]:
 
 
 def pick_nudge(database: Database, device_id: str, events: Sequence[Event], now: datetime | None = None,
-               desktop: bool = False) -> Nudge | None:
+               desktop: bool = False, again: bool = False) -> Nudge | None:
     """The first rule that fires for these just-stored events, logged, or None; for the desktop tracker (`desktop`),
-    only while desktop notifications are on. Never raises: a stored event must never fail because of a nudge."""
+    only while desktop notifications are on. `again` (the demo) doesn't wait for a rule's rest or the gap between
+    nudges. Never raises: a stored event must never fail because of a nudge."""
     from .api.timeline import current_time
 
     now = (now or current_time()).astimezone(UTC)
     try:
         with database.connect() as conn:
             choices = load_choices(conn)
-            if (desktop and not choices.desktop) or _quiet(conn, now):
+            if (desktop and not choices.desktop) or (not again and _quiet(conn, now)):
                 return None
             used = activities(conn, events, now)
             if not used:
@@ -393,16 +394,28 @@ def pick_nudge(database: Database, device_id: str, events: Sequence[Event], now:
             tz, tz_name = hub_zone()
             moment = Moment(database, conn, now, tz, tz_name, used)
             for rule in RULE_IDS:
-                if rule in choices.disabled or _resting(conn, rule, now):
+                if rule in choices.disabled or (not again and _resting(conn, rule, now)):
                     continue
                 draft = CHECKS[rule](moment)
                 if draft is not None:
-                    fired = _fire(conn, rule, device_id, draft, now)
+                    fired = _fire(conn, rule, device_id, draft, now, again)
                     if fired is not None:
                         return fired
     except Exception:  # a nudge is never worth a failed request
         logger.exception("no nudge: the rules failed")
     return None
+
+
+def silence(database: Database, rule: str, now: datetime) -> str:
+    """Why a rule said nothing just now, in words (for the demo's messages)."""
+    with database.connect() as conn:
+        if rule in load_choices(conn).disabled:
+            return f"the {rule} nudge is switched off in the nudge settings"
+        if _resting(conn, rule, now):
+            return f"the {rule} nudge rests for {COOLDOWN.seconds // 60} minutes after it fires"
+        if _quiet(conn, now):
+            return f"a nudge went out less than {GAP.seconds // 60} minutes ago (the hub sends one at a time)"
+    return "nothing it watches for is happening now"
 
 
 def recent(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
