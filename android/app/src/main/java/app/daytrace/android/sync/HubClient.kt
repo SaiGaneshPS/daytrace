@@ -218,24 +218,20 @@ class HubClient(
          * POST /pair/claim: trades the 6-digit code shown on the PC for this phone's own token. A wrong or
          * expired code comes back as [HubResult.Retry] with the hub's message (it says how many tries are left).
          *
-         * DT-22: so that pairing again keeps this phone's first id, it also sends [deviceKey] (see [DeviceKey]) and,
-         * when it was paired before, [previous]'s device id with a proof that it holds that token: HMAC-SHA256 of
-         * "pair:" + the code, keyed with the token's SHA-256. The old token itself is never sent.
+         * DT-22: so that pairing again keeps this phone's first id, it sends [previous]: the device id and token this
+         * hub gave it before (even revoked). Pass only what [earlierPairing] found, so the token goes only to the hub
+         * that proved it holds its hash. It stops working either way (the hub gives a new one).
          */
         fun claim(
             baseUrl: String,
             code: String,
             deviceName: String,
             http: OkHttpClient,
-            deviceKey: String? = null,
             previous: HubConfig? = null,
         ): HubResult<Paired> {
             val url = apiUrl(baseUrl, "pair/claim") ?: return badUrl(baseUrl)
             val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android")
-            if (deviceKey != null) body.put("device_key", deviceKey)
-            if (previous != null) {
-                body.put("previous_device_id", previous.deviceId).put("previous_proof", expectedProof(previous.token, "pair:$code"))
-            }
+            if (previous != null) body.put("previous_device_id", previous.deviceId).put("previous_token", previous.token)
             return execute(http, Request.Builder().url(url).post(body.toString().toRequestBody(JSON)), token = null) { text ->
                 val json = JSONObject(text)
                 Paired(
@@ -244,6 +240,17 @@ class HubClient(
                 )
             }
         }
+
+        /**
+         * DT-22: which of [candidates] (this phone's current and set-aside pairings) the hub at [baseUrl] made: the
+         * first one whose hub proves, with a fresh nonce, that it holds that token's hash (paired or revoked). Only
+         * that hub may be sent the old token. None proves: a hub this phone never paired with, or an older one.
+         */
+        fun earlierPairing(baseUrl: String, candidates: List<HubConfig>, http: OkHttpClient): HubConfig? =
+            candidates.distinctBy { it.deviceId to it.token }.firstOrNull { candidate ->
+                val proof = HubClient(candidate.copy(baseUrl = baseUrl), http).proveHub()
+                proof is HubResult.Ok && proof.value != HubProof.NOT_PROVEN
+            }
 
         /** HMAC-SHA256 of the nonce, keyed with the token's SHA-256 as lowercase hex (what the hub stores). */
         fun expectedProof(token: String, nonce: String): String {

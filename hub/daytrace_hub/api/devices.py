@@ -6,10 +6,11 @@ app (JSON it reads) and for a phone's camera (the Devices page's web address, wh
 single use and 5 minutes. Wrong guesses are limited per client (5) and per code (20), so nobody can guess
 the code, and one noisy device on the Wi-Fi cannot lock everyone else out.
 
-A device that pairs again gets its first id back (DT-22), so one phone is one device however often it pairs: it
-proves it held that device's token (previous_proof, an HMAC of the new code keyed with the stored token hash, so
-the token itself never travels), or it sends the key only it can make (device_key, which survives a reinstall).
-Either still needs a fresh code from the hub computer.
+A device that pairs again gets its first id back (DT-22), so one phone is one device however often it pairs (after
+a revoke, or "Forget this hub"): it sends the token it had (previous_token), which only the device itself holds (the
+hub keeps its hash). The phone sends it only to a hub that first proved it holds that hash (POST /devices/{id}/
+proof), so a stranger's hub never sees it. It still needs a fresh code from the hub computer, and the hub computer
+sees the device come back (pair/status: returning). A reinstall starts a new device: nothing the phone kept survives.
 """
 from __future__ import annotations
 
@@ -56,6 +57,7 @@ class ClaimedBy:
     device_id: str
     name: str
     device_type: str
+    returning: bool = False  # DT-22: paired before, kept its id
 
 
 @dataclass
@@ -133,7 +135,7 @@ class PairingCodes:
                 raise ApiError(400, "invalid_code", f"wrong code; {left} {'try' if left == 1 else 'tries'} left")
             claimed = register()
             active.used = True
-            active.claimed_by = ClaimedBy(claimed.device_id, claimed.name, claimed.device_type)
+            active.claimed_by = ClaimedBy(claimed.device_id, claimed.name, claimed.device_type, claimed.returning)
             return claimed
 
 
@@ -180,18 +182,13 @@ class PairClaim(BaseModel):
     code: Annotated[str, BeforeValidator(_code_digits), Field(pattern=r"^[0-9]{6}$")]
     device_name: Annotated[str, BeforeValidator(_trimmed), Field(min_length=1, max_length=64)]
     device_type: DeviceType
-    device_key: Annotated[str | None, Field(
-        pattern=r"^[A-Za-z0-9_-]{32,128}$",
-        description="DT-22: a key only this device can make, the same after a reinstall. The same device pairing "
-        "again with it gets its first id back. Only its SHA-256 is stored.",
-    )] = None
     previous_device_id: Annotated[str | None, Field(
-        pattern=DEVICE_ID_PATTERN, description="DT-22: the id this device had on this hub, with previous_proof."
+        pattern=DEVICE_ID_PATTERN, description="DT-22: the id this device had on this hub, with previous_token."
     )] = None
-    previous_proof: Annotated[str | None, Field(
-        pattern=r"^[0-9a-f]{64}$",
-        description='DT-22: HMAC-SHA256 of "pair:" + code, keyed with the SHA-256 (lowercase hex) of the token it '
-        "had: proof it held that device's token, even a revoked one, without sending it.",
+    previous_token: Annotated[str | None, Field(
+        min_length=1, max_length=200, pattern=r"^[!-~]+$",
+        description="DT-22: the token it had here, even a revoked one. Send it only to a hub that proved it holds "
+        "its hash (POST /devices/{id}/proof). It stops working now either way.",
     )] = None
 
     @field_validator("device_name")
@@ -238,6 +235,7 @@ class ClaimedDevice(BaseModel):
     device_id: str
     name: str
     device_type: str
+    returning: bool = Field(default=False, description="DT-22: a device paired before came back with its first id.")
 
 
 class PairStatus(BaseModel):
@@ -270,56 +268,39 @@ def next_device_id(conn: sqlite3.Connection, device_type: str) -> str:
     return f"{prefix}{max(numbers, default=0) + 1}"
 
 
-def pairing_proof(token_hash: str, code: str) -> str:
-    """What a device that pairs again sends as previous_proof (DT-22): HMAC-SHA256 of "pair:" + code, keyed like
-    hub_proof(). POST /devices/{id}/proof signs only lowercase hex, so it can never be asked to make one of these."""
-    return hmac.new(token_hash.encode("utf-8"), f"pair:{code}".encode(), hashlib.sha256).hexdigest()
-
-
-def key_hash(device_key: str) -> str:
-    return hashlib.sha256(device_key.encode("utf-8")).hexdigest()
-
-
-def returning_device(conn: sqlite3.Connection, body: PairClaim) -> str | None:
-    """The device this claim comes from, when it paired before (of the same type): proven by its old token first,
-    else by its device key. None for a new device."""
-    if body.previous_device_id and body.previous_proof:
-        row = conn.execute("SELECT device_type, token_hash FROM devices WHERE device_id = ?", (body.previous_device_id,)).fetchone()
-        if (row is not None and row["device_type"] == body.device_type and row["token_hash"]
-                and hmac.compare_digest(pairing_proof(row["token_hash"], body.code), body.previous_proof)):
-            return body.previous_device_id
-    if body.device_key:
-        row = conn.execute("SELECT device_id, device_type FROM devices WHERE device_key_hash = ?", (key_hash(body.device_key),)).fetchone()
-        if row is not None and row["device_type"] == body.device_type:
-            return str(row["device_id"])
-    return None
+def returning_device(conn: sqlite3.Connection, body: PairClaim) -> sqlite3.Row | None:
+    """The device this claim comes from, when it paired here before: same id, same type, and the token it sent is the
+    one whose hash is stored (even revoked). None for a new device, or a token that isn't that device's."""
+    if not (body.previous_device_id and body.previous_token):
+        return None
+    row = conn.execute("SELECT device_id, device_type, token_hash, revoked_at FROM devices WHERE device_id = ?",
+                       (body.previous_device_id,)).fetchone()
+    if row is None or row["device_type"] != body.device_type or not row["token_hash"]:
+        return None
+    return row if hmac.compare_digest(row["token_hash"], hash_token(body.previous_token)) else None
 
 
 def add_device(database: Database, body: PairClaim, profile: str) -> PairClaimed:
-    """A new device, or (DT-22) a device pairing again: it keeps its id and history, gets a new token (the old one
-    stops working), its new name, and is no longer revoked."""
-    key = key_hash(body.device_key) if body.device_key else None
+    """A new device, or (DT-22) a device pairing again: it keeps its id and history, gets a new token (the one it sent
+    stops working), its new name, and is no longer revoked. The stretch it was revoked is kept as a gap, so the stats
+    never count those days as days it should have sent data."""
+    now = utc_text(datetime.now(UTC))
     with database.connect() as conn, transaction(conn):
-        device_id = returning_device(conn, body)
-        returning = device_id is not None
-        if device_id is not None:
+        earlier = returning_device(conn, body)
+        if earlier is not None:
+            device_id = str(earlier["device_id"])
             token = new_token()
-            if key is not None:  # the key belongs to this device now (it can have moved here from another row)
-                conn.execute("UPDATE devices SET device_key_hash = NULL WHERE device_key_hash = ? AND device_id != ?", (key, device_id))
-            conn.execute(
-                "UPDATE devices SET token_hash = ?, name = ?, revoked_at = NULL, device_key_hash = COALESCE(?, device_key_hash)"
-                " WHERE device_id = ?",
-                (hash_token(token), body.device_name, key, device_id),
-            )
+            if earlier["revoked_at"] is not None:
+                conn.execute("INSERT INTO device_gaps (device_id, from_utc, until_utc) VALUES (?, ?, ?)",
+                             (device_id, earlier["revoked_at"], now))
+            conn.execute("UPDATE devices SET token_hash = ?, name = ?, revoked_at = NULL WHERE device_id = ?",
+                         (hash_token(token), body.device_name, device_id))
         else:
             device_id = next_device_id(conn, body.device_type)
             token = register_device(conn, device_id=device_id, name=body.device_name, device_type=body.device_type)
-            if key is not None:  # a key another kind of device holds stays with it
-                conn.execute("UPDATE devices SET device_key_hash = ? WHERE device_id = ?"
-                             " AND NOT EXISTS (SELECT 1 FROM devices WHERE device_key_hash = ?)", (key, device_id, key))
     return PairClaimed(
         device_id=device_id, device_type=body.device_type, name=body.device_name, token=token, profile=profile,
-        returning=returning,
+        returning=earlier is not None,
     )
 
 
@@ -383,7 +364,7 @@ def pair_status(response: Response, pairing: Annotated[PairingCodes, Depends(get
     response.headers.update(NO_STORE)
     return PairStatus(
         id=active.id, active=still_open, used=active.used,
-        claimed_by=ClaimedDevice(device_id=by.device_id, name=by.name, device_type=by.device_type) if by else None,
+        claimed_by=ClaimedDevice(device_id=by.device_id, name=by.name, device_type=by.device_type, returning=by.returning) if by else None,
     )
 
 

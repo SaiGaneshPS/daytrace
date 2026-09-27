@@ -247,18 +247,20 @@ collector checks what the hub already has.
 - `device_name` is 1 to 64 characters after trimming, without control or formatting characters (emoji are fine).
 - `device_type` is one of `windows`, `macos`, `android`, `ios`, `browser`, `viewer`. Phone browsers opening
   the dashboard pair as `viewer`; the iPhone's Shortcuts use `ios`.
-- **Pairing again keeps the first id (DT-22).** Two optional ways for a device to say it paired before, so one
-  phone stays one device however often it pairs (after a revoke, "Forget this hub" or a reinstall):
-  - `previous_device_id` with `previous_proof`: HMAC-SHA256 of `"pair:" + code`, keyed with the SHA-256
-    (lowercase hex) of the token it had, even a revoked one. It proves the device held that token without sending
-    it, and is good for this code only. `POST /devices/{id}/proof` signs only lowercase hex, so it can never be
-    asked to make one.
-  - `device_key`: 32 to 128 base64url characters that only this device can make and that survive a reinstall (the
-    Android app derives it from ANDROID_ID). The hub keeps only its SHA-256, which is never exported.
-
-  A match of the same `device_type` gets that id back: a new token (the old one stops working), the new name,
-  and no longer revoked; the history stays with it. Anything else is a new device. Either way a fresh code from
-  the hub computer is still needed.
+- **Pairing again keeps the first id (DT-22).** A device that paired here before sends `previous_device_id` and
+  `previous_token`, the token it had (even a revoked one), so one phone stays one device however often it pairs
+  (after a revoke, or "Forget this hub" on the phone, which keeps its old pairing aside for this).
+  - **Only to its own hub:** the device first asks `POST /devices/{id}/proof` with a fresh nonce, and sends the old
+    token only when the answer proves this hub holds that token's hash. A stranger's hub never sees it.
+  - **The token itself:** the hub checks it against the stored hash, so a copy of the database (hashes only) can't
+    bring a device back.
+  - **What comes back:** a match of the same `device_type` gets that id back, with a new token (the old one stops
+    working), the new name, and no longer revoked. Its history stays with it, and the stretch it was revoked is kept
+    (`device_gaps`), so the stats never count those days as days it should have sent data. Anything else is a new
+    device.
+  - **Still needs a code:** a fresh code from the hub computer, which sees the device come back (`GET /pair/status`:
+    `claimed_by.returning`; the Devices page says "paired again").
+  - **A reinstall starts a new device:** nothing the phone kept survives it.
 
 Response `201` with `Cache-Control: no-store`. The token is shown only once:
 

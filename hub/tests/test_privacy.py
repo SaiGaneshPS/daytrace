@@ -418,7 +418,8 @@ PHRASE = privacy_api.DELETE_PHRASE
 SCHEMA = {
     "achievements": {"achievement_id", "earned_on", "tz", "dates", "unlocked_at"},
     "category_overrides": {"app_key", "category", "source", "updated_at"},
-    "devices": {"device_id", "name", "device_type", "token_hash", "paired_at", "last_seen", "revoked_at", "device_key_hash"},
+    "devices": {"device_id", "name", "device_type", "token_hash", "paired_at", "last_seen", "revoked_at"},
+    "device_gaps": {"device_id", "from_utc", "until_utc"},
     "events": {"id", "device_id", "dedup_key", "seq", "external_id", "kind", "source", "start_utc", "end_utc", "utc_offset_min",
                "app", "app_id", "title", "category", "data", "received_at", "updated_at"},
     "goals": {"goal_id", "target", "updated_at"},

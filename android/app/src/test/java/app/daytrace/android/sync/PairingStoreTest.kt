@@ -51,12 +51,14 @@ class PairingStoreTest {
     }
 
     @Test
-    fun forgettingTheHubRemovesEverything() {
+    fun forgettingTheHubStopsSyncingButRemembersWhoThePhoneWas() {
         store.save(pairing)
         store.clear()
-        assertNull(store.load())
+        assertNull(store.load()) // nothing syncs any more
         assertNull(store.info())
-        assertTrue(context.getSharedPreferences("pairing", Context.MODE_PRIVATE).all.isEmpty())
+        assertEquals(listOf(pairing.config), store.candidates()) // DT-22: pairing with it again keeps android-1
+        val saved = context.getSharedPreferences("pairing", Context.MODE_PRIVATE).all.values.joinToString()
+        assertFalse(saved, "dt_secret_token" in saved) // set aside, still encrypted
     }
 
     @Test
@@ -74,21 +76,44 @@ class PairingStoreTest {
         assertEquals(again, store.pairing())
     }
 
-    // --- DT-22: the device key that keeps a phone's id when it pairs again ---
+    // --- DT-22: the pairings kept so that pairing again keeps the phone's id ---
+
+    private fun other(n: Int, profile: String = "demo") =
+        Pairing(HubConfig("http://192.168.1.$n:8767", "dt_token_$n", "android-$n"), profile, "Phone")
 
     @Test
-    fun theDeviceKeyIsTheSameForTheSamePhoneAndLooksAsTheHubExpects() {
-        val key = DeviceKey.derive("9774d56d682e549c")
-        assertEquals(key, DeviceKey.derive("9774d56d682e549c")) // a reinstall gives the same ANDROID_ID, so the same key
-        assertTrue(key, Regex("^[A-Za-z0-9_-]{43}$").matches(key)) // what the hub's claim accepts
-        assertFalse(key == DeviceKey.derive("0123456789abcdef")) // another phone, another key
-        assertFalse("9774d56d682e549c" in key) // the id itself is never sent
+    fun theCurrentPairingComesFirstThenTheOnesSetAsideNewestFirst() {
+        store.save(pairing)
+        store.save(other(2))
+        assertEquals(listOf(other(2).config, pairing.config), store.candidates())
+        store.clear()
+        assertEquals(listOf(other(2).config, pairing.config), store.candidates())
+        assertNull(store.load())
     }
 
     @Test
-    fun thePhonesOwnDeviceKeyComesFromAndroid() {
-        val key = DeviceKey.of(context)
-        assertTrue(key == null || Regex("^[A-Za-z0-9_-]{43}$").matches(key))
-        assertEquals(key, DeviceKey.of(context))
+    fun theSameDeviceOnTheSameProfileKeepsOnlyItsNewestToken() {
+        store.save(pairing)
+        val renewed = pairing.copy(config = pairing.config.copy(token = "dt_renewed")) // paired again, same id
+        store.save(renewed)
+        assertEquals(listOf(renewed.config), store.candidates()) // the old token no longer works: not kept
+    }
+
+    @Test
+    fun onlyAFewPairingsAreKept() {
+        (1..10).forEach { store.save(other(it)) }
+        assertEquals(1 + PairingStore.MAX_FORMER, store.candidates().size)
+        assertEquals(other(10).config, store.candidates().first())
+    }
+
+    @Test
+    fun aDeadPairingIsDroppedNotKept() {
+        store.save(pairing)
+        store.discardCurrent()
+        assertNull(store.load())
+        assertEquals(emptyList<HubConfig>(), store.candidates())
+        store.save(pairing)
+        cipher.lost = true // the Keystore key is gone: nothing can be decrypted, nothing is offered
+        assertEquals(emptyList<HubConfig>(), store.candidates())
     }
 }

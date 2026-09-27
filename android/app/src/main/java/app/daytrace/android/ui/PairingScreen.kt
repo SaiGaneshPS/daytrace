@@ -73,7 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import app.daytrace.android.sync.DeviceKey
+import app.daytrace.android.data.EventStore
 import app.daytrace.android.sync.FoundHub
 import app.daytrace.android.sync.HubClient
 import app.daytrace.android.sync.HubConfig
@@ -339,22 +339,29 @@ private fun deviceName(context: Context): String {
 }
 
 /**
- * Trades the code for a token over Wi-Fi and keeps it (encrypted). Runs off the main thread. A phone that was paired
- * before (a revoked pairing is still kept) proves it, and sends its device key, so it keeps its first id (DT-22).
+ * Trades the code for a token over Wi-Fi and keeps it (encrypted). Runs off the main thread.
+ *
+ * DT-22: when this hub proves it paired this phone before (its current pairing, even revoked, or one set aside by
+ * "Forget this hub"), the claim sends that pairing, so the phone keeps its first id. The hub's cursor is read afresh
+ * after every pairing, since that hub may hold higher seqs for the id than this phone knows of.
  */
 private fun pairWith(context: Context, url: String, code: String): PairState {
     val wifi = WifiOnly.network(context) ?: return PairState.Failed("Connect this phone to the same Wi-Fi as your PC, then try again.")
-    val previous = runCatching { PairingStore.get(context).pairing()?.config }.getOrNull()
-    val key = runCatching { DeviceKey.of(context) }.getOrNull()
-    return when (val result = HubClient.claim(url, code, deviceName(context), HubClient.onNetwork(wifi), key, previous)) {
+    val http = HubClient.onNetwork(wifi)
+    val store = PairingStore.get(context)
+    val previous = runCatching { HubClient.earlierPairing(url, store.candidates(), http) }.getOrNull()
+    return when (val result = HubClient.claim(url, code, deviceName(context), http, previous)) {
         is HubResult.Ok -> {
             val paired = result.value
             val pairing = Pairing(HubConfig(url, paired.token, paired.deviceId), paired.profile, paired.name)
             try {
-                PairingStore.get(context).save(pairing)
+                store.save(pairing)
             } catch (e: Exception) { // the Keystore can fail on some phones; say so instead of crashing
+                // The hub gave this id a new token, so the old one kept here no longer works: don't keep it.
+                if (paired.returning && runCatching { store.pairing()?.config }.getOrNull() == previous) store.discardCurrent()
                 return PairState.Failed("This phone couldn't store the pairing securely (${e.javaClass.simpleName}). Start pairing again on the PC.")
             }
+            EventStore.get(context).forgetHubCursor(paired.deviceId)
             SyncStatusStore(context).reset() // the last sync belonged to the old pairing
             PairState.Done(pairing, paired.returning)
         }

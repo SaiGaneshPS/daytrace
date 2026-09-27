@@ -432,8 +432,9 @@ private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit, on
             title = { Text("Forget this hub?") },
             text = {
                 Text(
-                    "This phone stops sending to it and deletes its token. Your events stay on the phone and go to the " +
-                        "hub you pair with next; the hub keeps what it already has.",
+                    "This phone stops sending to it. Your events stay on the phone and go to the hub you pair with " +
+                        "next; the hub keeps what it already has. Pair with this hub again later and the phone is the " +
+                        "same device there, with its history. To end it for good, revoke it on the hub's Devices page.",
                 )
             },
             confirmButton = {

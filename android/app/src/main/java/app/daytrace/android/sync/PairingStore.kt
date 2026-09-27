@@ -4,18 +4,17 @@
 package app.daytrace.android.sync
 
 import android.content.Context
-import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.content.edit
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
-import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 /** Encrypts the token. Tests use a stand-in, since the JVM has no Android Keystore. */
 interface TokenCipher {
@@ -54,29 +53,15 @@ class KeystoreCipher(private val alias: String = "daytrace_pairing") : TokenCiph
 /** This phone's pairing: how to reach the hub, and which profile and name the hub gave it. */
 data class Pairing(val config: HubConfig, val profile: String, val deviceName: String)
 
-/**
- * DT-22: a key only this app on this phone can make, the same after a reinstall, so a phone that pairs again (after
- * "Forget this hub", a revoke or a reinstall) gets its first id back instead of a new one each time. It is made from
- * Android's ANDROID_ID, which is different for every app signing key, user and phone, and never shown to other apps;
- * a factory reset (a new phone, really) makes a new one. The hub keeps only its SHA-256.
- */
-object DeviceKey {
-    private const val PURPOSE = "daytrace device key v1"
-
-    /** The key for this phone, or null when Android gives no ANDROID_ID. */
-    fun of(context: Context): String? =
-        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)?.takeIf { it.isNotBlank() }?.let(::derive)
-
-    /** HMAC-SHA256 of [PURPOSE], keyed with the ANDROID_ID, as 43 base64url characters (the hub checks the form). */
-    fun derive(androidId: String): String {
-        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(androidId.toByteArray(Charsets.UTF_8), "HmacSHA256")) }
-        return Base64.encodeToString(mac.doFinal(PURPOSE.toByteArray(Charsets.UTF_8)), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    }
-}
-
 /** The pairing without the token. */
 data class PairingInfo(val baseUrl: String, val deviceId: String, val profile: String)
 
+/**
+ * The current pairing, and (DT-22) the pairings set aside: forgotten ones ("Forget this hub") and ones a newer pairing
+ * replaced. A set-aside pairing is never used to sync; it is kept only so that pairing with that hub again proves
+ * this is the same phone, which then keeps its first id instead of getting a new one. Its token stays encrypted
+ * like the current one, and it is sent only to a hub that first proved it holds that token's hash.
+ */
 class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreCipher()) : HubConfigSource {
     private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
 
@@ -101,7 +86,7 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
         val sealed = prefs.getString(KEY_TOKEN, null) ?: return null
         val iv = prefs.getString(KEY_IV, null) ?: return null
         val token = runCatching { String(cipher.decrypt(decode(iv), decode(sealed)), Charsets.UTF_8) }.getOrNull()
-            ?: return null.also { clear() }
+            ?: return null.also { discardCurrent() }
         return Pairing(HubConfig(url, token, deviceId), prefs.getString(KEY_PROFILE, null).orEmpty(), prefs.getString(KEY_NAME, null).orEmpty())
     }
 
@@ -110,22 +95,61 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
         if (prefs.contains(KEY_TOKEN)) prefs.edit(commit = true) { putString(KEY_URL, baseUrl) }
     }
 
-    /** Replaces any earlier pairing. Written to disk before this returns. */
+    /**
+     * Replaces the current pairing, which is set aside (see the class): a pairing of this same device on the same
+     * profile replaces its older set-aside copy, whose token no longer works. Written to disk before this returns.
+     */
     fun save(pairing: Pairing) {
         val (iv, sealed) = cipher.encrypt(pairing.config.token.toByteArray(Charsets.UTF_8))
+        val kept = (listOfNotNull(currentEntry()) + formerEntries())
+            .filterNot { it.optString("device") == pairing.config.deviceId && it.optString("profile") == pairing.profile }
         prefs.edit(commit = true) {
-            clear()
             putString(KEY_URL, pairing.config.baseUrl)
             putString(KEY_DEVICE, pairing.config.deviceId)
             putString(KEY_PROFILE, pairing.profile)
             putString(KEY_NAME, pairing.deviceName)
             putString(KEY_IV, encode(iv))
             putString(KEY_TOKEN, encode(sealed))
+            putString(KEY_FORMER, JSONArray(kept.take(MAX_FORMER)).toString())
         }
     }
 
-    /** Forgets the hub. Events stay on the phone and go to whichever hub it pairs with next. */
-    fun clear() = prefs.edit(commit = true) { clear() }
+    /** Forgets the hub: this phone stops sending to it. The pairing is set aside, so pairing with it again keeps this id. */
+    fun clear() {
+        val kept = listOfNotNull(currentEntry()) + formerEntries()
+        prefs.edit(commit = true) {
+            CURRENT_KEYS.forEach(::remove)
+            putString(KEY_FORMER, JSONArray(kept.take(MAX_FORMER)).toString())
+        }
+    }
+
+    /** Drops the current pairing without setting it aside: its token can never be used again (lost, or replaced). */
+    fun discardCurrent() = prefs.edit(commit = true) { CURRENT_KEYS.forEach(::remove) }
+
+    /**
+     * The pairings to offer when pairing again (DT-22): the current one first (even revoked), then the ones set
+     * aside, newest first. One whose token can't be decrypted any more is left out.
+     */
+    fun candidates(): List<HubConfig> = listOfNotNull(pairing()?.config) + formerEntries().mapNotNull { entry ->
+        runCatching {
+            val token = String(cipher.decrypt(decode(entry.getString("iv")), decode(entry.getString("sealed"))), Charsets.UTF_8)
+            HubConfig(entry.getString("url"), token, entry.getString("device"))
+        }.getOrNull()
+    }
+
+    private fun currentEntry(): JSONObject? {
+        val url = prefs.getString(KEY_URL, null) ?: return null
+        val device = prefs.getString(KEY_DEVICE, null) ?: return null
+        val iv = prefs.getString(KEY_IV, null) ?: return null
+        val sealed = prefs.getString(KEY_TOKEN, null) ?: return null
+        return JSONObject().put("url", url).put("device", device).put("profile", prefs.getString(KEY_PROFILE, null).orEmpty())
+            .put("iv", iv).put("sealed", sealed)
+    }
+
+    private fun formerEntries(): List<JSONObject> = runCatching {
+        val array = JSONArray(prefs.getString(KEY_FORMER, null) ?: "[]")
+        (0 until array.length()).map(array::getJSONObject)
+    }.getOrDefault(emptyList())
 
     companion object {
         private const val KEY_URL = "base_url"
@@ -134,6 +158,9 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
         private const val KEY_NAME = "device_name"
         private const val KEY_IV = "token_iv"
         private const val KEY_TOKEN = "token_sealed"
+        private const val KEY_FORMER = "former" // DT-22: pairings set aside, newest first
+        private val CURRENT_KEYS = listOf(KEY_URL, KEY_DEVICE, KEY_PROFILE, KEY_NAME, KEY_IV, KEY_TOKEN)
+        const val MAX_FORMER = 5
 
         private fun encode(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
         private fun decode(text: String) = Base64.decode(text, Base64.NO_WRAP)

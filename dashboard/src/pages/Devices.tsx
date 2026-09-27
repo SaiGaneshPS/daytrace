@@ -435,7 +435,8 @@ function PairPanel({ onChanged }: { onChanged: () => void }) {
   const [kind, setKind] = useState("app");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [paired, setPaired] = useState<string | null>(null);
+  // Who used the code. DT-22: `returning` is a device that paired before and came back with its first id.
+  const [paired, setPaired] = useState<{ name: string; deviceId: string; returning: boolean } | null>(null);
   // A token given here, with the address to use it at (the code's network address, gone with the code).
   const [issued, setIssued] = useState<{ claimed: Claimed; hubUrl: string | null } | null>(null);
   const live = code !== null && !ranOut && !superseded;
@@ -459,7 +460,8 @@ function PairPanel({ onChanged }: { onChanged: () => void }) {
       if (status.id !== codeId) {
         setSuperseded(true);
       } else if (status.used && status.claimed_by) {
-        setPaired(status.claimed_by.name);
+        const by = status.claimed_by;
+        setPaired({ name: by.name, deviceId: by.device_id, returning: by.returning ?? false });
         setCode(null);
         onChanged();
         void celebrate();
@@ -510,7 +512,12 @@ function PairPanel({ onChanged }: { onChanged: () => void }) {
     >
       {paired && (
         <p className="pair-success" role="status">
-          <span className="pair-success-title">{paired} is paired.</span>
+          <span className="pair-success-title">
+            {paired.returning ? `${paired.name} is paired again as ${paired.deviceId}.` : `${paired.name} is paired.`}
+          </span>
+          {paired.returning && (
+            <span> The same device as before, with its history. If that wasn't you, revoke it below.</span>
+          )}
         </p>
       )}
       {failure && (

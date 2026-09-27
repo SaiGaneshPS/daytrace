@@ -225,7 +225,7 @@ def test_migrations_rebuild_a_table_that_others_reference(db: Database) -> None:
             device_id TEXT PRIMARY KEY, name TEXT NOT NULL,
             device_type TEXT NOT NULL CHECK (device_type IN ('windows', 'macos', 'android', 'ios', 'browser',
                                                               'viewer', 'watch')),
-            token_hash TEXT UNIQUE, paired_at TEXT NOT NULL, last_seen TEXT, revoked_at TEXT, device_key_hash TEXT);
+            token_hash TEXT UNIQUE, paired_at TEXT NOT NULL, last_seen TEXT, revoked_at TEXT);
         INSERT INTO devices_new SELECT * FROM devices;
         DROP TABLE devices;
         ALTER TABLE devices_new RENAME TO devices;

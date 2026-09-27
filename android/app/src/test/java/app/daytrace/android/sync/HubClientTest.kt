@@ -107,25 +107,47 @@ class HubClientTest {
         val body = JSONObject(request.body!!.utf8())
         assertEquals(listOf("493817", "Galaxy S25 Ultra", "android"), listOf("code", "device_name", "device_type").map(body::getString))
         assertTrue("dt_new" !in result.toString()) // never printed
-        assertFalse(body.has("device_key") || body.has("previous_device_id") || body.has("previous_proof"))
+        assertFalse(body.has("previous_device_id") || body.has("previous_token"))
     }
 
     @Test
-    fun pairingAgainProvesTheOldTokenWithoutSendingIt() {
+    fun pairingAgainSendsTheEarlierPairingSoThePhoneKeepsItsId() {
         server.enqueue(
             reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Phone", "token": "dt_new", "profile": "personal", "returning": true}"""),
         )
         val previous = HubConfig("http://192.168.1.23:8765", "dt_old", "android-1")
-        val result = HubClient.claim(server.url("/").toString(), "493817", "Phone", http, deviceKey = "k".repeat(43), previous = previous)
+        val result = HubClient.claim(server.url("/").toString(), "493817", "Phone", http, previous = previous)
         assertEquals(HubResult.Ok(Paired("android-1", "dt_new", "personal", "Phone", returning = true)), result)
-        val sent = server.takeRequest().body!!.utf8()
-        val body = JSONObject(sent)
-        assertEquals("k".repeat(43), body.getString("device_key"))
-        assertEquals("android-1", body.getString("previous_device_id"))
-        // What the hub checks: HMAC-SHA256 of "pair:" + code, keyed with the SHA-256 (hex) of the old token
-        assertEquals(HubClient.expectedProof("dt_old", "pair:493817"), body.getString("previous_proof"))
-        assertTrue(Regex("^[0-9a-f]{64}$").matches(body.getString("previous_proof")))
-        assertFalse("dt_old" in sent) // the old token itself never travels
+        val body = JSONObject(server.takeRequest().body!!.utf8())
+        assertEquals(listOf("android-1", "dt_old"), listOf("previous_device_id", "previous_token").map(body::getString))
+        assertTrue("dt_new" !in result.toString())
+    }
+
+    /** A hub that proves it holds [token]'s hash, for any nonce it is sent, and says nothing for any other. */
+    private fun hubThatPaired(deviceId: String, token: String) = object : mockwebserver3.Dispatcher() {
+        override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse {
+            if (request.headers["Authorization"] != null) return reply(500) // a token must never be sent here
+            if (!request.url.encodedPath.endsWith("/devices/$deviceId/proof")) {
+                return reply(401, """{"error": {"code": "unauthorized", "message": "this hub never paired that device"}}""")
+            }
+            val nonce = JSONObject(request.body!!.utf8()).getString("nonce")
+            return reply(200, """{"device_id": "$deviceId", "revoked": true, "proof": "${HubClient.expectedProof(token, "revoked:$nonce")}"}""")
+        }
+    }
+
+    @Test
+    fun theEarlierPairingIsOnlyOneThisHubProvesItMade() {
+        server.dispatcher = hubThatPaired("android-2", "dt_b")
+        val url = server.url("/").toString()
+        val a = HubConfig("http://192.168.1.99:8765", "dt_a", "android-1") // another hub's
+        val b = HubConfig("http://192.168.1.23:8765", "dt_b", "android-2") // this hub's, revoked: still proven
+        val forged = HubConfig("http://192.168.1.23:8765", "dt_guess", "android-2") // right id, wrong token
+        assertEquals(b, HubClient.earlierPairing(url, listOf(a, forged, b), http)) // as kept: only its id and token are used
+        assertEquals(null, HubClient.earlierPairing(url, listOf(a, forged), http)) // none proves: a new device
+        repeat(server.requestCount) {
+            val request = server.takeRequest()
+            assertFalse("dt_" in request.body!!.utf8()) // only nonces travel while choosing
+        }
     }
 
     @Test
