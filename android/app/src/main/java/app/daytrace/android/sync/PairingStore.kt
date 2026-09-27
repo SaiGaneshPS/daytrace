@@ -4,6 +4,7 @@
 package app.daytrace.android.sync
 
 import android.content.Context
+import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -11,8 +12,10 @@ import androidx.core.content.edit
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
+import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /** Encrypts the token. Tests use a stand-in, since the JVM has no Android Keystore. */
 interface TokenCipher {
@@ -50,6 +53,26 @@ class KeystoreCipher(private val alias: String = "daytrace_pairing") : TokenCiph
 
 /** This phone's pairing: how to reach the hub, and which profile and name the hub gave it. */
 data class Pairing(val config: HubConfig, val profile: String, val deviceName: String)
+
+/**
+ * DT-22: a key only this app on this phone can make, the same after a reinstall, so a phone that pairs again (after
+ * "Forget this hub", a revoke or a reinstall) gets its first id back instead of a new one each time. It is made from
+ * Android's ANDROID_ID, which is different for every app signing key, user and phone, and never shown to other apps;
+ * a factory reset (a new phone, really) makes a new one. The hub keeps only its SHA-256.
+ */
+object DeviceKey {
+    private const val PURPOSE = "daytrace device key v1"
+
+    /** The key for this phone, or null when Android gives no ANDROID_ID. */
+    fun of(context: Context): String? =
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)?.takeIf { it.isNotBlank() }?.let(::derive)
+
+    /** HMAC-SHA256 of [PURPOSE], keyed with the ANDROID_ID, as 43 base64url characters (the hub checks the form). */
+    fun derive(androidId: String): String {
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(androidId.toByteArray(Charsets.UTF_8), "HmacSHA256")) }
+        return Base64.encodeToString(mac.doFinal(PURPOSE.toByteArray(Charsets.UTF_8)), Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+    }
+}
 
 /** The pairing without the token. */
 data class PairingInfo(val baseUrl: String, val deviceId: String, val profile: String)

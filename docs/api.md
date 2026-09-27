@@ -247,15 +247,29 @@ collector checks what the hub already has.
 - `device_name` is 1 to 64 characters after trimming, without control or formatting characters (emoji are fine).
 - `device_type` is one of `windows`, `macos`, `android`, `ios`, `browser`, `viewer`. Phone browsers opening
   the dashboard pair as `viewer`; the iPhone's Shortcuts use `ios`.
+- **Pairing again keeps the first id (DT-22).** Two optional ways for a device to say it paired before, so one
+  phone stays one device however often it pairs (after a revoke, "Forget this hub" or a reinstall):
+  - `previous_device_id` with `previous_proof`: HMAC-SHA256 of `"pair:" + code`, keyed with the SHA-256
+    (lowercase hex) of the token it had, even a revoked one. It proves the device held that token without sending
+    it, and is good for this code only. `POST /devices/{id}/proof` signs only lowercase hex, so it can never be
+    asked to make one.
+  - `device_key`: 32 to 128 base64url characters that only this device can make and that survive a reinstall (the
+    Android app derives it from ANDROID_ID). The hub keeps only its SHA-256, which is never exported.
+
+  A match of the same `device_type` gets that id back: a new token (the old one stops working), the new name,
+  and no longer revoked; the history stays with it. Anything else is a new device. Either way a fresh code from
+  the hub computer is still needed.
 
 Response `201` with `Cache-Control: no-store`. The token is shown only once:
 
 ```json
-{ "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal" }
+{ "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal",
+  "returning": false }
 ```
 
-- Device IDs count up per type and are never reused: `windows-1`, `mac-1`, `android-1`, `iphone-1`,
-  `browser-1`, `viewer-1`. Collectors send the `device_id` they got here (the Shortcuts ask for it on import).
+- Device IDs count up per type and are never reused by another device: `windows-1`, `mac-1`, `android-1`,
+  `iphone-1`, `browser-1`, `viewer-1`. A device pairing again keeps its own (`returning: true`). Collectors send the
+  `device_id` they got here (the Shortcuts ask for it on import).
 - Codes are single use and expire after 5 minutes: `400 invalid_code` for a wrong, used or expired code (the
   message says how many tries are left).
 - 5 wrong tries from one address lock that address out of the code, and 20 wrong tries in total lock the code

@@ -248,7 +248,7 @@ JSON_COLUMNS = frozenset({("events", "data"), ("sessions", "source_event_ids"), 
                           ("achievements", "dates"), ("story_cache", "facts"), ("wrapped_cache", "lines"),
                           ("wrapped_cache", "facts")})
 # Never exported: a device's token is a secret (only its hash is kept, but even that stays in the hub).
-SECRET_COLUMNS = frozenset({("devices", "token_hash")})
+SECRET_COLUMNS = frozenset({("devices", "token_hash"), ("devices", "device_key_hash")})  # DT-22: the key hash too
 DELETE_PHRASE = "delete all my daytrace data"
 EXPORT_CHUNK = 64 * 1024  # characters gathered before a piece of the export is sent
 SNAPSHOT_PREFIX = ".daytrace-export-"  # the copy an export is read from, next to the database; removed afterwards

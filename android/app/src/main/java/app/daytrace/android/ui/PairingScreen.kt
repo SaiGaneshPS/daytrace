@@ -73,6 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import app.daytrace.android.sync.DeviceKey
 import app.daytrace.android.sync.FoundHub
 import app.daytrace.android.sync.HubClient
 import app.daytrace.android.sync.HubConfig
@@ -149,7 +150,7 @@ private sealed interface PairState {
     data object Idle : PairState
     data object Working : PairState
     data class Failed(val message: String) : PairState
-    data class Done(val pairing: Pairing) : PairState
+    data class Done(val pairing: Pairing, val returning: Boolean = false) : PairState
 }
 
 /**
@@ -239,7 +240,7 @@ fun PairingScreen(onClose: () -> Unit) {
                 )
             }
             if (done != null) {
-                item(key = "done") { Box(Modifier.padding(horizontal = 16.dp)) { DoneCard(done.pairing, onClose) } }
+                item(key = "done") { Box(Modifier.padding(horizontal = 16.dp)) { DoneCard(done.pairing, done.returning, onClose) } }
             } else {
                 item(key = "where") {
                     Text(
@@ -337,10 +338,15 @@ private fun deviceName(context: Context): String {
     return HubClient.cleanText(named?.takeIf { it.isNotBlank() } ?: model, 64) ?: "Android phone"
 }
 
-/** Trades the code for a token over Wi-Fi and keeps it (encrypted). Runs off the main thread. */
+/**
+ * Trades the code for a token over Wi-Fi and keeps it (encrypted). Runs off the main thread. A phone that was paired
+ * before (a revoked pairing is still kept) proves it, and sends its device key, so it keeps its first id (DT-22).
+ */
 private fun pairWith(context: Context, url: String, code: String): PairState {
     val wifi = WifiOnly.network(context) ?: return PairState.Failed("Connect this phone to the same Wi-Fi as your PC, then try again.")
-    return when (val result = HubClient.claim(url, code, deviceName(context), HubClient.onNetwork(wifi))) {
+    val previous = runCatching { PairingStore.get(context).pairing()?.config }.getOrNull()
+    val key = runCatching { DeviceKey.of(context) }.getOrNull()
+    return when (val result = HubClient.claim(url, code, deviceName(context), HubClient.onNetwork(wifi), key, previous)) {
         is HubResult.Ok -> {
             val paired = result.value
             val pairing = Pairing(HubConfig(url, paired.token, paired.deviceId), paired.profile, paired.name)
@@ -350,7 +356,7 @@ private fun pairWith(context: Context, url: String, code: String): PairState {
                 return PairState.Failed("This phone couldn't store the pairing securely (${e.javaClass.simpleName}). Start pairing again on the PC.")
             }
             SyncStatusStore(context).reset() // the last sync belonged to the old pairing
-            PairState.Done(pairing)
+            PairState.Done(pairing, paired.returning)
         }
         is HubResult.Retry -> PairState.Failed("Couldn't pair with $url: ${result.message}")
         is HubResult.Blocked -> PairState.Failed(result.message)
@@ -516,7 +522,7 @@ private fun ProblemCard(message: String) {
 }
 
 @Composable
-private fun DoneCard(pairing: Pairing, onClose: () -> Unit) = PairCard {
+private fun DoneCard(pairing: Pairing, returning: Boolean, onClose: () -> Unit) = PairCard {
     val granted = LocalDaytraceExtras.current.granted
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         var shown by remember { mutableStateOf(false) }
@@ -528,7 +534,11 @@ private fun DoneCard(pairing: Pairing, onClose: () -> Unit) = PairCard {
         Text("Paired!", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(4.dp))
         Text(
-            "This phone is ${pairing.config.deviceId} on your hub's ${pairing.profile} profile. Your events are on their way.",
+            if (returning) {
+                "This phone is ${pairing.config.deviceId} again on your hub's ${pairing.profile} profile, with its history. The rest of its events are on their way."
+            } else {
+                "This phone is ${pairing.config.deviceId} on your hub's ${pairing.profile} profile. Your events are on their way."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

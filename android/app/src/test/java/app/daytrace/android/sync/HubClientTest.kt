@@ -9,6 +9,7 @@ import okhttp3.Dns
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -106,6 +107,25 @@ class HubClientTest {
         val body = JSONObject(request.body!!.utf8())
         assertEquals(listOf("493817", "Galaxy S25 Ultra", "android"), listOf("code", "device_name", "device_type").map(body::getString))
         assertTrue("dt_new" !in result.toString()) // never printed
+        assertFalse(body.has("device_key") || body.has("previous_device_id") || body.has("previous_proof"))
+    }
+
+    @Test
+    fun pairingAgainProvesTheOldTokenWithoutSendingIt() {
+        server.enqueue(
+            reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Phone", "token": "dt_new", "profile": "personal", "returning": true}"""),
+        )
+        val previous = HubConfig("http://192.168.1.23:8765", "dt_old", "android-1")
+        val result = HubClient.claim(server.url("/").toString(), "493817", "Phone", http, deviceKey = "k".repeat(43), previous = previous)
+        assertEquals(HubResult.Ok(Paired("android-1", "dt_new", "personal", "Phone", returning = true)), result)
+        val sent = server.takeRequest().body!!.utf8()
+        val body = JSONObject(sent)
+        assertEquals("k".repeat(43), body.getString("device_key"))
+        assertEquals("android-1", body.getString("previous_device_id"))
+        // What the hub checks: HMAC-SHA256 of "pair:" + code, keyed with the SHA-256 (hex) of the old token
+        assertEquals(HubClient.expectedProof("dt_old", "pair:493817"), body.getString("previous_proof"))
+        assertTrue(Regex("^[0-9a-f]{64}$").matches(body.getString("previous_proof")))
+        assertFalse("dt_old" in sent) // the old token itself never travels
     }
 
     @Test

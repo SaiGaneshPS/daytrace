@@ -73,4 +73,22 @@ class PairingStoreTest {
         store.save(again)
         assertEquals(again, store.pairing())
     }
+
+    // --- DT-22: the device key that keeps a phone's id when it pairs again ---
+
+    @Test
+    fun theDeviceKeyIsTheSameForTheSamePhoneAndLooksAsTheHubExpects() {
+        val key = DeviceKey.derive("9774d56d682e549c")
+        assertEquals(key, DeviceKey.derive("9774d56d682e549c")) // a reinstall gives the same ANDROID_ID, so the same key
+        assertTrue(key, Regex("^[A-Za-z0-9_-]{43}$").matches(key)) // what the hub's claim accepts
+        assertFalse(key == DeviceKey.derive("0123456789abcdef")) // another phone, another key
+        assertFalse("9774d56d682e549c" in key) // the id itself is never sent
+    }
+
+    @Test
+    fun thePhonesOwnDeviceKeyComesFromAndroid() {
+        val key = DeviceKey.of(context)
+        assertTrue(key == null || Regex("^[A-Za-z0-9_-]{43}$").matches(key))
+        assertEquals(key, DeviceKey.of(context))
+    }
 }

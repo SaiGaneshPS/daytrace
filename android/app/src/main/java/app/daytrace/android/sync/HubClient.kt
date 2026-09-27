@@ -138,9 +138,9 @@ object PrivateNetwork {
     }
 }
 
-/** What pairing gave this phone (POST /pair/claim). */
-data class Paired(val deviceId: String, val token: String, val profile: String, val name: String) {
-    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name)" // never print the token
+/** What pairing gave this phone (POST /pair/claim). [returning]: the hub knew it, so it kept its first id (DT-22). */
+data class Paired(val deviceId: String, val token: String, val profile: String, val name: String, val returning: Boolean = false) {
+    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name, returning=$returning)" // never print the token
 }
 
 /** What the hub proved about this phone's pairing (POST /devices/{id}/proof). */
@@ -217,13 +217,31 @@ class HubClient(
         /**
          * POST /pair/claim: trades the 6-digit code shown on the PC for this phone's own token. A wrong or
          * expired code comes back as [HubResult.Retry] with the hub's message (it says how many tries are left).
+         *
+         * DT-22: so that pairing again keeps this phone's first id, it also sends [deviceKey] (see [DeviceKey]) and,
+         * when it was paired before, [previous]'s device id with a proof that it holds that token: HMAC-SHA256 of
+         * "pair:" + the code, keyed with the token's SHA-256. The old token itself is never sent.
          */
-        fun claim(baseUrl: String, code: String, deviceName: String, http: OkHttpClient): HubResult<Paired> {
+        fun claim(
+            baseUrl: String,
+            code: String,
+            deviceName: String,
+            http: OkHttpClient,
+            deviceKey: String? = null,
+            previous: HubConfig? = null,
+        ): HubResult<Paired> {
             val url = apiUrl(baseUrl, "pair/claim") ?: return badUrl(baseUrl)
-            val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android").toString()
-            return execute(http, Request.Builder().url(url).post(body.toRequestBody(JSON)), token = null) { text ->
+            val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android")
+            if (deviceKey != null) body.put("device_key", deviceKey)
+            if (previous != null) {
+                body.put("previous_device_id", previous.deviceId).put("previous_proof", expectedProof(previous.token, "pair:$code"))
+            }
+            return execute(http, Request.Builder().url(url).post(body.toString().toRequestBody(JSON)), token = null) { text ->
                 val json = JSONObject(text)
-                Paired(json.getString("device_id"), json.getString("token"), json.getString("profile"), json.getString("name"))
+                Paired(
+                    json.getString("device_id"), json.getString("token"), json.getString("profile"), json.getString("name"),
+                    json.optBoolean("returning", false),
+                )
             }
         }
 
