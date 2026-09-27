@@ -11,13 +11,13 @@ import StatCard, { formatMinutes } from "../../components/StatCard";
 import { CATEGORY_LABELS, type ChartOption, asCategory, categoryStyle, escapeHTML, useEChart } from "../../theme/charts";
 import { deviceColors } from "../../theme/devices";
 import { useMediaQuery } from "../../theme/motion";
+import { Failed, SeriesCard, minutesText } from "./parts";
 import { ChangeChip, type InsightsData, type Item, type Series, metric, rangeWords, useAppDetail, useInsights, valueOf } from "./shared";
 
 type Props = { range: string; tz: string; today: string; app: string | null; onApp: (app: string | null) => void };
 
 const OTHER_APPS = "Other apps"; // the treemap's box for a category's smaller apps: not one app, so not opened
 const category = asCategory;
-const minutesText = (value: unknown) => (value === null || value === undefined || value === "-" ? "no data" : formatMinutes(Number(value)));
 const WIDE = "(min-width: 40rem)";
 
 // --- the leaderboard -------------------------------------------------------------------------------------------
@@ -431,19 +431,6 @@ function AppDrawer({ app, range, tz, today, onClose }: { app: string | null; ran
 
 // --- the tab ---------------------------------------------------------------------------------------------------
 
-function Failed({ what, message, retry }: { what: string; message: string; retry: () => void }) {
-  return (
-    <ChartCard title={what}>
-      <p className="muted">
-        {what} couldn&apos;t load: {message}
-      </p>
-      <button type="button" className="button button-ghost" onClick={retry}>
-        Try again
-      </button>
-    </ChartCard>
-  );
-}
-
 export default function AppsDevicesTab({ range, tz, today, app, onApp }: Props) {
   const apps = useInsights("apps", range, tz, today);
   const devices = useInsights("devices", range, tz, today);
@@ -455,23 +442,11 @@ export default function AppsDevicesTab({ range, tz, today, app, onApp }: Props) 
   const topHandoff = devicesData ? metric(devicesData, "top_handoff")?.value : undefined;
   const heard = new Map((devicesData?.metrics ?? []).filter((item) => item.id.startsWith("last_seen:")).map((item) => [item.label, item.value]));
 
-  const card = (data: InsightsData | undefined, key: string, title: string, unit: string, body: (found: Series) => ReactNode, empty: string, wide = false) => {
-    const found = data?.series[key];
-    return (
-      <ChartCard
-        title={found?.title ?? title}
-        range={words}
-        unit={unit}
-        source={data?.meta.source}
-        estimated={found?.estimated}
-        loading={!data}
-        info={found?.explain}
-        className={wide ? "chart-card-wide" : undefined}
-      >
-        {found ? body(found) : <p className="muted">{empty}</p>}
-      </ChartCard>
-    );
-  };
+  const card = (data: InsightsData | undefined, key: string, title: string, unit: string, body: (found: Series) => ReactNode, empty: string, wide = false) => (
+    <SeriesCard data={data} name={key} title={title} unit={unit} words={words} empty={empty} wide={wide}>
+      {body}
+    </SeriesCard>
+  );
   const hasItems = (series: Series) => !!series.items?.length;
   const hasLines = (series: Series) => (series.lines ?? []).some((line) => line.values.some((value) => value));
 

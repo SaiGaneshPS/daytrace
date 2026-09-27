@@ -1692,13 +1692,18 @@ export interface components {
             max?: number | null;
             /**
              * Stats
-             * @description scatter: rho, p and n.
+             * @description scatter: rho, p, n, and the trend line's slope and intercept.
              */
             stats?: {
                 [key: string]: number | null;
             } | null;
             /** Note */
             note?: string | null;
+            /**
+             * Reason
+             * @description Why a number is missing: the scatter's rho, say, with too few nights.
+             */
+            reason?: string | null;
         };
         /** SleepEntry */
         SleepEntry: {

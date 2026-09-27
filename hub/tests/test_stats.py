@@ -616,3 +616,15 @@ def test_the_day_summary_endpoint(day: Database, settings: Settings, monkeypatch
         assert phone.get("/api/v1/insights/day", params={"date": "2026-09-25"}).status_code == 401
     assert body["screen_minutes"] == TOTAL / 60 and body["top_apps"][0] == {"app": "Minecraft", "category": "games", "minutes": 60.0}
     assert body["date"] == "2026-09-25" and body["tz"] == TORONTO and body["in_progress"] is False
+
+
+def test_a_correlation_with_nothing_to_compare_says_why(db: Database) -> None:
+    # Four days of the same work and never a screen after 11 pm: three nights to compare, but no variation.
+    first = date(2026, 9, 1)
+    events = [span("window", f"{(first + timedelta(days=i)).isoformat()}T09:00:00-04:00", f"{(first + timedelta(days=i)).isoformat()}T10:00:00-04:00", **CODE)
+              for i in range(4)]
+    add(db, "windows-1", "windows", events)
+    with stats(db) as s:
+        result = s.correlation(first, first + timedelta(days=3))
+    assert (result["rho"], result["n"]) == (None, 3)
+    assert result["reason"] == "Every night had the same late-night screen time, so there is nothing to compare."

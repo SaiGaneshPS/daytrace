@@ -7,12 +7,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { clock, hourAxis, nightWords } from "../src/pages/insights/clock";
 
-type Line = { name: string; category?: string | null; values: (number | null)[] };
+type Line = { name: string; key?: string | null; category?: string | null; values: (number | null)[] };
 type Tab = {
-  metrics: { id: string; label: string; value: number | string | null; estimated?: boolean }[];
+  metrics: { id: string; label: string; value: number | string | null; estimated?: boolean; explain?: string }[];
   series: Record<string, { x?: string[] | null; lines?: Line[] | null; estimated?: boolean; explain?: string; points?: unknown[] | null;
-    stats?: Record<string, number | null> | null; note?: string | null }>;
+    stats?: Record<string, number | null> | null; note?: string | null; reason?: string | null }>;
 };
 const FIXTURES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-focus-sleep.json"), "utf-8")) as { focus: Record<string, Tab>; sleep: Record<string, Tab> };
 
@@ -98,7 +99,8 @@ test("the cards are the hub's numbers", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Focused time", exact: true })).toContainText(minutes(Number(metricOf(focus, "focused_time"))));
   const score = page.getByRole("region", { name: "Focus score, on average" });
   await expect(score).toContainText(`${metricOf(focus, "focus_score")}/ 100`);
-  await expect(score).toContainText(`Best: ${await dayIn(page, String(metricOf(focus, "best_day")), "long")} (${metricOf(focus, "best_score")})`);
+  // The highest score, said as a score: the calendar's "most focused" day is a different measure.
+  await expect(score).toContainText(`Highest score: ${await dayIn(page, String(metricOf(focus, "best_day")), "long")} (${metricOf(focus, "best_score")})`);
   const night = page.getByRole("region", { name: "Sleep a night" });
   await expect(night).toContainText(minutes(Number(metricOf(sleep, "sleep"))));
   await expect(night).toContainText(`0 of ${metricOf(sleep, "nights")} nights estimated`);
@@ -123,6 +125,32 @@ test("the calendar has a square for each day, darkest on the most focused, and s
   await expect(calendar.getByRole("img")).toHaveAttribute("aria-label", `Focused minutes each day: ${summary}`);
   await expect(calendar.locator(`.cal-day[title^="${await dayIn(page, bestDay, "long")}:"]`)).toHaveAttribute("style", /--level: 1;/);
   await expect(calendar.locator(`.cal-day[title^="${await dayIn(page, "2026-09-15", "long")}:"]`)).toHaveAttribute("title", /: no data$/);
+});
+
+test("the calendar finds its line by key, explains itself, and says when there was no focused time", async ({ page }) => {
+  const base = FIXTURES.focus["14d"];
+  const byDay = base.series.focus_by_day;
+  // Renamed, and every day at 0: the calendar still finds the line (by its key), and says no day stood out.
+  const lines = (byDay.lines ?? []).map((line) => (line.key === "focused" ? { ...line, name: "Focused time", values: line.values.map(() => 0) } : line));
+  await mockHub(page, { focus: () => ({ ...base, series: { ...base.series, focus_by_day: { ...byDay, lines } } }) });
+  await page.goto(`/insights?tab=focus&range=${FOURTEEN}`);
+  const calendar = page.getByRole("region", { name: "Focused time each day" });
+  await expect(calendar.locator(".cal-grid .cal-zero")).toHaveCount(14);
+  await expect(calendar.getByRole("img")).toHaveAttribute("aria-label", "Focused minutes each day: no focused time on any of the 14 days with data.");
+  await calendar.getByRole("button", { name: "About Focused time each day" }).click();
+  await expect(calendar.getByRole("status")).toHaveText(String(base.metrics.find((item) => item.id === "focused_time")?.explain ?? "")); // not the stacked chart's
+});
+
+test("bedtimes tick on whole hours, and a night is named by both its days", async ({ page }) => {
+  expect(clock(360)).toBe("00:00");
+  expect(clock(330)).toBe("23:30");
+  expect(clock(927)).toBe("09:27");
+  expect(hourAxis([325, 415, 782, 927])).toEqual({ min: 300, max: 960, interval: 120 }); // 23:00 to 10:00, every two hours
+  expect(hourAxis([330, 400])).toEqual({ min: 300, max: 420, interval: 60 }); // 23:00 to 01:00, every hour
+  expect(hourAxis([null, null])).toBeNull();
+  await page.goto("about:blank");
+  expect(nightWords("2026-09-19", (day) => `<${day}>`)).toBe("<2026-09-19> into <2026-09-20>");
+  expect(nightWords("2026-09-30", (day) => day.slice(5))).toBe("09-30 into 10-01"); // over a month's end
 });
 
 test("the gauge explains how the focus score is worked out", async ({ page }) => {
@@ -177,17 +205,23 @@ test("the late-night pattern shows its size, strength and that it is not a cause
   expect(Number(scatter.stats?.rho)).toBeLessThan(-0.5); // the seeded pattern is there: later nights, less focus
 });
 
-test("with too few nights the pattern says so instead of a number", async ({ page }) => {
-  const base = FIXTURES.focus["14d"];
-  const scatter = base.series.late_vs_focus;
-  const few = { ...scatter, points: (scatter.points ?? []).slice(0, 2), stats: { rho: null, p: null, n: 2, slope: -0.3, intercept: 70 } };
-  await mockHub(page, { focus: () => ({ ...base, series: { ...base.series, late_vs_focus: few } }) });
-  await page.goto(`/insights?tab=focus&range=${FOURTEEN}`);
-  const stats = page.getByRole("region", { name: "Late nights and the next day's focus" }).locator(".pattern-stats");
-  await expect(stats).toContainText("2 nights");
-  await expect(stats).toContainText("Too few nights for a pattern yet (it needs 3).");
-  await expect(stats).not.toContainText("rho");
-});
+for (const [n, reason] of [
+  [2, "It needs 3 nights with a next day to compare; this range has fewer."],
+  [12, "Every night had the same late-night screen time, so there is nothing to compare."], // enough nights, no variation
+] as const) {
+  test(`without a correlation the pattern gives the hub's reason (${n} nights)`, async ({ page }) => {
+    const base = FIXTURES.focus["14d"];
+    const scatter = base.series.late_vs_focus;
+    const none = { ...scatter, points: (scatter.points ?? []).slice(0, n), stats: { rho: null, p: null, n, slope: null, intercept: null }, reason };
+    await mockHub(page, { focus: () => ({ ...base, series: { ...base.series, late_vs_focus: none } }) });
+    await page.goto(`/insights?tab=focus&range=${FOURTEEN}`);
+    const card = page.getByRole("region", { name: "Late nights and the next day's focus" });
+    await expect(card.locator(".pattern-stats")).toContainText(`${n} nights`);
+    await expect(card.locator(".pattern-stats")).toContainText(`No pattern to show. ${reason}`);
+    await expect(card.locator(".pattern-stats")).not.toContainText("rho");
+    await expect(card.locator(".chart")).not.toHaveAttribute("aria-label", /trend line/); // no line without a correlation
+  });
+}
 
 test("when focus can't load, sleep still shows, and Try again asks again", async ({ page }) => {
   let fail = true;

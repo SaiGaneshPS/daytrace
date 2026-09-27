@@ -63,7 +63,8 @@
      "value": 61.0,
      "max": 100.0,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "focus_by_day": {
      "kind": "stacked",
@@ -91,7 +92,7 @@
      "lines": [
       {
        "name": "Focused",
-       "key": null,
+       "key": "focused",
        "category": "study",
        "device_type": null,
        "values": [
@@ -113,7 +114,7 @@
       },
       {
        "name": "Other work or study",
-       "key": null,
+       "key": "rest",
        "category": "work",
        "device_type": null,
        "values": [
@@ -135,7 +136,7 @@
       },
       {
        "name": "Distracted",
-       "key": null,
+       "key": "distracted",
        "category": "social",
        "device_type": null,
        "values": [
@@ -165,7 +166,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "switches_by_hour": {
      "kind": "bars",
@@ -243,7 +245,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "switches_by_day": {
      "kind": "trend",
@@ -271,7 +274,7 @@
      "lines": [
       {
        "name": "Switches an hour",
-       "key": null,
+       "key": "switches",
        "category": null,
        "device_type": null,
        "values": [
@@ -301,13 +304,14 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "distraction_hours": {
      "kind": "heatmap",
      "title": "When distractions happen",
      "unit": "minutes",
-     "explain": "Time in social, video and game apps by weekday and hour of the day, the range added up.",
+     "explain": "Time in social, video and game apps by weekday and hour of the day, the range added up (time on two devices at once counted once).",
      "estimated": false,
      "x": [
       "00",
@@ -595,37 +599,37 @@
       {
        "x": 20,
        "y": 0,
-       "value": 118.33
+       "value": 106.35
       },
       {
        "x": 20,
        "y": 1,
-       "value": 134.6
+       "value": 116.32
       },
       {
        "x": 20,
        "y": 2,
-       "value": 128.42
+       "value": 111.0
       },
       {
        "x": 20,
        "y": 3,
-       "value": 137.62
+       "value": 120.0
       },
       {
        "x": 20,
        "y": 4,
-       "value": 132.78
+       "value": 118.58
       },
       {
        "x": 20,
        "y": 5,
-       "value": 132.6
+       "value": 114.03
       },
       {
        "x": 20,
        "y": 6,
-       "value": 120.47
+       "value": 106.7
       },
       {
        "x": 21,
@@ -725,7 +729,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "late_vs_focus": {
      "kind": "scatter",
@@ -809,10 +814,11 @@
       "rho": -0.898,
       "p": 0.0001,
       "n": 12,
-      "slope": -0.3277,
-      "intercept": 71.76
+      "slope": -0.3312,
+      "intercept": 71.81
      },
-     "note": "Correlation, not cause: days with more late-night screen time were followed by different focus, but other things (deadlines, illness, weekends) can explain both."
+     "note": "Correlation, not cause: days with more late-night screen time were followed by different focus, but other things (deadlines, illness, weekends) can explain both.",
+     "reason": null
     }
    },
    "changes": [],
@@ -891,7 +897,8 @@
      "value": 67.0,
      "max": 100.0,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "focus_by_day": {
      "kind": "stacked",
@@ -912,7 +919,7 @@
      "lines": [
       {
        "name": "Focused",
-       "key": null,
+       "key": "focused",
        "category": "study",
        "device_type": null,
        "values": [
@@ -927,7 +934,7 @@
       },
       {
        "name": "Other work or study",
-       "key": null,
+       "key": "rest",
        "category": "work",
        "device_type": null,
        "values": [
@@ -942,7 +949,7 @@
       },
       {
        "name": "Distracted",
-       "key": null,
+       "key": "distracted",
        "category": "social",
        "device_type": null,
        "values": [
@@ -965,7 +972,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "switches_by_hour": {
      "kind": "bars",
@@ -1043,7 +1051,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "switches_by_day": {
      "kind": "trend",
@@ -1064,7 +1073,7 @@
      "lines": [
       {
        "name": "Switches an hour",
-       "key": null,
+       "key": "switches",
        "category": null,
        "device_type": null,
        "values": [
@@ -1087,13 +1096,14 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "distraction_hours": {
      "kind": "heatmap",
      "title": "When distractions happen",
      "unit": "minutes",
-     "explain": "Time in social, video and game apps by weekday and hour of the day, the range added up.",
+     "explain": "Time in social, video and game apps by weekday and hour of the day, the range added up (time on two devices at once counted once).",
      "estimated": false,
      "x": [
       "00",
@@ -1296,37 +1306,37 @@
       {
        "x": 20,
        "y": 0,
-       "value": 52.83
+       "value": 46.35
       },
       {
        "x": 20,
        "y": 1,
-       "value": 65.5
+       "value": 56.32
       },
       {
        "x": 20,
        "y": 2,
-       "value": 68.43
+       "value": 60.0
       },
       {
        "x": 20,
        "y": 3,
-       "value": 69.47
+       "value": 60.0
       },
       {
        "x": 20,
        "y": 4,
-       "value": 67.07
+       "value": 60.0
       },
       {
        "x": 20,
        "y": 5,
-       "value": 68.78
+       "value": 60.0
       },
       {
        "x": 20,
        "y": 6,
-       "value": 55.53
+       "value": 46.7
       },
       {
        "x": 21,
@@ -1401,7 +1411,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "late_vs_focus": {
      "kind": "scatter",
@@ -1453,7 +1464,8 @@
       "slope": -0.3415,
       "intercept": 72.0
      },
-     "note": "Correlation, not cause: days with more late-night screen time were followed by different focus, but other things (deadlines, illness, weekends) can explain both."
+     "note": "Correlation, not cause: days with more late-night screen time were followed by different focus, but other things (deadlines, illness, weekends) can explain both.",
+     "reason": null
     }
    },
    "changes": [],
@@ -1594,7 +1606,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "schedule": {
      "kind": "trend",
@@ -1674,7 +1687,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "late_night": {
      "kind": "bars",
@@ -1732,7 +1746,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "changes": [],
@@ -1850,7 +1865,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "schedule": {
      "kind": "trend",
@@ -1909,7 +1925,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "late_night": {
      "kind": "bars",
@@ -1953,7 +1970,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "changes": [],

@@ -8,13 +8,11 @@ import { longDay, shortDay } from "../../components/DayPicker";
 import StatCard, { formatMinutes } from "../../components/StatCard";
 import { type ChartOption, categoryStyle, escapeHTML, useEChart } from "../../theme/charts";
 import { deviceColors } from "../../theme/devices";
+import { Failed, SeriesCard, WeekdayHoursHeatmap, minutesText } from "./parts";
 import { ChangeChip, type InsightsData, type Series, metric, rangeWords, useInsights, valueOf } from "./shared";
 
 type Props = { range: string; tz: string; today: string };
 
-const WEEKDAYS: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
-
-const minutesText = (value: unknown) => (value === null || value === undefined || value === "-" ? "no data" : formatMinutes(Number(value)));
 const hasValues = (series: Series | undefined) =>
   !!series && ((series.lines ?? []).some((line) => line.values.some((value) => value)) || (series.items ?? []).length > 0 || (series.cells ?? []).length > 0);
 
@@ -111,51 +109,6 @@ function PhoneAndComputer({ series }: { series: Series }) {
   return <div ref={chart} className="chart" style={{ height: 280 }} />;
 }
 
-function Hours({ series }: { series: Series }) {
-  const option = useMemo<ChartOption>(() => {
-    const cells = series.cells ?? [];
-    const hours = series.x ?? [];
-    const weekdays = series.y ?? [];
-    const next = (hour: string) => String((Number(hour) + 1) % 24).padStart(2, "0");
-    return {
-      tooltip: {
-        position: "top",
-        formatter: (params: { value: [number, number, number] }) => {
-          const [hour, weekday, value] = params.value;
-          return escapeHTML(`${WEEKDAYS[weekdays[weekday]] ?? weekdays[weekday]}, ${hours[hour]}:00 to ${next(hours[hour])}:00: ${formatMinutes(value)}`);
-        },
-      },
-      grid: { left: 8, right: 8, top: 8, bottom: 56, containLabel: true },
-      xAxis: { type: "category", data: hours, axisLabel: { interval: 2 }, splitArea: { show: false } },
-      yAxis: { type: "category", data: weekdays, inverse: true },
-      visualMap: {
-        min: 0,
-        max: Math.max(1, ...cells.map((cell) => cell.value)),
-        orient: "horizontal",
-        left: "center",
-        bottom: 0,
-        itemHeight: 140,
-        itemWidth: 12,
-        text: ["More", "Less"],
-        textStyle: { color: "var(--muted)" },
-        inRange: { color: ["var(--surface-2)", "var(--cat-work)"] },
-      },
-      series: [
-        {
-          id: "hours",
-          type: "heatmap",
-          data: cells.map((cell) => [cell.x, cell.y, cell.value]),
-          // No pattern: a cell's shade is its only mark, and each one's minutes are in its tooltip.
-          itemStyle: { borderColor: "var(--surface)", borderWidth: 2, borderRadius: 3, decal: { symbol: "none" } },
-          emphasis: { itemStyle: { borderColor: "var(--text)", borderWidth: 1 } },
-        },
-      ],
-    };
-  }, [series]);
-  const chart = useEChart(option, `${series.title}: minutes by weekday and hour of the day`);
-  return <div ref={chart} className="chart" style={{ height: 300 }} data-no-swipe />;
-}
-
 type DayCardProps = { data: InsightsData | undefined; title: string; dayId: string; valueId: string; reason: string; tone: string; words?: string };
 
 function DayCard({ data, title, dayId, valueId, reason, tone, words }: DayCardProps) {
@@ -188,29 +141,15 @@ const STATS = [
 
 export default function OverviewTab({ range, tz, today }: Props) {
   const { data, error, reload } = useInsights("overview", range, tz, today);
-  if (error) {
-    return (
-      <ChartCard title="Overview">
-        <p className="muted">The overview couldn&apos;t load: {error.message}</p>
-        <button type="button" className="button button-ghost" onClick={reload}>
-          Try again
-        </button>
-      </ChartCard>
-    );
-  }
+  if (error) return <Failed what="The overview" message={error.message} retry={reload} />;
   const words = data ? rangeWords(data) : undefined;
-  const source = data?.meta.source;
-  const series = data?.series ?? {};
   const changes = new Map((data?.changes ?? []).map((change) => [change.id, change]));
   const total = valueOf(data, "screen_time") ?? null;
-  const card = (key: string, title: string, unit: string, body: (found: Series) => ReactNode) => {
-    const found = series[key];
-    return (
-      <ChartCard title={found?.title ?? title} range={words} unit={unit} source={source} estimated={found?.estimated} loading={!data} info={found?.explain}>
-        {found && hasValues(found) ? body(found) : <Empty />}
-      </ChartCard>
-    );
-  };
+  const card = (key: string, title: string, unit: string, body: (found: Series) => ReactNode) => (
+    <SeriesCard data={data} name={key} title={title} unit={unit} words={words} empty="No screen time in this range.">
+      {(found) => (hasValues(found) ? body(found) : <Empty />)}
+    </SeriesCard>
+  );
 
   return (
     <div className="stack">
@@ -243,7 +182,9 @@ export default function OverviewTab({ range, tz, today }: Props) {
         ))}
         {card("categories", "By category", "minutes", (found) => <Categories series={found} total={total} />)}
         {card("phone_vs_computer", "Phone and computer", "minutes", (found) => <PhoneAndComputer series={found} />)}
-        {card("hours", "When screens were on", "minutes", (found) => <Hours series={found} />)}
+        {card("hours", "When screens were on", "minutes", (found) => (
+          <WeekdayHoursHeatmap series={found} color="var(--cat-work)" label={`${found.title}: minutes by weekday and hour of the day`} />
+        ))}
       </div>
       <div className="grid grid-2">
         <DayCard data={data} title="Best day" dayId="best_day" valueId="best_day_focused" reason="The most focused time" tone="study" words={words} />
