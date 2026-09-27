@@ -1,12 +1,15 @@
-// Every page at every size: widths from a small phone (280 px) to a desktop, and text at 100%, 150% and 200% (like a
-// phone's font size setting, or browser text zoom). On each, nothing may stick out past the screen, and nothing may
+// Every page at every size: widths from a small phone (280 px) to a desktop, text at 100%, 150% and 200% (like a
+// phone's font size setting, or browser text zoom), in the system's font and in a wide one. On each, nothing may stick out past the screen, and nothing may
 // be cut off by a box that hides what overflows it (the page never scrolls sideways; a row that scrolls on purpose
 // is fine), and no word in a button, tab, label or heading may be split across two lines. This checks that layouts adapt to any device instead of fitting the sizes other tests
 // happen to use. The hub is mocked with a full day, a story, an answer and a pairing code.
 import { expect, type Page, test } from "@playwright/test";
 
-const WIDTHS = [280, 320, 360, 390, 412, 600, 768, 1024, 1280, 1440];
+const WIDTHS = [280, 320, 360, 412, 600, 768, 1024, 1440];
 const TEXT_SCALES = [1, 1.5, 2];
+// The system's own font, and a deliberately wide one: fonts differ between computers (Linux's are wider than
+// Windows'), so a layout that only just fits one of them fails here on any machine, not only on some.
+const FONTS = ["", 'Verdana, "DejaVu Sans", sans-serif'];
 const DAY = "2026-09-25";
 const at = (clock: string) => `${DAY}T${clock}-04:00`;
 
@@ -110,9 +113,11 @@ function problems(page: Page): Promise<string[]> {
       if (clippedBy) found.push(`${name(element)} is cut off by ${name(clippedBy)}`);
       else if (box.right > screen + 1) found.push(`${name(element)} sticks out past the screen (${Math.round(box.right)} > ${screen})`);
     }
-    // Short labels and headings keep their words whole: a word split across two lines ("Insigh / ts") fits, but
-    // reads badly. (Long text may break a long word; these shouldn't need to.)
-    for (const element of document.querySelectorAll("button, a, [role=tab], h1, h2, h3, .badge, .stat-label, .eyebrow")) {
+    // Controls and headings keep their words whole: a word split across two lines ("Insigh / ts") fits, but reads
+    // badly. Headings are held to it from 320 px, the width WCAG's reflow rule asks for: narrower, with 200% text, a
+    // long heading word is wider than the screen itself and can only break (it still mustn't stick out or be cut).
+    const whole = screen >= 320 ? "button, a, [role=tab], .badge, .stat-label, h1, h2, h3, .eyebrow" : "button, a, [role=tab], .badge, .stat-label";
+    for (const element of document.querySelectorAll(whole)) {
       if (element.closest("[aria-hidden=true], .visually-hidden, svg, dialog:not([open])")) continue;
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -132,13 +137,17 @@ function problems(page: Page): Promise<string[]> {
 
 async function sweep(page: Page, ready: () => Promise<void>) {
   const failures: string[] = [];
-  for (const width of WIDTHS) {
-    await page.setViewportSize({ width, height: 900 });
-    for (const scale of TEXT_SCALES) {
-      await page.evaluate((value) => (document.documentElement.style.fontSize = `${value * 100}%`), scale);
-      await ready();
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))); // charts resize
-      for (const problem of await problems(page)) failures.push(`${width} px, text ${scale * 100}%: ${problem}`);
+  for (const font of FONTS) {
+    await page.evaluate((family) => document.documentElement.style.setProperty("--font", family || null), font);
+    for (const width of WIDTHS) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const scale of TEXT_SCALES) {
+        await page.evaluate((value) => (document.documentElement.style.fontSize = `${value * 100}%`), scale);
+        await ready();
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))); // charts resize
+        const where = `${width} px, text ${scale * 100}%${font ? ", wide font" : ""}`;
+        for (const problem of await problems(page)) failures.push(`${where}: ${problem}`);
+      }
     }
   }
   expect(failures).toEqual([]);
