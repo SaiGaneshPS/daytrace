@@ -1,7 +1,8 @@
 """DT-12: pairing and device management.
 
 Pairing: on the hub computer, POST /pair/start shows a 6-digit code (and a QR code with the hub URL). The
-phone sends that code to POST /pair/claim and gets its own token. Codes live in memory, one at a time:
+phone sends that code to POST /pair/claim and gets its own token. The QR code comes in two kinds: for the Daytrace
+app (JSON it reads) and for a phone's camera (the Devices page's web address, which pairs that browser). Codes live in memory, one at a time:
 single use and 5 minutes. Wrong guesses are limited per client (5) and per code (20), so nobody can guess
 the code, and one noisy device on the Wi-Fi cannot lock everyone else out.
 """
@@ -17,10 +18,10 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 import qrcode
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from ..auth import DeviceType, Reader, get_database, register_device, require_local
@@ -192,7 +193,15 @@ class DeviceList(BaseModel):
 # --- pairing --------------------------------------------------------------------------------------------------
 
 
-def qr_payload(active: ActiveCode) -> str:
+QrKind = Literal["app", "browser"]
+
+
+def qr_payload(active: ActiveCode, kind: QrKind = "app") -> str:
+    """What the QR code says. "app": JSON for the Daytrace app's scanner. "browser": the Devices page with the code
+    after the `#`, so a phone's camera opens it and the page pairs that browser (a browser never sends the part
+    after `#` to any server)."""
+    if kind == "browser":
+        return f"{active.url}/devices#pair={active.code}"
     return json.dumps({"daytrace": 1, "url": active.url, "code": active.code}, separators=(",", ":"))
 
 
@@ -244,12 +253,15 @@ def pair_start(
     responses={200: {"content": {"image/png": {}}}},
     summary="QR code for the active pairing code (hub computer only)",
 )
-def pair_qr(pairing: Annotated[PairingCodes, Depends(get_pairing)]) -> Response:
+def pair_qr(
+    pairing: Annotated[PairingCodes, Depends(get_pairing)],
+    kind: Annotated[QrKind, Query(alias="for", description="app: for the Daytrace app; browser: for a phone's camera")] = "app",
+) -> Response:
     active = pairing.current()
     if active is None or active.url is None:
         raise ApiError(404, "not_found", "no pairing code is active; start pairing again")
     buffer = io.BytesIO()
-    qrcode.make(qr_payload(active), box_size=8, border=2).save(buffer)
+    qrcode.make(qr_payload(active, kind), box_size=8, border=2).save(buffer)
     return Response(content=buffer.getvalue(), media_type="image/png", headers=NO_STORE)
 
 

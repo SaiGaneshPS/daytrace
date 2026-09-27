@@ -170,6 +170,25 @@ def test_the_qr_payload_is_small_json() -> None:
     assert json.loads(qr_payload(active)) == {"daytrace": 1, "url": "http://192.168.1.23:8765", "code": active.code}
 
 
+def test_the_browser_qr_code_opens_the_devices_page_with_the_code() -> None:
+    active = PairingCodes().start("http://192.168.1.23:8765")
+    assert qr_payload(active, "browser") == f"http://192.168.1.23:8765/devices#pair={active.code}"
+
+
+def test_both_kinds_of_qr_code_are_pngs_and_other_kinds_are_refused(client: TestClient) -> None:
+    start(client)
+    for kind in ("app", "browser"):
+        response = client.get(f"/api/v1/pair/qr.png?for={kind}")
+        assert response.status_code == 200 and response.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert client.get("/api/v1/pair/qr.png?for=token").status_code == 422
+
+
+def test_health_says_whether_it_is_the_hub_computer_asking(client: TestClient, phone: TestClient) -> None:
+    assert client.get("/api/v1/health").json()["local"] is True
+    assert client.get("/api/v1/health", headers={"sec-fetch-site": "cross-site"}).json()["local"] is False
+    assert phone.get("/api/v1/health").json()["local"] is False  # same answer as pairing and revoking would give
+
+
 def test_the_qr_code_cannot_be_used_to_guess_the_code(client: TestClient, phone: TestClient) -> None:
     code = start(client)["code"]
     assert client.get(f"/api/v1/pair/qr.png?code={wrong(code)}").status_code == 200  # the parameter is ignored

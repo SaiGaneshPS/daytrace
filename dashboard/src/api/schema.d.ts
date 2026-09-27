@@ -569,6 +569,11 @@ export interface components {
             profile: string;
             /** Version */
             version: string;
+            /**
+             * Local
+             * @description True when the request comes from the hub computer's own dashboard, which can show pairing codes and revoke devices (the same check those endpoints make).
+             */
+            local: boolean;
         };
         /**
          * IngestResult
@@ -1068,7 +1073,10 @@ export interface operations {
     };
     pair_qr_api_v1_pair_qr_png_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description app: for the Daytrace app; browser: for a phone's camera */
+                for?: "app" | "browser";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1082,6 +1090,15 @@ export interface operations {
                 };
                 content: {
                     "image/png": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

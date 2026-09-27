@@ -64,7 +64,7 @@ def stored(db: Database, device_id: str = "android-1") -> list[dict[str, Any]]:
 def test_health_needs_no_token(client: TestClient) -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "profile": "personal", "version": __version__}
+    assert response.json() == {"status": "ok", "profile": "personal", "version": __version__, "local": True}
 
 
 # --- accepting events -----------------------------------------------------------------------------------------

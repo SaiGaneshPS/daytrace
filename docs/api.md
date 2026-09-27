@@ -73,8 +73,12 @@ The event shape itself is defined in [event-schema.json](event-schema.json) and 
 No token needed; the network and Host checks still apply.
 
 ```json
-{ "status": "ok", "profile": "personal", "version": "0.1.0" }
+{ "status": "ok", "profile": "personal", "version": "0.1.0", "local": true }
 ```
+
+`local` (DT-32) is true when the request comes from the hub computer's own dashboard, by the same check that
+`POST /pair/start`, `GET /pair/qr.png` and `DELETE /devices/{id}` make. The Devices page uses it to show the
+pairing code there and a "Pair this device" form anywhere else.
 
 ### POST /events
 
@@ -159,8 +163,12 @@ collector checks what the hub already has.
 - `mdns_url` is set only when mDNS is on.
 - Only one code is active at a time; starting again replaces it. The response is sent with `Cache-Control: no-store`.
 
-`GET /pair/qr.png` (local only) is a PNG of `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`
-for the active code, or `404` when no code can be claimed.
+`GET /pair/qr.png?for=app|browser` (local only) is a PNG for the active code, or `404` when no code can be claimed:
+
+- `for=app` (the default), for the Daytrace app's scanner: `{"daytrace":1,"url":"http://192.168.1.23:8765","code":"493817"}`.
+- `for=browser` (DT-32), for a phone's camera: `http://192.168.1.23:8765/devices#pair=493817`, which opens the
+  Devices page on the phone and pairs that browser as a viewer. A browser never sends the part after `#` to any
+  server, so the code stays out of requests and logs.
 
 `POST /pair/claim` (no token; the network rules still apply):
 
