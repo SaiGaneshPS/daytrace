@@ -918,12 +918,17 @@ def test_each_meal_is_a_point_of_its_type_as_logged(hub: TestClient, stats_of: C
     assert metric(body, "late_meals") == 0  # the seed eats before 22:00
 
 
-def test_late_night_eating_is_from_22_to_4(hub: TestClient, demo: Settings) -> None:
+def test_late_night_eating_is_from_22_to_4_and_counts_for_its_night(hub: TestClient, demo: Settings) -> None:
+    add_meal(demo, datetime(2026, 9, 14, 1, 0, tzinfo=TZ), ["crisps"], "snack")  # the night of the 13th
     for clock_time, items in (((21, 59), ["tea"]), ((22, 0), ["chips"]), ((23, 30), ["noodles"])):
         add_meal(demo, datetime(2026, 9, 20, *clock_time, tzinfo=TZ), items, "snack")
-    add_meal(demo, datetime(2026, 9, 21, 3, 59, tzinfo=TZ), ["toast"], "snack")  # still the night before's
+    add_meal(demo, datetime(2026, 9, 21, 3, 59, tzinfo=TZ), ["toast"], "snack")  # still the night of the 20th
     add_meal(demo, datetime(2026, 9, 21, 4, 0, tzinfo=TZ), ["cereal"], "breakfast")  # an early breakfast
-    assert metric(tab(hub, "food", "14d"), "late_meals") == 3
+    assert metric(tab(hub, "food", "2026-09-14..2026-09-20"), "late_meals") == 3  # 22:00, 23:30 and 03:59; not the 13th's
+    assert metric(tab(hub, "food", "2026-09-21..2026-09-25"), "late_meals") == 0  # 03:59 on the 21st was the 20th's night
+    assert metric(tab(hub, "food", "2026-09-13..2026-09-13"), "late_meals") == 1  # the 01:00 snack, on its night
+    stats = tab(hub, "food", "14d")["series"]["meal_times"]["stats"]
+    assert stats == {"late_from": 22, "late_until": 4}  # the window the dashboard shades
 
 
 def test_each_event_splits_into_what_its_time_went_to(hub: TestClient) -> None:
@@ -933,7 +938,7 @@ def test_each_event_splits_into_what_its_time_went_to(hub: TestClient) -> None:
         parts = block["children"]
         assert [part["key"] for part in parts] == ["on_plan", "off_plan", "other", "idle"]
         assert close(block["value"], [part["value"] for part in parts], 4), block["name"]  # they add up to the event's length
-        assert block["share"] == round(100 * parts[0]["value"] / block["value"])
+        assert abs(block["share"] - 100 * parts[0]["value"] / block["value"]) <= 1  # the hub's share is from whole seconds
 
 
 def test_an_event_on_a_day_nobody_saw_has_no_split(hub: TestClient, demo: Settings) -> None:
@@ -951,3 +956,21 @@ def test_meetings_count_once_across_devices(hub: TestClient, demo: Settings) -> 
     body = tab(hub, "calendar", span)
     assert body["series"]["meetings_by_day"]["lines"][0]["values"] == [45, None]  # 10:00 to 10:45; nothing sent on the 2nd
     assert metric(body, "meetings") == 45
+
+
+
+def test_planned_time_on_a_day_nobody_saw_is_its_own_part(hub: TestClient, demo: Settings) -> None:
+    add_event(demo, datetime(2026, 9, 1, 10, 0, tzinfo=TZ), minutes=90, kind="calendar_event", app=None, category=None, title="Planning")
+    lines = {line["key"]: line["values"] for line in tab(hub, "calendar", "2026-09-01..2026-09-02")["series"]["plan_by_day"]["lines"]}
+    assert lines["unknown"] == [90, 0]  # planned, but what it went to is unknown: not a gap, and not 0 on plan
+    assert lines["on_plan"] == [None, None]
+    assert "unknown" not in {line["key"] for line in tab(hub, "calendar", "14d")["series"]["plan_by_day"]["lines"]}  # every seeded day was seen
+
+
+def test_listening_to_a_call_without_touching_anything_is_still_the_call(hub: TestClient, demo: Settings) -> None:
+    at = datetime(2026, 9, 1, 10, 0, tzinfo=TZ)
+    add_event(demo, at, minutes=60, device="seed-windows", kind="window", app="Zoom", category="comms")
+    add_event(demo, at + timedelta(minutes=10), minutes=30, device="seed-windows", kind="afk", app=None, category=None)  # no input
+    body = tab(hub, "calendar", "2026-09-01..2026-09-01")
+    assert body["series"]["meetings_by_day"]["lines"][0]["values"] == [60]  # screen time says 30; the call was 60
+    assert metric(tab(hub, "overview", "2026-09-01..2026-09-01"), "screen_time") == 30

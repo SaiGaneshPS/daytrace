@@ -6,12 +6,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import type { components } from "../src/api/schema";
+import { hourOfDay } from "../src/pages/insights/clock";
+import { type Format, MEALS, PARTS, UNKNOWN, eventSplitOption, mealTimesOption, mealsByDayOption, planByDayOption } from "../src/pages/insights/foodCharts";
 
 type Item = { name: string; key?: string | null; value: number; share?: number | null; children?: Item[] | null };
 type Tab = {
   metrics: { id: string; label: string; value: number | string | null; explain?: string }[];
   series: Record<string, { x?: string[] | null; items?: Item[] | null; points?: { x: number; y: number; label: string; group?: string | null }[] | null;
-    lines?: { name: string; key?: string | null; values: (number | null)[] }[] | null }>;
+    lines?: { name: string; key?: string | null; values: (number | null)[] }[] | null; stats?: Record<string, number | null> | null }>;
 };
 const FIXTURES = JSON.parse(readFileSync(join(process.cwd(), "e2e", "fixtures", "insights-food-calendar.json"), "utf-8")) as { food: Record<string, Tab>; calendar: Record<string, Tab> };
 
@@ -166,6 +169,67 @@ test("when food can't load, the calendar still shows, and Try again asks again",
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("region", { name: "When you ate" }).locator(".chart canvas").first()).toBeVisible();
   expect(asked.filter((item) => item === "food 7d")).toHaveLength(2);
+});
+
+type HubSeries = components["schemas"]["Series"];
+type Built = { series: { id: string; name: string; data: unknown[]; markArea?: unknown; itemStyle: Record<string, unknown> }[]; legend: { type?: string; data?: { name: string; icon: string }[] };
+  tooltip: { formatter: (params: unknown) => string } };
+const FORMAT: Format = { day: (iso) => `<${iso}>`, minutes: (value) => `${value}m`, escape: (text) => text.replace(/</g, "&lt;") };
+const hub = (series: object) => series as HubSeries;
+
+test("the meals chart keeps its late-night band and its marks whatever the legend does", () => {
+  const built = mealTimesOption(hub(FIXTURES.food["7d"].series.meal_times), FORMAT) as unknown as Built;
+  const late = built.series.find((series) => series.markArea);
+  expect(late?.id).toBe("late"); // on a series of its own ...
+  expect((built.legend.data ?? []).map((item) => item.name)).not.toContain(late?.name); // ... that the legend can't hide
+  expect(built.legend.type).toBe("scroll"); // it scrolls instead of wrapping over the days on a narrow screen
+  for (const item of built.legend.data ?? []) {
+    expect(item.icon).toBe(Object.values(MEALS).find((meal) => meal.label === item.name)?.symbol); // each type's own mark, not only color
+  }
+  expect((mealsByDayOption(hub(FIXTURES.food["7d"].series.meals_by_day), FORMAT) as unknown as Built).legend.type).toBe("scroll");
+  expect([hourOfDay(0), hourOfDay(7.5), hourOfDay(7.999), hourOfDay(24)]).toEqual(["00:00", "07:30", "08:00", "24:00"]); // never "07:60" or a second "00:00"
+});
+
+test("an event nobody saw is unknown in its bar and its tooltip, never 0m on plan", () => {
+  const blocks = FIXTURES.calendar["7d"].series.blocks;
+  const items = (blocks.items ?? []).map((item, index) => (index === 0 ? { ...item, children: null, share: null } : item));
+  const built = eventSplitOption(hub({ ...blocks, items }), FORMAT, true) as unknown as Built;
+  const row = items.length - 1; // the first (longest) event is the top row
+  const parts = built.series.filter((series) => series.id !== "unknown");
+  expect(parts.map((series) => series.name)).toEqual((items[1].children ?? []).map((child) => child.name)); // the hub's parts, as it names them
+  expect(parts.map((series) => series.data[row])).toEqual([null, null, null, null]);
+  const unknown = built.series.find((series) => series.id === "unknown");
+  expect(unknown?.name).toBe(UNKNOWN);
+  expect(unknown?.data[row]).toBe(items[0].value);
+  expect(unknown?.data[0]).toBeNull(); // a known event has no unknown part
+  const tooltip = built.tooltip.formatter(built.series.map((series) => ({ seriesName: series.name, value: series.data[row], axisValueLabel: "Study", marker: "" })));
+  expect(tooltip).toBe(`Study<br>${UNKNOWN}: ${items[0].value}m`);
+  for (const key of ["idle", "unknown"]) expect(PARTS[key].borderColor).toBe("var(--muted)"); // light fills get an outline
+});
+
+test("planned time on a day nobody saw is drawn as unknown, not \"no planned time\"", async ({ page }) => {
+  const base = FIXTURES.calendar["7d"];
+  const plan = base.series.plan_by_day;
+  const lines = [
+    ...(plan.lines ?? []).map((line) => ({ ...line, values: line.values.map(() => null) })),
+    { name: UNKNOWN, key: "unknown", values: (plan.lines ?? [])[0].values.map((_, index) => (index === 2 ? 90 : 0)) },
+  ];
+  const built = planByDayOption(hub({ ...plan, lines }), FORMAT) as unknown as Built;
+  expect(built.series.find((series) => series.id === "unknown")?.data).toEqual([null, null, 90, null, null, null, null]);
+  await mockHub(page, { calendar: () => ({ ...base, series: { ...base.series, plan_by_day: { ...plan, lines } } }) });
+  await page.goto("/insights?tab=food&range=7d");
+  const card = page.getByRole("region", { name: "Planned time and where it went" });
+  await expect(card.locator(".chart canvas").first()).toBeVisible();
+  await expect(card).not.toContainText("No planned time");
+});
+
+test("the late-night window is the hub's", async ({ page }) => {
+  const base = FIXTURES.food["7d"];
+  const times = base.series.meal_times;
+  await mockHub(page, { food: () => ({ ...base, series: { ...base.series, meal_times: { ...times, stats: { late_from: 21, late_until: 5 } } } }) });
+  await page.goto("/insights?tab=food&range=7d");
+  await expect(page.getByRole("region", { name: "Late-night meals" })).toContainText("21:00 to 05:00");
+  await expect(page.getByRole("region", { name: "When you ate" }).locator(".chart")).toHaveAttribute("aria-label", /late-night eating \(21:00 to 05:00\) is shaded/);
 });
 
 for (const scheme of ["light", "dark"] as const) {

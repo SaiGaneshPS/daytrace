@@ -40,7 +40,7 @@
      "label": "Late-night meals",
      "value": 0,
      "unit": "meals",
-     "explain": "Meals logged from 22:00 to 04:00.",
+     "explain": "Meals logged from 22:00 to 04:00, each counted for its night (a snack at 01:00 is the night before's).",
      "estimated": false
     }
    ],
@@ -433,7 +433,10 @@
      ],
      "value": null,
      "max": null,
-     "stats": null,
+     "stats": {
+      "late_from": 22,
+      "late_until": 4
+     },
      "note": null,
      "reason": null
     },
@@ -613,7 +616,7 @@
      "label": "Late-night meals",
      "value": 0,
      "unit": "meals",
-     "explain": "Meals logged from 22:00 to 04:00.",
+     "explain": "Meals logged from 22:00 to 04:00, each counted for its night (a snack at 01:00 is the night before's).",
      "estimated": false
     }
    ],
@@ -845,7 +848,10 @@
      ],
      "value": null,
      "max": null,
-     "stats": null,
+     "stats": {
+      "late_from": 22,
+      "late_until": 4
+     },
      "note": null,
      "reason": null
     },
@@ -1035,7 +1041,7 @@
      "label": "In meetings",
      "value": 0.0,
      "unit": "minutes",
-     "explain": "Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once.",
+     "explain": "Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once, and time listening without touching anything included.",
      "estimated": false
     }
    ],
@@ -1044,7 +1050,7 @@
      "kind": "stacked",
      "title": "Planned time and where it went",
      "unit": "minutes",
-     "explain": "Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen.",
+     "explain": "Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen; on a day no device sent screen data, what it went to is unknown.",
      "estimated": false,
      "x": [
       "2026-09-12",
@@ -1933,7 +1939,7 @@
      "label": "In meetings",
      "value": 0.0,
      "unit": "minutes",
-     "explain": "Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once.",
+     "explain": "Time in meeting apps (Zoom, Teams, Meet and the like), on any device, a call on two at once counted once, and time listening without touching anything included.",
      "estimated": false
     }
    ],
@@ -1942,7 +1948,7 @@
      "kind": "stacked",
      "title": "Planned time and where it went",
      "unit": "minutes",
-     "explain": "Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen.",
+     "explain": "Each day's calendar time: on plan (work, study, meetings), off plan (social, video, games), other screen time, or no screen; on a day no device sent screen data, what it went to is unknown.",
      "estimated": false,
      "x": [
       "2026-09-19",

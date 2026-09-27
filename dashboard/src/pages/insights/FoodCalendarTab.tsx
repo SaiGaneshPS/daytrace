@@ -2,99 +2,40 @@
 // when you ate (a dot per meal, by type, with late-night eating shaded), meals each day, the foods logged most (as
 // logged: no calorie claims), each event split into what its time went to (on plan, off plan, other screens, no
 // screen, adding up to its length), the share of plans kept, planned time by day, and time in meetings each day.
-// Everything is the hub's (GET /insights/food and /insights/calendar).
+// Everything is the hub's (GET /insights/food and /insights/calendar); the chart options are in foodCharts.ts.
 import { useMemo } from "react";
 import ChartCard from "../../components/ChartCard";
 import { longDay, shortDay } from "../../components/DayPicker";
 import StatCard, { formatMinutes } from "../../components/StatCard";
 import { type ChartOption, escapeHTML, useEChart } from "../../theme/charts";
 import { useMediaQuery } from "../../theme/motion";
+import { type Format, eventSplitOption, lateWindow, mealTimesOption, mealsByDayOption, planByDayOption } from "./foodCharts";
 import { Failed, Gauge, SeriesCard, minutesText } from "./parts";
 import { type Series, metric, rangeWords, useInsights, valueOf } from "./shared";
 
 type Props = { range: string; tz: string; today: string };
 
-/** Each meal type's color and mark (never color alone). */
-const MEALS: Record<string, { label: string; color: string; symbol: string }> = {
-  breakfast: { label: "Breakfast", color: "var(--cat-games)", symbol: "circle" },
-  lunch: { label: "Lunch", color: "var(--cat-comms)", symbol: "rect" },
-  dinner: { label: "Dinner", color: "var(--cat-video)", symbol: "triangle" },
-  snack: { label: "Snack", color: "var(--cat-social)", symbol: "diamond" },
-  other: { label: "Other", color: "var(--cat-other)", symbol: "pin" },
-};
-/** What a planned event's time went to, as the hub splits it, and a part for a day nobody's screens could say. */
-const PARTS: Record<string, { color: string; decal: Record<string, unknown> }> = {
-  on_plan: { color: "var(--cat-study)", decal: { symbol: "none" } },
-  off_plan: { color: "var(--cat-social)", decal: { symbol: "rect", symbolSize: 1, dashArrayX: [1, 0], dashArrayY: [3, 4], rotation: Math.PI / 4, color: "rgba(255,255,255,0.55)" } },
-  other: { color: "var(--cat-comms)", decal: { symbol: "circle", symbolSize: 0.6, dashArrayX: [[6, 6], [0, 6, 6, 0]], dashArrayY: [5, 0], color: "rgba(255,255,255,0.55)" } },
-  idle: { color: "var(--surface-2)", decal: { symbol: "none" } },
-  unknown: { color: "var(--border)", decal: { symbol: "rect", symbolSize: 1, dashArrayX: [1, 0], dashArrayY: [2, 5], rotation: -Math.PI / 4, color: "rgba(0,0,0,0.25)" } },
-};
-const LATE_FROM = 22; // the hub's late-night eating: 22:00 to 04:00
-const LATE_UNTIL = 4;
-const hour = (value: number) => `${String(Math.floor(value) % 24).padStart(2, "0")}:${String(Math.round((value % 1) * 60)).padStart(2, "0")}`;
+const FORMAT: Format = { day: shortDay, minutes: formatMinutes, escape: escapeHTML };
+const WIDE = "(min-width: 40rem)";
+const pad = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
+
+/** "22:00 to 04:00", from the hub's late-night window. */
+function lateWords(series: Series | undefined): string | undefined {
+  const late = lateWindow(series);
+  return late ? `${pad(late.from)} to ${pad(late.until)}` : undefined;
+}
 
 // --- food ------------------------------------------------------------------------------------------------------
 
 function MealTimes({ series }: { series: Series }) {
-  const option = useMemo<ChartOption>(() => {
-    const days = (series.x ?? []).map(shortDay);
-    const points = series.points ?? [];
-    const groups = Object.keys(MEALS).filter((group) => points.some((point) => (point.group ?? "other") === group));
-    return {
-      tooltip: {
-        trigger: "item",
-        formatter: (params: { seriesName: string; value: [number, number]; name: string }) =>
-          escapeHTML(`${params.seriesName}, ${days[params.value[0]]} at ${hour(params.value[1])}: ${params.name}`),
-      },
-      legend: { bottom: 0 },
-      grid: { left: 8, right: 16, top: 16, bottom: 40, containLabel: true },
-      xAxis: { type: "category", data: days },
-      yAxis: { type: "value", min: 0, max: 24, interval: 4, inverse: true, axisLabel: { formatter: (value: number) => hour(value) } },
-      series: groups.map((group, index) => ({
-        id: group,
-        name: MEALS[group].label,
-        type: "scatter",
-        symbol: MEALS[group].symbol,
-        symbolSize: 12,
-        itemStyle: { color: MEALS[group].color },
-        data: points.filter((point) => (point.group ?? "other") === group).map((point) => ({ name: point.label, value: [point.x, point.y] })),
-        // Late-night eating, shaded once (on the first series): 22:00 to midnight and midnight to 04:00.
-        ...(index === 0
-          ? {
-              markArea: {
-                silent: true,
-                itemStyle: { color: "var(--surface-2)", opacity: 0.7 },
-                label: { show: true, position: "insideTopLeft", color: "var(--muted)", formatter: "Late" },
-                data: [
-                  [{ yAxis: LATE_FROM }, { yAxis: 24 }],
-                  [{ yAxis: 0 }, { yAxis: LATE_UNTIL }],
-                ],
-              },
-            }
-          : {}),
-      })),
-    };
-  }, [series]);
-  const chart = useEChart(option, `${series.title}: each meal at its time of day, by type; late-night eating (22:00 to 04:00) is shaded`);
+  const option = useMemo(() => mealTimesOption(series, FORMAT) as ChartOption, [series]);
+  const late = lateWords(series);
+  const chart = useEChart(option, `${series.title}: each meal at its time of day, by type${late ? `; late-night eating (${late}) is shaded` : ""}`);
   return <div ref={chart} className="chart" style={{ height: 320 }} />;
 }
 
 function MealsByDay({ series }: { series: Series }) {
-  const option = useMemo<ChartOption>(
-    () => ({
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (value: unknown) => (value === null || value === undefined || value === "-" ? "no data" : String(value)) },
-      legend: { bottom: 0 },
-      grid: { left: 8, right: 16, top: 16, bottom: 40, containLabel: true },
-      xAxis: { type: "category", data: (series.x ?? []).map(shortDay) },
-      yAxis: { type: "value", minInterval: 1 },
-      series: (series.lines ?? []).map((line) => {
-        const meal = MEALS[line.key ?? "other"] ?? MEALS.other;
-        return { id: line.key ?? line.name, name: meal.label, type: "bar", stack: "meals", itemStyle: { color: meal.color }, data: line.values };
-      }),
-    }),
-    [series],
-  );
+  const option = useMemo(() => mealsByDayOption(series, FORMAT) as ChartOption, [series]);
   const chart = useEChart(option, `${series.title}, by type`);
   return <div ref={chart} className="chart" style={{ height: 260 }} />;
 }
@@ -117,43 +58,13 @@ function TopFoods({ series }: { series: Series }) {
 // --- calendar --------------------------------------------------------------------------------------------------
 
 function EventSplit({ series }: { series: Series }) {
-  const wide = useMediaQuery("(min-width: 40rem)"); // narrower: shorter names and fewer ticks, the list below has them in full
-  const option = useMemo<ChartOption>(() => {
-    const events = [...(series.items ?? [])].reverse(); // the longest at the top
-    const names = events.map((event) => `${event.name} (${event.key ? shortDay(event.key) : ""})`);
-    const parts = ["on_plan", "off_plan", "other", "idle"];
-    const labels: Record<string, string> = { on_plan: "On plan", off_plan: "Off plan", other: "Other screen time", idle: "No screen", unknown: "No screen data that day" };
-    const partOf = (children: (typeof events)[number]["children"], key: string) => children?.find((child) => child.key === key)?.value ?? 0;
-    const bars = [
-      ...parts.map((key) => ({
-        id: key,
-        name: labels[key],
-        type: "bar",
-        stack: "event",
-        barMaxWidth: 26,
-        itemStyle: { color: PARTS[key].color, decal: PARTS[key].decal },
-        data: events.map((event) => (event.children ? partOf(event.children, key) : 0)),
-      })),
-      // An event on a day with no screen data: its whole length is unknown, never 0 on plan.
-      ...(events.some((event) => !event.children)
-        ? [{ id: "unknown", name: labels.unknown, type: "bar", stack: "event", barMaxWidth: 26, itemStyle: { color: PARTS.unknown.color, decal: PARTS.unknown.decal },
-             data: events.map((event) => (event.children ? 0 : event.value)) }]
-        : []),
-    ];
-    return {
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: minutesText },
-      legend: { bottom: 0, type: "scroll" },
-      grid: { left: 8, right: 16, top: 8, bottom: 40, containLabel: true },
-      xAxis: { type: "value", splitNumber: wide ? 5 : 2, axisLabel: { hideOverlap: true, formatter: (value: number) => formatMinutes(value) } },
-      yAxis: { type: "category", data: names, axisLabel: { width: wide ? 150 : 90, overflow: "truncate" } },
-      series: bars,
-    };
-  }, [series, wide]);
+  const wide = useMediaQuery(WIDE); // narrower: shorter names and fewer ticks, the list below has them in full
+  const option = useMemo(() => eventSplitOption(series, FORMAT, wide) as ChartOption, [series, wide]);
   const chart = useEChart(option, `${series.title}: each event's minutes on plan, off plan, on other screens and with no screen`);
   const events = series.items ?? [];
   return (
     <>
-      <div ref={chart} className="chart" style={{ height: Math.max(220, events.length * 34 + 70) }} data-no-swipe />
+      <div ref={chart} className="chart" style={{ height: Math.max(220, events.length * 34 + 70) }} />
       <ul className="event-list">
         {events.map((event, index) => (
           <li key={`${event.key}|${event.name}|${index}`}>
@@ -169,24 +80,7 @@ function EventSplit({ series }: { series: Series }) {
 }
 
 function PlanByDay({ series }: { series: Series }) {
-  const option = useMemo<ChartOption>(
-    () => ({
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: minutesText },
-      legend: { bottom: 0, type: "scroll" },
-      grid: { left: 8, right: 16, top: 16, bottom: 40, containLabel: true },
-      xAxis: { type: "category", data: (series.x ?? []).map(shortDay) },
-      yAxis: { type: "value", axisLabel: { formatter: (value: number) => formatMinutes(value) } },
-      series: (series.lines ?? []).map((line) => ({
-        id: line.key ?? line.name,
-        name: line.name,
-        type: "bar",
-        stack: "plan",
-        itemStyle: { color: PARTS[line.key ?? "idle"]?.color ?? "var(--cat-other)", decal: PARTS[line.key ?? "idle"]?.decal },
-        data: line.values,
-      })),
-    }),
-    [series],
-  );
+  const option = useMemo(() => planByDayOption(series, FORMAT) as ChartOption, [series]);
   const chart = useEChart(option, `${series.title}: each day's planned minutes by what they went to`);
   return <div ref={chart} className="chart" style={{ height: 280 }} />;
 }
@@ -231,7 +125,7 @@ export default function FoodCalendarTab({ range, tz, today }: Props) {
           hint={typeof topItem === "string" ? `Most logged: ${topItem}` : undefined}
           error={food.error?.message}
         />
-        <StatCard label="Late-night meals" value={valueOf(foodData, "late_meals")} format={String} tone="video" hint="22:00 to 04:00" error={food.error?.message} />
+        <StatCard label="Late-night meals" value={valueOf(foodData, "late_meals")} format={String} tone="video" hint={lateWords(foodData?.series.meal_times)} error={food.error?.message} />
         <StatCard
           label="Planned time"
           value={valueOf(calendarData, "planned")}

@@ -23,3 +23,9 @@ export function nightWords(day: string, shortDay: (day: string) => string): stri
   const next = new Date(Date.UTC(year, month - 1, date + 1)).toISOString().slice(0, 10);
   return `${shortDay(day)} into ${shortDay(next)}`;
 }
+
+/** "07:30" for an hour of the day as a number (7.5); 24 is "24:00", the end of the day. */
+export function hourOfDay(hours: number): string {
+  const total = Math.round(hours * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}

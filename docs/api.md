@@ -510,12 +510,15 @@ days); anything else is `400`.
   - **sleep:** each night, measured or estimated; bedtime and wake time (minutes after 18:00 the evening before);
     after 11 pm.
   - **food:** meals by day and type, when you ate (each point's `group` is the meal's type), the most logged foods
-    (items as logged, never calories), and the metric `late_meals` (meals from 22:00 to 04:00; DT-57).
+    (items as logged, never calories), and the metric `late_meals` (meals from 22:00 to 04:00 on the range's nights,
+    each counted for its night: a snack at 01:00 is the night before's; the window is in `meal_times.stats`; DT-57).
   - **calendar:** planned time by day and where it went (on plan, off plan, other screen time, no screen); the
     longest events with their on-plan share, each split in `children` into those four parts, which add up to the
-    event's length (null on a day no device sent screen data: unknown, not 0% on plan); weekday by hour; and
-    meetings each day (`meetings_by_day`, time in meeting apps such as Zoom or Teams on any device, a call on two at
-    once counted once) with the metric `meetings` (DT-57).
+    event's length (null on a day no device sent screen data: unknown, not 0% on plan; planned time on such a day is
+    its own `unknown` line in `plan_by_day`); weekday by hour; and meetings each day (`meetings_by_day`, time in
+    meeting apps such as Zoom, Teams, Google Meet or Webex on any device, known by whole words of the app's name or
+    id, a call on two at once counted once, and time listening without touching anything included) with the metric
+    `meetings` (DT-57).
 - The overview also has `changes`: each headline number against the same number of days just before, as
   `{ id, label, unit, now, before, delta, change_pct, direction: up|down|same, better: up|down|neutral, days }`, where `now`
   and `before` are day averages. Only whole days count: today, still going, is left out, and so is a night
