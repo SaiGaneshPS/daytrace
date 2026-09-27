@@ -102,7 +102,8 @@ def test_every_tab_answers_with_its_metrics_and_series(hub: TestClient) -> None:
                      "phone_vs_computer": "stacked"},
         "apps": {"top_apps": "bars", "treemap": "treemap", "by_category": "stacked", "switches": "trend", "leaderboard": "leaderboard"},
         "devices": {"share": "donut", "by_day": "stacked", "hours": "heatmap", "flow": "sankey", "handoffs": "sankey", "sync": "strip"},
-        "focus": {"score": "gauge", "focus_by_day": "stacked", "switches_by_hour": "bars", "late_vs_focus": "scatter"},
+        "focus": {"score": "gauge", "focus_by_day": "stacked", "switches_by_hour": "bars", "late_vs_focus": "scatter",
+                  "switches_by_day": "trend", "distraction_hours": "heatmap"},
         "sleep": {"sleep_by_night": "stacked", "schedule": "trend", "late_night": "bars"},
         "food": {"meals_by_day": "stacked", "meal_times": "scatter", "top_items": "bars"},
         "calendar": {"plan_by_day": "stacked", "blocks": "bars", "hours": "heatmap"},
@@ -584,8 +585,8 @@ DASHBOARD_FIXTURES = Path(__file__).resolve().parents[2] / "dashboard" / "e2e" /
 
 
 def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
-    """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34) and the Apps and Devices tab
-    with one app's detail (DT-55), for 14 seeded days."""
+    """What the dashboard's e2e tests mock the hub with, by file: the Overview (DT-34), the Apps and Devices tab with
+    one app's detail (DT-55), and the Focus and Sleep tab (DT-56), for 14 seeded days."""
     def fresh(body: dict[str, Any]) -> dict[str, Any]:
         return {**body, "cached": False}
 
@@ -597,6 +598,10 @@ def fixture_answers(client: TestClient) -> dict[str, dict[str, Any]]:
             "apps": apps,
             "devices": {span: fresh(tab(client, "devices", span)) for span in ("14d", "7d")},
             "detail": {"7d": fresh(detail(client, leader))},
+        },
+        "insights-focus-sleep.json": {
+            "focus": {span: fresh(tab(client, "focus", span)) for span in ("14d", "7d")},
+            "sleep": {span: fresh(tab(client, "sleep", span)) for span in ("14d", "7d")},
         },
     }
 
@@ -811,3 +816,76 @@ def test_the_leaderboard_reads_the_ranges_own_split(hub: TestClient, monkeypatch
     insights_api._cache.clear()
     tab(hub, "apps", "today")
     assert (TODAY - timedelta(days=6), TODAY, "day", "app") in calls  # a range shorter than the week reads the days before
+
+
+# --- DT-56: the Focus and Sleep tab ------------------------------------------------------------------------------
+
+
+def test_distractions_by_hour_add_up_to_the_distracting_categories(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    heat = tab(hub, "focus", "14d")["series"]["distraction_hours"]
+    assert heat["x"] == insights_api.HOURS and heat["y"] == insights_api.WEEKDAYS
+    stats = stats_of()  # the focus score's distracted time: overlaps once
+    distracted = sum(stats.focus_score(FIRST + timedelta(days=i)).get("distracted_seconds", 0) for i in range(14)) / 60
+    assert close(distracted, [cell["value"] for cell in heat["cells"]], len(heat["cells"]))
+    evenings = sum(cell["value"] for cell in heat["cells"] if cell["x"] >= 21)
+    assert evenings > 0  # the seeded late-night scrolling is there
+
+
+def test_switches_by_day_are_the_stats_engines(hub: TestClient, stats_of: Callable[[], Stats]) -> None:
+    line = tab(hub, "focus", "14d")["series"]["switches_by_day"]["lines"][0]["values"]
+    stats = stats_of()
+    assert line == [stats.switches_per_hour(FIRST + timedelta(days=i))["value"] for i in range(14)]
+
+
+def test_the_trend_line_is_theil_sen_and_only_with_a_correlation() -> None:
+    pairs = [{"late_minutes": x, "focus_score": y} for x, y in ((0, 80), (60, 60), (120, 40))]
+    assert insights_api.trend_line(pairs, rho=-1.0) == {"slope": -0.3333, "intercept": 80.0}  # exactly 80 - x / 3
+    assert insights_api.trend_line(pairs, rho=None) == {"slope": None, "intercept": None}  # no correlation: no line
+    # One odd night (a short late night, then a great day) would turn a least-squares line up; the medians aren't swung.
+    odd = [{"late_minutes": x, "focus_score": y} for x, y in ((0, 80), (30, 70), (60, 60), (90, 50), (120, 40), (10, 20))]
+    assert insights_api.trend_line(odd, rho=-0.6)["slope"] < 0
+
+
+def test_a_missing_correlation_says_why(hub: TestClient) -> None:
+    few = tab(hub, "focus", f"{(TODAY - timedelta(days=2)).isoformat()}..{TODAY.isoformat()}")["series"]["late_vs_focus"]
+    assert few["stats"]["rho"] is None and few["stats"]["n"] < 3 and few["reason"].startswith("It needs 3 nights")
+    assert few["stats"]["slope"] is None  # and no line without it
+    assert tab(hub, "focus", "14d")["series"]["late_vs_focus"]["reason"] is None
+
+
+def test_the_focus_lines_have_keys(hub: TestClient) -> None:
+    lines = tab(hub, "focus", "14d")["series"]["focus_by_day"]["lines"]
+    assert [line["key"] for line in lines] == ["focused", "rest", "distracted"]  # the calendar finds its line by key, not its name
+
+
+def test_distraction_on_two_devices_at_once_counts_once(hub: TestClient, demo: Settings) -> None:
+    span = "2026-09-01..2026-09-02"  # before the seed: only what is added here
+    at = datetime(2026, 9, 1, 21, 0, tzinfo=TZ)  # a Tuesday
+    add_event(demo, at, minutes=60, device="seed-android", app="YouTube", category="video")
+    add_event(demo, at, minutes=60, device="seed-windows", app="YouTube", category="video")
+    cells = {(cell["x"], cell["y"]): cell["value"] for cell in tab(hub, "focus", span)["series"]["distraction_hours"]["cells"]}
+    assert cells == {(21, 1): 60}
+
+
+def test_estimated_screen_time_marks_the_focus_charts(hub: TestClient, demo: Settings) -> None:
+    # An iPhone app opened on the 22nd and never seen closing: its time is inferred, and so is everything made from it.
+    with Database(demo.database_path).connect() as conn, transaction(conn):
+        conn.execute(
+            "INSERT INTO events (device_id, dedup_key, seq, kind, source, start_utc, end_utc, utc_offset_min, app, app_id, title, category, data, received_at)"
+            " VALUES ('seed-iphone', 'content:open-no-close', NULL, 'app_open', 'seed', ?, NULL, -240, 'Instagram', 'app.instagram', NULL, 'social', '{}', ?)",
+            (utc(datetime(2026, 9, 22, 10, 0, tzinfo=TZ)), "2026-09-25T20:00:00.000000Z"),
+        )
+    series = tab(hub, "focus", "14d")["series"]
+    assert series["switches_by_day"]["estimated"] and series["score"]["estimated"] and series["late_vs_focus"]["estimated"]
+
+
+
+def test_the_late_night_pattern_has_its_line_size_and_caveat(hub: TestClient) -> None:
+    body = tab(hub, "focus", "14d")
+    scatter = body["series"]["late_vs_focus"]
+    stats = scatter["stats"]
+    assert stats["n"] == len(scatter["points"]) >= 10 and stats["rho"] < -0.5  # the seeded pattern: later nights, less focus
+    assert stats["slope"] < 0 and 0 <= stats["intercept"] <= 100
+    assert scatter["note"].startswith("Correlation, not cause")
+    explain = body["series"]["score"]["explain"]
+    assert "100 × focused time ÷ (work or study time + distracted time)" in explain  # the formula, for the gauge's tooltip

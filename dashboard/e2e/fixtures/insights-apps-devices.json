@@ -214,7 +214,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "treemap": {
      "kind": "treemap",
@@ -553,7 +554,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "by_category": {
      "kind": "stacked",
@@ -765,13 +767,14 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "switches": {
      "kind": "trend",
      "title": "App switches an hour",
      "unit": "switches per hour",
-     "explain": "How often you jumped between apps, per hour of screen time.",
+     "explain": "How often you jumped between apps each day, per hour of screen time.",
      "estimated": false,
      "x": [
       "2026-09-12",
@@ -793,7 +796,7 @@
      "lines": [
       {
        "name": "Switches an hour",
-       "key": null,
+       "key": "switches",
        "category": null,
        "device_type": null,
        "values": [
@@ -823,7 +826,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "leaderboard": {
      "kind": "leaderboard",
@@ -1032,7 +1036,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "changes": [],
@@ -1262,7 +1267,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "treemap": {
      "kind": "treemap",
@@ -1601,7 +1607,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "by_category": {
      "kind": "stacked",
@@ -1750,13 +1757,14 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "switches": {
      "kind": "trend",
      "title": "App switches an hour",
      "unit": "switches per hour",
-     "explain": "How often you jumped between apps, per hour of screen time.",
+     "explain": "How often you jumped between apps each day, per hour of screen time.",
      "estimated": false,
      "x": [
       "2026-09-19",
@@ -1771,7 +1779,7 @@
      "lines": [
       {
        "name": "Switches an hour",
-       "key": null,
+       "key": "switches",
        "category": null,
        "device_type": null,
        "values": [
@@ -1794,7 +1802,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "leaderboard": {
      "kind": "leaderboard",
@@ -2113,7 +2122,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "changes": [],
@@ -2291,7 +2301,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "by_day": {
      "kind": "stacked",
@@ -2415,7 +2426,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "hours": {
      "kind": "heatmap",
@@ -2611,7 +2623,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "flow": {
      "kind": "sankey",
@@ -2710,7 +2723,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "handoffs": {
      "kind": "sankey",
@@ -2809,7 +2823,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "sync": {
      "kind": "strip",
@@ -3130,7 +3145,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "changes": [],
@@ -3306,7 +3322,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "by_day": {
      "kind": "stacked",
@@ -3395,7 +3412,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "hours": {
      "kind": "heatmap",
@@ -3581,7 +3599,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "flow": {
      "kind": "sankey",
@@ -3680,7 +3699,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "handoffs": {
      "kind": "sankey",
@@ -3779,7 +3799,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "sync": {
      "kind": "strip",
@@ -3953,7 +3974,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "changes": [],
@@ -4059,7 +4081,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "hours": {
      "kind": "bars",
@@ -4137,7 +4160,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     },
     "devices": {
      "kind": "donut",
@@ -4168,7 +4192,8 @@
      "value": null,
      "max": null,
      "stats": null,
-     "note": null
+     "note": null,
+     "reason": null
     }
    },
    "longest": {

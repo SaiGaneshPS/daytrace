@@ -883,9 +883,17 @@ class Stats:
             statistic, pvalue = float(result.statistic), float(result.pvalue)
             if not (math.isnan(statistic) or math.isnan(pvalue)):
                 rho, p = round(statistic, 3), round(pvalue, 4)
+        reason = None
+        if rho is None:
+            if len(pairs) < 3:
+                reason = "It needs 3 nights with a next day to compare; this range has fewer."
+            elif len({pair["late_minutes"] for pair in pairs}) == 1:
+                reason = "Every night had the same late-night screen time, so there is nothing to compare."
+            else:
+                reason = "Every next day had the same focus score, so there is nothing to compare."
         windows = [self.day(d) for d in days]
         return {
-            "rho": rho, "p": p, "n": len(pairs), "pairs": pairs, "caveat": CAVEAT,
+            "rho": rho, "p": p, "n": len(pairs), "pairs": pairs, "caveat": CAVEAT, "reason": reason,
             **self._meta(windows[0].start, windows[-1].end, windows, estimated, unit="rank correlation"),
         }
 

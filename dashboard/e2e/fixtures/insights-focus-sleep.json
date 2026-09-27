@@ -1,0 +1,1991 @@
+{
+ "focus": {
+  "14d": {
+   "tab": "focus",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-12",
+    "last": "2026-09-25",
+    "days": 14,
+    "label": "Last 14 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "focused_time",
+     "label": "Focused time",
+     "value": 4380.38,
+     "unit": "minutes",
+     "explain": "Work or study in blocks of 10 minutes or more with no phone distraction.",
+     "estimated": false
+    },
+    {
+     "id": "focus_score",
+     "label": "Focus score, on average",
+     "value": 61,
+     "unit": "score",
+     "explain": "0 to 100: focused time against work, study and distraction together, averaged over the days.",
+     "estimated": false
+    },
+    {
+     "id": "best_day",
+     "label": "Best day",
+     "value": "2026-09-25",
+     "unit": "date",
+     "explain": "The day with the highest focus score in the range.",
+     "estimated": false
+    },
+    {
+     "id": "best_score",
+     "label": "Its focus score",
+     "value": 82,
+     "unit": "score",
+     "explain": "That day's focus score.",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "score": {
+     "kind": "gauge",
+     "title": "Focus score",
+     "unit": "score",
+     "explain": "Each day: 100 \u00d7 focused time \u00f7 (work or study time + distracted time), where focused time is work or study in blocks of 10 minutes or more with no phone distraction, and distracted time is social, video and game apps. This is the average of the days' scores.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": 61.0,
+     "max": 100.0,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "focus_by_day": {
+     "kind": "stacked",
+     "title": "Focus and distraction by day",
+     "unit": "minutes",
+     "explain": "Focused time, the rest of the work or study time, and time in social, video or game apps.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Focused",
+       "key": "focused",
+       "category": "study",
+       "device_type": null,
+       "values": [
+        345.55,
+        209.98,
+        350.15,
+        163.97,
+        196.37,
+        364.98,
+        383.6,
+        363.77,
+        336.43,
+        390.83,
+        139.98,
+        366.72,
+        383.43,
+        384.62
+       ]
+      },
+      {
+       "name": "Other work or study",
+       "key": "rest",
+       "category": "work",
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        9.3,
+        1.4,
+        0.0,
+        0.0,
+        3.22,
+        0.0,
+        10.55,
+        0.0,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "name": "Distracted",
+       "key": "distracted",
+       "category": "social",
+       "device_type": null,
+       "values": [
+        173.57,
+        279.07,
+        186.13,
+        387.63,
+        280.85,
+        151.07,
+        130.72,
+        174.98,
+        132.45,
+        148.67,
+        319.03,
+        144.85,
+        139.42,
+        86.98
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "switches_by_hour": {
+     "kind": "bars",
+     "title": "App switches through the day",
+     "unit": "switches",
+     "explain": "App switches by hour of the day, the whole range added up.",
+     "estimated": false,
+     "x": [
+      "00",
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Switches",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        4.0,
+        2.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        20.0,
+        2.0,
+        13.0,
+        28.0,
+        34.0,
+        14.0,
+        4.0,
+        33.0,
+        7.0,
+        20.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        4.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "switches_by_day": {
+     "kind": "trend",
+     "title": "App switches an hour",
+     "unit": "switches per hour",
+     "explain": "How often you jumped between apps each day, per hour of screen time.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Switches an hour",
+       "key": "switches",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.3,
+        1.2,
+        1.8,
+        1.4,
+        1.4,
+        1.6,
+        1.3,
+        1.1,
+        1.2,
+        1.6,
+        1.5,
+        1.6,
+        1.3,
+        1.9
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "distraction_hours": {
+     "kind": "heatmap",
+     "title": "When distractions happen",
+     "unit": "minutes",
+     "explain": "Time in social, video and game apps by weekday and hour of the day, the range added up (time on two devices at once counted once).",
+     "estimated": false,
+     "x": [
+      "00",
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23"
+     ],
+     "y": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+     ],
+     "lines": null,
+     "items": null,
+     "cells": [
+      {
+       "x": 0,
+       "y": 1,
+       "value": 113.0
+      },
+      {
+       "x": 0,
+       "y": 2,
+       "value": 58.78
+      },
+      {
+       "x": 0,
+       "y": 6,
+       "value": 49.33
+      },
+      {
+       "x": 1,
+       "y": 1,
+       "value": 58.0
+      },
+      {
+       "x": 1,
+       "y": 2,
+       "value": 8.0
+      },
+      {
+       "x": 6,
+       "y": 4,
+       "value": 5.0
+      },
+      {
+       "x": 7,
+       "y": 0,
+       "value": 17.88
+      },
+      {
+       "x": 7,
+       "y": 2,
+       "value": 18.65
+      },
+      {
+       "x": 7,
+       "y": 3,
+       "value": 31.05
+      },
+      {
+       "x": 7,
+       "y": 4,
+       "value": 23.02
+      },
+      {
+       "x": 7,
+       "y": 5,
+       "value": 31.0
+      },
+      {
+       "x": 7,
+       "y": 6,
+       "value": 13.0
+      },
+      {
+       "x": 8,
+       "y": 2,
+       "value": 15.0
+      },
+      {
+       "x": 8,
+       "y": 6,
+       "value": 11.03
+      },
+      {
+       "x": 9,
+       "y": 1,
+       "value": 20.22
+      },
+      {
+       "x": 9,
+       "y": 2,
+       "value": 3.15
+      },
+      {
+       "x": 10,
+       "y": 0,
+       "value": 5.13
+      },
+      {
+       "x": 10,
+       "y": 1,
+       "value": 20.38
+      },
+      {
+       "x": 10,
+       "y": 2,
+       "value": 23.63
+      },
+      {
+       "x": 10,
+       "y": 6,
+       "value": 26.73
+      },
+      {
+       "x": 11,
+       "y": 1,
+       "value": 57.15
+      },
+      {
+       "x": 11,
+       "y": 2,
+       "value": 21.35
+      },
+      {
+       "x": 11,
+       "y": 6,
+       "value": 18.4
+      },
+      {
+       "x": 12,
+       "y": 0,
+       "value": 23.0
+      },
+      {
+       "x": 12,
+       "y": 1,
+       "value": 50.42
+      },
+      {
+       "x": 12,
+       "y": 2,
+       "value": 36.27
+      },
+      {
+       "x": 12,
+       "y": 3,
+       "value": 21.0
+      },
+      {
+       "x": 12,
+       "y": 4,
+       "value": 16.0
+      },
+      {
+       "x": 12,
+       "y": 5,
+       "value": 25.02
+      },
+      {
+       "x": 12,
+       "y": 6,
+       "value": 28.95
+      },
+      {
+       "x": 13,
+       "y": 0,
+       "value": 10.67
+      },
+      {
+       "x": 13,
+       "y": 1,
+       "value": 37.6
+      },
+      {
+       "x": 13,
+       "y": 2,
+       "value": 7.35
+      },
+      {
+       "x": 13,
+       "y": 3,
+       "value": 2.92
+      },
+      {
+       "x": 13,
+       "y": 4,
+       "value": 5.63
+      },
+      {
+       "x": 13,
+       "y": 5,
+       "value": 3.72
+      },
+      {
+       "x": 13,
+       "y": 6,
+       "value": 10.97
+      },
+      {
+       "x": 14,
+       "y": 1,
+       "value": 52.13
+      },
+      {
+       "x": 14,
+       "y": 2,
+       "value": 15.42
+      },
+      {
+       "x": 14,
+       "y": 6,
+       "value": 28.18
+      },
+      {
+       "x": 15,
+       "y": 1,
+       "value": 36.12
+      },
+      {
+       "x": 15,
+       "y": 2,
+       "value": 17.58
+      },
+      {
+       "x": 19,
+       "y": 0,
+       "value": 24.0
+      },
+      {
+       "x": 19,
+       "y": 1,
+       "value": 32.0
+      },
+      {
+       "x": 19,
+       "y": 2,
+       "value": 18.0
+      },
+      {
+       "x": 19,
+       "y": 3,
+       "value": 42.0
+      },
+      {
+       "x": 19,
+       "y": 4,
+       "value": 14.0
+      },
+      {
+       "x": 19,
+       "y": 5,
+       "value": 41.0
+      },
+      {
+       "x": 19,
+       "y": 6,
+       "value": 35.0
+      },
+      {
+       "x": 20,
+       "y": 0,
+       "value": 106.35
+      },
+      {
+       "x": 20,
+       "y": 1,
+       "value": 116.32
+      },
+      {
+       "x": 20,
+       "y": 2,
+       "value": 111.0
+      },
+      {
+       "x": 20,
+       "y": 3,
+       "value": 120.0
+      },
+      {
+       "x": 20,
+       "y": 4,
+       "value": 118.58
+      },
+      {
+       "x": 20,
+       "y": 5,
+       "value": 114.03
+      },
+      {
+       "x": 20,
+       "y": 6,
+       "value": 106.7
+      },
+      {
+       "x": 21,
+       "y": 0,
+       "value": 40.7
+      },
+      {
+       "x": 21,
+       "y": 1,
+       "value": 48.42
+      },
+      {
+       "x": 21,
+       "y": 2,
+       "value": 34.37
+      },
+      {
+       "x": 21,
+       "y": 3,
+       "value": 44.2
+      },
+      {
+       "x": 21,
+       "y": 4,
+       "value": 17.23
+      },
+      {
+       "x": 21,
+       "y": 5,
+       "value": 59.65
+      },
+      {
+       "x": 21,
+       "y": 6,
+       "value": 42.7
+      },
+      {
+       "x": 22,
+       "y": 0,
+       "value": 31.07
+      },
+      {
+       "x": 22,
+       "y": 1,
+       "value": 26.03
+      },
+      {
+       "x": 22,
+       "y": 2,
+       "value": 37.15
+      },
+      {
+       "x": 22,
+       "y": 3,
+       "value": 29.32
+      },
+      {
+       "x": 22,
+       "y": 4,
+       "value": 18.23
+      },
+      {
+       "x": 22,
+       "y": 5,
+       "value": 35.13
+      },
+      {
+       "x": 22,
+       "y": 6,
+       "value": 20.52
+      },
+      {
+       "x": 23,
+       "y": 0,
+       "value": 76.0
+      },
+      {
+       "x": 23,
+       "y": 1,
+       "value": 38.88
+      },
+      {
+       "x": 23,
+       "y": 5,
+       "value": 39.0
+      },
+      {
+       "x": 23,
+       "y": 6,
+       "value": 20.0
+      }
+     ],
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "late_vs_focus": {
+     "kind": "scatter",
+     "title": "Late nights and the next day's focus",
+     "unit": "score",
+     "explain": "Each point is a night: minutes on screens after 11 pm, and the next day's focus score.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": [
+      {
+       "x": 88.33,
+       "y": 43.0,
+       "label": "2026-09-12"
+      },
+      {
+       "x": 20.0,
+       "y": 65.0,
+       "label": "2026-09-13"
+      },
+      {
+       "x": 124.0,
+       "y": 30.0,
+       "label": "2026-09-14"
+      },
+      {
+       "x": 105.67,
+       "y": 40.0,
+       "label": "2026-09-15"
+      },
+      {
+       "x": 0.0,
+       "y": 71.0,
+       "label": "2026-09-16"
+      },
+      {
+       "x": 0.0,
+       "y": 75.0,
+       "label": "2026-09-17"
+      },
+      {
+       "x": 0.0,
+       "y": 68.0,
+       "label": "2026-09-18"
+      },
+      {
+       "x": 0.0,
+       "y": 71.0,
+       "label": "2026-09-19"
+      },
+      {
+       "x": 0.0,
+       "y": 72.0,
+       "label": "2026-09-20"
+      },
+      {
+       "x": 123.0,
+       "y": 30.0,
+       "label": "2026-09-21"
+      },
+      {
+       "x": 0.0,
+       "y": 72.0,
+       "label": "2026-09-22"
+      },
+      {
+       "x": 0.0,
+       "y": 73.0,
+       "label": "2026-09-23"
+      }
+     ],
+     "value": null,
+     "max": null,
+     "stats": {
+      "rho": -0.898,
+      "p": 0.0001,
+      "n": 12,
+      "slope": -0.3312,
+      "intercept": 71.81
+     },
+     "note": "Correlation, not cause: days with more late-night screen time were followed by different focus, but other things (deadlines, illness, weekends) can explain both.",
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-12T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  },
+  "7d": {
+   "tab": "focus",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-19",
+    "last": "2026-09-25",
+    "days": 7,
+    "label": "Last 7 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "focused_time",
+     "label": "Focused time",
+     "value": 2365.78,
+     "unit": "minutes",
+     "explain": "Work or study in blocks of 10 minutes or more with no phone distraction.",
+     "estimated": false
+    },
+    {
+     "id": "focus_score",
+     "label": "Focus score, on average",
+     "value": 67,
+     "unit": "score",
+     "explain": "0 to 100: focused time against work, study and distraction together, averaged over the days.",
+     "estimated": false
+    },
+    {
+     "id": "best_day",
+     "label": "Best day",
+     "value": "2026-09-25",
+     "unit": "date",
+     "explain": "The day with the highest focus score in the range.",
+     "estimated": false
+    },
+    {
+     "id": "best_score",
+     "label": "Its focus score",
+     "value": 82,
+     "unit": "score",
+     "explain": "That day's focus score.",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "score": {
+     "kind": "gauge",
+     "title": "Focus score",
+     "unit": "score",
+     "explain": "Each day: 100 \u00d7 focused time \u00f7 (work or study time + distracted time), where focused time is work or study in blocks of 10 minutes or more with no phone distraction, and distracted time is social, video and game apps. This is the average of the days' scores.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": 67.0,
+     "max": 100.0,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "focus_by_day": {
+     "kind": "stacked",
+     "title": "Focus and distraction by day",
+     "unit": "minutes",
+     "explain": "Focused time, the rest of the work or study time, and time in social, video or game apps.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Focused",
+       "key": "focused",
+       "category": "study",
+       "device_type": null,
+       "values": [
+        363.77,
+        336.43,
+        390.83,
+        139.98,
+        366.72,
+        383.43,
+        384.62
+       ]
+      },
+      {
+       "name": "Other work or study",
+       "key": "rest",
+       "category": "work",
+       "device_type": null,
+       "values": [
+        0.0,
+        3.22,
+        0.0,
+        10.55,
+        0.0,
+        0.0,
+        0.0
+       ]
+      },
+      {
+       "name": "Distracted",
+       "key": "distracted",
+       "category": "social",
+       "device_type": null,
+       "values": [
+        174.98,
+        132.45,
+        148.67,
+        319.03,
+        144.85,
+        139.42,
+        86.98
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "switches_by_hour": {
+     "kind": "bars",
+     "title": "App switches through the day",
+     "unit": "switches",
+     "explain": "App switches by hour of the day, the whole range added up.",
+     "estimated": false,
+     "x": [
+      "00",
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Switches",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        12.0,
+        0.0,
+        6.0,
+        14.0,
+        15.0,
+        8.0,
+        1.0,
+        17.0,
+        4.0,
+        10.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "switches_by_day": {
+     "kind": "trend",
+     "title": "App switches an hour",
+     "unit": "switches per hour",
+     "explain": "How often you jumped between apps each day, per hour of screen time.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Switches an hour",
+       "key": "switches",
+       "category": null,
+       "device_type": null,
+       "values": [
+        1.1,
+        1.2,
+        1.6,
+        1.5,
+        1.6,
+        1.3,
+        1.9
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "distraction_hours": {
+     "kind": "heatmap",
+     "title": "When distractions happen",
+     "unit": "minutes",
+     "explain": "Time in social, video and game apps by weekday and hour of the day, the range added up (time on two devices at once counted once).",
+     "estimated": false,
+     "x": [
+      "00",
+      "01",
+      "02",
+      "03",
+      "04",
+      "05",
+      "06",
+      "07",
+      "08",
+      "09",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23"
+     ],
+     "y": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+     ],
+     "lines": null,
+     "items": null,
+     "cells": [
+      {
+       "x": 0,
+       "y": 1,
+       "value": 56.0
+      },
+      {
+       "x": 1,
+       "y": 1,
+       "value": 29.0
+      },
+      {
+       "x": 6,
+       "y": 4,
+       "value": 5.0
+      },
+      {
+       "x": 7,
+       "y": 0,
+       "value": 8.05
+      },
+      {
+       "x": 7,
+       "y": 2,
+       "value": 18.65
+      },
+      {
+       "x": 7,
+       "y": 3,
+       "value": 18.57
+      },
+      {
+       "x": 7,
+       "y": 4,
+       "value": 5.92
+      },
+      {
+       "x": 7,
+       "y": 5,
+       "value": 16.62
+      },
+      {
+       "x": 7,
+       "y": 6,
+       "value": 13.0
+      },
+      {
+       "x": 9,
+       "y": 1,
+       "value": 11.27
+      },
+      {
+       "x": 11,
+       "y": 1,
+       "value": 27.98
+      },
+      {
+       "x": 12,
+       "y": 0,
+       "value": 13.0
+      },
+      {
+       "x": 12,
+       "y": 1,
+       "value": 26.12
+      },
+      {
+       "x": 12,
+       "y": 2,
+       "value": 13.57
+      },
+      {
+       "x": 12,
+       "y": 3,
+       "value": 10.0
+      },
+      {
+       "x": 12,
+       "y": 4,
+       "value": 8.0
+      },
+      {
+       "x": 12,
+       "y": 5,
+       "value": 13.02
+      },
+      {
+       "x": 12,
+       "y": 6,
+       "value": 14.0
+      },
+      {
+       "x": 13,
+       "y": 0,
+       "value": 5.27
+      },
+      {
+       "x": 13,
+       "y": 1,
+       "value": 25.07
+      },
+      {
+       "x": 13,
+       "y": 3,
+       "value": 2.23
+      },
+      {
+       "x": 13,
+       "y": 4,
+       "value": 2.07
+      },
+      {
+       "x": 13,
+       "y": 6,
+       "value": 3.2
+      },
+      {
+       "x": 14,
+       "y": 1,
+       "value": 22.42
+      },
+      {
+       "x": 15,
+       "y": 1,
+       "value": 19.22
+      },
+      {
+       "x": 19,
+       "y": 0,
+       "value": 11.0
+      },
+      {
+       "x": 19,
+       "y": 1,
+       "value": 14.0
+      },
+      {
+       "x": 19,
+       "y": 2,
+       "value": 8.0
+      },
+      {
+       "x": 19,
+       "y": 3,
+       "value": 19.0
+      },
+      {
+       "x": 19,
+       "y": 4,
+       "value": 6.0
+      },
+      {
+       "x": 19,
+       "y": 5,
+       "value": 22.0
+      },
+      {
+       "x": 19,
+       "y": 6,
+       "value": 18.0
+      },
+      {
+       "x": 20,
+       "y": 0,
+       "value": 46.35
+      },
+      {
+       "x": 20,
+       "y": 1,
+       "value": 56.32
+      },
+      {
+       "x": 20,
+       "y": 2,
+       "value": 60.0
+      },
+      {
+       "x": 20,
+       "y": 3,
+       "value": 60.0
+      },
+      {
+       "x": 20,
+       "y": 4,
+       "value": 60.0
+      },
+      {
+       "x": 20,
+       "y": 5,
+       "value": 60.0
+      },
+      {
+       "x": 20,
+       "y": 6,
+       "value": 46.7
+      },
+      {
+       "x": 21,
+       "y": 0,
+       "value": 18.07
+      },
+      {
+       "x": 21,
+       "y": 1,
+       "value": 23.08
+      },
+      {
+       "x": 21,
+       "y": 2,
+       "value": 20.42
+      },
+      {
+       "x": 21,
+       "y": 3,
+       "value": 21.45
+      },
+      {
+       "x": 21,
+       "y": 5,
+       "value": 39.38
+      },
+      {
+       "x": 21,
+       "y": 6,
+       "value": 25.17
+      },
+      {
+       "x": 22,
+       "y": 0,
+       "value": 8.93
+      },
+      {
+       "x": 22,
+       "y": 1,
+       "value": 8.57
+      },
+      {
+       "x": 22,
+       "y": 2,
+       "value": 24.22
+      },
+      {
+       "x": 22,
+       "y": 3,
+       "value": 8.17
+      },
+      {
+       "x": 22,
+       "y": 5,
+       "value": 23.97
+      },
+      {
+       "x": 22,
+       "y": 6,
+       "value": 12.38
+      },
+      {
+       "x": 23,
+       "y": 0,
+       "value": 38.0
+      }
+     ],
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "late_vs_focus": {
+     "kind": "scatter",
+     "title": "Late nights and the next day's focus",
+     "unit": "score",
+     "explain": "Each point is a night: minutes on screens after 11 pm, and the next day's focus score.",
+     "estimated": false,
+     "x": null,
+     "y": null,
+     "lines": null,
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": [
+      {
+       "x": 0.0,
+       "y": 71.0,
+       "label": "2026-09-19"
+      },
+      {
+       "x": 0.0,
+       "y": 72.0,
+       "label": "2026-09-20"
+      },
+      {
+       "x": 123.0,
+       "y": 30.0,
+       "label": "2026-09-21"
+      },
+      {
+       "x": 0.0,
+       "y": 72.0,
+       "label": "2026-09-22"
+      },
+      {
+       "x": 0.0,
+       "y": 73.0,
+       "label": "2026-09-23"
+      }
+     ],
+     "value": null,
+     "max": null,
+     "stats": {
+      "rho": -0.725,
+      "p": 0.1654,
+      "n": 5,
+      "slope": -0.3415,
+      "intercept": 72.0
+     },
+     "note": "Correlation, not cause: days with more late-night screen time were followed by different focus, but other things (deadlines, illness, weekends) can explain both.",
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-19T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  }
+ },
+ "sleep": {
+  "14d": {
+   "tab": "sleep",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-12",
+    "last": "2026-09-25",
+    "days": 14,
+    "label": "Last 14 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "sleep",
+     "label": "Sleep a night",
+     "value": 458.64,
+     "unit": "minutes",
+     "explain": "From your health app when it sends sleep; otherwise the longest stretch the phone was not used overnight.",
+     "estimated": false
+    },
+    {
+     "id": "nights",
+     "label": "Nights with sleep",
+     "value": 14,
+     "unit": "nights",
+     "explain": "Nights in the range with sleep measured or estimated.",
+     "estimated": false
+    },
+    {
+     "id": "estimated_nights",
+     "label": "Estimated nights",
+     "value": 0,
+     "unit": "nights",
+     "explain": "Nights worked out from the phone's quiet time, with no health data.",
+     "estimated": false
+    },
+    {
+     "id": "late_night",
+     "label": "After 11 pm, a night",
+     "value": 35.46,
+     "unit": "minutes",
+     "explain": "Screen time from 23:00 to 03:00, on any device (overlaps counted once).",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "sleep_by_night": {
+     "kind": "stacked",
+     "title": "Sleep each night",
+     "unit": "minutes",
+     "explain": "The night ending on each morning: measured by your health app, or estimated from the phone.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Measured",
+       "key": null,
+       "category": "health",
+       "device_type": null,
+       "values": [
+        457.0,
+        457.0,
+        461.0,
+        448.0,
+        447.0,
+        457.0,
+        468.0,
+        454.0,
+        471.0,
+        460.0,
+        472.0,
+        467.0,
+        455.0,
+        447.0
+       ]
+      },
+      {
+       "name": "Estimated",
+       "key": null,
+       "category": "other",
+       "device_type": null,
+       "values": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "schedule": {
+     "kind": "trend",
+     "title": "Bedtime and wake time",
+     "unit": "minutes after 18:00",
+     "explain": "When sleep started and ended, as minutes after 18:00 the evening before (360 is midnight).",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Asleep",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        325.0,
+        415.0,
+        345.0,
+        455.0,
+        435.0,
+        325.0,
+        325.0,
+        325.0,
+        325.0,
+        325.0,
+        455.0,
+        325.0,
+        325.0,
+        325.0
+       ]
+      },
+      {
+       "name": "Awake",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        782.0,
+        872.0,
+        806.0,
+        903.0,
+        882.0,
+        782.0,
+        793.0,
+        779.0,
+        796.0,
+        785.0,
+        927.0,
+        792.0,
+        780.0,
+        772.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "late_night": {
+     "kind": "bars",
+     "title": "After 11 pm",
+     "unit": "minutes",
+     "explain": "Screen time from 23:00 on each day to 03:00 the next morning.",
+     "estimated": false,
+     "x": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "After 11 pm",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        88.33,
+        20.0,
+        124.0,
+        105.67,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        123.0,
+        0.0,
+        0.0,
+        0.0,
+        null
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-12T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  },
+  "7d": {
+   "tab": "sleep",
+   "tz": "America/Toronto",
+   "range": {
+    "first": "2026-09-19",
+    "last": "2026-09-25",
+    "days": 7,
+    "label": "Last 7 days"
+   },
+   "in_progress": true,
+   "metrics": [
+    {
+     "id": "sleep",
+     "label": "Sleep a night",
+     "value": 460.86,
+     "unit": "minutes",
+     "explain": "From your health app when it sends sleep; otherwise the longest stretch the phone was not used overnight.",
+     "estimated": false
+    },
+    {
+     "id": "nights",
+     "label": "Nights with sleep",
+     "value": 7,
+     "unit": "nights",
+     "explain": "Nights in the range with sleep measured or estimated.",
+     "estimated": false
+    },
+    {
+     "id": "estimated_nights",
+     "label": "Estimated nights",
+     "value": 0,
+     "unit": "nights",
+     "explain": "Nights worked out from the phone's quiet time, with no health data.",
+     "estimated": false
+    },
+    {
+     "id": "late_night",
+     "label": "After 11 pm, a night",
+     "value": 20.5,
+     "unit": "minutes",
+     "explain": "Screen time from 23:00 to 03:00, on any device (overlaps counted once).",
+     "estimated": false
+    }
+   ],
+   "series": {
+    "sleep_by_night": {
+     "kind": "stacked",
+     "title": "Sleep each night",
+     "unit": "minutes",
+     "explain": "The night ending on each morning: measured by your health app, or estimated from the phone.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Measured",
+       "key": null,
+       "category": "health",
+       "device_type": null,
+       "values": [
+        454.0,
+        471.0,
+        460.0,
+        472.0,
+        467.0,
+        455.0,
+        447.0
+       ]
+      },
+      {
+       "name": "Estimated",
+       "key": null,
+       "category": "other",
+       "device_type": null,
+       "values": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "schedule": {
+     "kind": "trend",
+     "title": "Bedtime and wake time",
+     "unit": "minutes after 18:00",
+     "explain": "When sleep started and ended, as minutes after 18:00 the evening before (360 is midnight).",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "Asleep",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        325.0,
+        325.0,
+        325.0,
+        455.0,
+        325.0,
+        325.0,
+        325.0
+       ]
+      },
+      {
+       "name": "Awake",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        779.0,
+        796.0,
+        785.0,
+        927.0,
+        792.0,
+        780.0,
+        772.0
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    },
+    "late_night": {
+     "kind": "bars",
+     "title": "After 11 pm",
+     "unit": "minutes",
+     "explain": "Screen time from 23:00 on each day to 03:00 the next morning.",
+     "estimated": false,
+     "x": [
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25"
+     ],
+     "y": null,
+     "lines": [
+      {
+       "name": "After 11 pm",
+       "key": null,
+       "category": null,
+       "device_type": null,
+       "values": [
+        0.0,
+        0.0,
+        123.0,
+        0.0,
+        0.0,
+        0.0,
+        null
+       ]
+      }
+     ],
+     "items": null,
+     "cells": null,
+     "nodes": null,
+     "node_categories": null,
+     "links": null,
+     "points": null,
+     "value": null,
+     "max": null,
+     "stats": null,
+     "note": null,
+     "reason": null
+    }
+   },
+   "changes": [],
+   "meta": {
+    "unit": "minutes",
+    "range": {
+     "start": "2026-09-19T00:00:00-04:00",
+     "end": "2026-09-26T00:00:00-04:00",
+     "tz": "America/Toronto"
+    },
+    "source": "seed",
+    "estimated": false
+   },
+   "cached": false
+  }
+ }
+}

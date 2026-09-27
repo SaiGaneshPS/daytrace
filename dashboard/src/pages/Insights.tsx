@@ -8,6 +8,7 @@ import ChartCard from "../components/ChartCard";
 import { useToday } from "../components/DayPicker";
 import Tabs from "../components/Tabs";
 import AppsDevicesTab from "./insights/AppsDevicesTab";
+import FocusSleepTab from "./insights/FocusSleepTab";
 import OverviewTab from "./insights/OverviewTab";
 import { EARLIEST, PRESETS, localZone, rangeProblem, spanOf, validRange } from "./insights/shared";
 
@@ -144,6 +145,8 @@ export default function Insights() {
               <OverviewTab range={range} tz={tz} today={today} />
             ) : item.id === "apps" ? (
               <AppsDevicesTab range={range} tz={tz} today={today} app={app} onApp={(name) => change("app", name)} />
+            ) : item.id === "focus" ? (
+              <FocusSleepTab range={range} tz={tz} today={today} />
             ) : (
               <ComingSoon label={item.label} />
             ),

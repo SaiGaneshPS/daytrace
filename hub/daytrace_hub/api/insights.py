@@ -13,6 +13,7 @@ from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Callable, Iterable
 from datetime import date, datetime, time, timedelta
 from functools import cached_property
+from statistics import median
 from time import monotonic
 from typing import Annotated, Any, Literal
 
@@ -224,8 +225,9 @@ class Series(BaseModel):
     points: list[Point] | None = Field(default=None, description="scatter.")
     value: float | None = Field(default=None, description="gauge.")
     max: float | None = Field(default=None, description="gauge.")
-    stats: dict[str, float | int | None] | None = Field(default=None, description="scatter: rho, p and n.")
+    stats: dict[str, float | int | None] | None = Field(default=None, description="scatter: rho, p, n, and the trend line's slope and intercept.")
     note: str | None = None
+    reason: str | None = Field(default=None, description="Why a number is missing: the scatter's rho, say, with too few nights.")
 
 
 class RangeInfo(BaseModel):
@@ -286,6 +288,23 @@ def _rounded(value: float | None, digits: int = 0) -> float | int | None:
     if value is None:
         return None
     return round(value) if digits == 0 else round(value, digits)
+
+
+def trend_line(pairs: list[dict[str, Any]], rho: float | None) -> dict[str, float | None]:
+    """A line through late minutes (x) and the next day's focus score (y), drawn only when there is a correlation to
+    go with it (`rho`): `slope`, points a day changes for each late minute, and `intercept`, the score after no late
+    time. It is Theil-Sen's (the median of the slopes between every two nights), so like the rank correlation beside
+    it, one odd night can't swing it."""
+    if rho is None:
+        return {"slope": None, "intercept": None}
+    xs = [float(pair["late_minutes"]) for pair in pairs]
+    ys = [float(pair["focus_score"]) for pair in pairs]
+    slopes = sorted((ys[j] - ys[i]) / (xs[j] - xs[i]) for i in range(len(xs)) for j in range(i + 1, len(xs)) if xs[j] != xs[i])
+    if not slopes:
+        return {"slope": None, "intercept": None}
+    slope = median(slopes)
+    intercept = median(y - slope * x for x, y in zip(xs, ys, strict=True))
+    return {"slope": round(slope, 4), "intercept": round(intercept, 2)}
 
 
 def compare_days_needed(count: int) -> int:
@@ -621,18 +640,32 @@ class TabBuilder:
         ]
         return Series(kind="stacked", title=title, unit="minutes", explain=explain, estimated=table["estimated"], x=self.labels, lines=lines)
 
+    @staticmethod
+    def weekday_heatmap(by_day: Iterable[tuple[date, dict[str, int]]], title: str, explain: str, estimated: bool) -> Series:
+        """Seconds per local hour, day by day, as a weekday by hour heatmap (the range added up)."""
+        grid: dict[tuple[int, int], int] = defaultdict(int)
+        for day, hours in by_day:
+            for hour, seconds in hours.items():
+                grid[(int(hour), day.weekday())] += seconds
+        return Series(kind="heatmap", title=title, unit="minutes", estimated=estimated, explain=explain, x=HOURS, y=WEEKDAYS,
+                      cells=[Cell(x=hour, y=weekday, value=minutes(seconds)) for (hour, weekday), seconds in sorted(grid.items())])
+
     def weekday_hours(self) -> Series:
         table = self.crosstab("day", "hour")
-        grid: dict[tuple[int, int], int] = defaultdict(int)
-        for label, hours in table["cells"].items():
-            weekday = date.fromisoformat(label).weekday()
-            for hour, seconds in hours.items():
-                grid[(int(hour), weekday)] += seconds
-        return Series(
-            kind="heatmap", title="When screens were on", unit="minutes", estimated=table["estimated"],
-            explain="Screen time in the range by weekday and hour of the day, added up (each device counted).",
-            x=HOURS, y=WEEKDAYS, cells=[Cell(x=hour, y=weekday, value=minutes(seconds)) for (hour, weekday), seconds in sorted(grid.items())],
-        )
+        return self.weekday_heatmap(((date.fromisoformat(label), hours) for label, hours in table["cells"].items()),
+                                    "When screens were on", "Screen time in the range by weekday and hour of the day, added up (each device counted).",
+                                    table["estimated"])
+
+    @cached_property
+    def switch_days(self) -> list[dict[str, Any]]:
+        return [self.stats.switches_per_hour(day) for day in self.days]
+
+    def switches_series(self) -> Series:
+        """App switches an hour each day (the apps tab's and the focus tab's line)."""
+        return Series(kind="trend", title="App switches an hour", unit="switches per hour", x=self.labels,
+                      explain="How often you jumped between apps each day, per hour of screen time.",
+                      estimated=any(day.get("estimated") for day in self.switch_days),
+                      lines=[Line(name="Switches an hour", key="switches", values=[day["value"] for day in self.switch_days])])
 
     # -- the tabs ------------------------------------------------------------------------------------------------
 
@@ -684,7 +717,7 @@ class TabBuilder:
         totals = self.totals("app")
         top = self.top_apps(TOP_APP_BARS)
         used = [item for item in totals["items"] if item["seconds"]]
-        switches = [self.stats.switches_per_hour(day)["value"] for day in self.days]
+        switches = [day["value"] for day in self.switch_days]
         table = self.crosstab("category", "app")
         tree: list[Item] = []
         for category, apps in sorted(table["cells"].items(), key=lambda kv: -sum(kv[1].values())):
@@ -712,9 +745,7 @@ class TabBuilder:
                               explain=f"Each category's time, with its top {TREEMAP_APPS} apps and sites inside.", items=tree),
             "by_category": self.stacked("category", "Categories by day", "Minutes each day in each category.",
                                         name=_category_name, category_of=lambda key: key),
-            "switches": Series(kind="trend", title="App switches an hour", unit="switches per hour", x=self.labels,
-                               explain="How often you jumped between apps, per hour of screen time.",
-                               lines=[Line(name="Switches an hour", values=switches)]),
+            "switches": self.switches_series(),
             "leaderboard": self.leaderboard(),
         }
         return metrics, series
@@ -761,11 +792,31 @@ class TabBuilder:
         }
         return metrics, series
 
+    def distraction_hours(self) -> Series:
+        """Time in social, video and game apps by weekday and hour, the range added up. Overlaps count once, as in the
+        focus score's distracted time (video on the phone and the PC at once is one distracted hour)."""
+        by_day: list[tuple[date, dict[str, int]]] = []
+        estimated = False
+        for day in self.days:
+            window = self.stats.day(day)
+            if window.until <= window.start or not window.counted_devices_with_data:
+                continue
+            distracting = [piece for piece in window.pieces if (piece.category or "other") in DISTRACTING]
+            estimated = estimated or any(piece.estimated for piece in distracting)
+            hours: dict[str, int] = defaultdict(int)
+            for start, end in merge((piece.start, piece.end) for piece in distracting):
+                for hour, seconds in self.stats.split_by_hour(start, end):
+                    hours[hour] += seconds
+            by_day.append((day, hours))
+        return self.weekday_heatmap(by_day, "When distractions happen",
+                                    "Time in social, video and game apps by weekday and hour of the day, the range added up "
+                                    "(time on two devices at once counted once).", estimated)
+
     def focus(self) -> tuple[list[Metric], dict[str, Series]]:
         stats, first, last = self.stats, self.span.first, self.span.last
         scores = self.scores
         focused = [stats.focused_minutes(day)["value"] for day in self.days]
-        switches = [stats.switches_per_hour(day) for day in self.days]
+        switches = self.switch_days
         pairs = stats.correlation(first, last) if self.span.days >= 2 else None
         values = [score["value"] for score in scores]
         known = [(value, day) for value, day in zip(values, self.days, strict=True) if value is not None]
@@ -786,7 +837,7 @@ class TabBuilder:
                    explain="That day's focus score."),
         ]
         focus_lines = []
-        for name, field in (("Focused", "focused"), ("Other work or study", "rest"), ("Distracted", "distracted_seconds")):
+        for name, field, key in (("Focused", "focused", "focused"), ("Other work or study", "rest", "rest"), ("Distracted", "distracted_seconds", "distracted")):
             row: list[float | None] = []
             for score, focused_value in zip(scores, focused, strict=True):
                 if score.get("missing"):
@@ -797,22 +848,28 @@ class TabBuilder:
                     row.append(minutes(max(0, score.get("work_or_study_seconds", 0) - score.get("focused_seconds", 0))))
                 else:
                     row.append(minutes(score.get(field, 0)))
-            focus_lines.append(Line(name=name, category={"Focused": "study", "Other work or study": "work", "Distracted": "social"}[name], values=row))
+            focus_lines.append(Line(name=name, key=key, category={"Focused": "study", "Other work or study": "work", "Distracted": "social"}[name], values=row))
         series = {
             "score": Series(kind="gauge", title="Focus score", unit="score", value=_rounded(_mean(values)), max=100,
-                            explain="The average of the days' focus scores, from 0 to 100."),
+                            estimated=any(score.get("estimated") for score in scores),
+                            explain=("Each day: 100 × focused time ÷ (work or study time + distracted time), where focused time is "
+                                     "work or study in blocks of 10 minutes or more with no phone distraction, and distracted time is "
+                                     "social, video and game apps. This is the average of the days' scores.")),
             "focus_by_day": Series(kind="stacked", title="Focus and distraction by day", unit="minutes", x=self.labels, lines=focus_lines,
                                    explain="Focused time, the rest of the work or study time, and time in social, video or game apps."),
             "switches_by_hour": Series(kind="bars", title="App switches through the day", unit="switches", x=HOURS,
                                        explain="App switches by hour of the day, the whole range added up.",
                                        lines=[Line(name="Switches", values=[float(by_hour.get(hour, 0)) for hour in HOURS])]),
+            "switches_by_day": self.switches_series(),
+            "distraction_hours": self.distraction_hours(),
         }
         if pairs is not None:
             series["late_vs_focus"] = Series(
                 kind="scatter", title="Late nights and the next day's focus", unit="score",
                 explain="Each point is a night: minutes on screens after 11 pm, and the next day's focus score.",
                 points=[Point(x=pair["late_minutes"], y=pair["focus_score"], label=pair["night"]) for pair in pairs["pairs"]],
-                stats={"rho": pairs["rho"], "p": pairs["p"], "n": pairs["n"]}, note=pairs["caveat"],
+                stats={"rho": pairs["rho"], "p": pairs["p"], "n": pairs["n"], **trend_line(pairs["pairs"], pairs["rho"])},
+                note=pairs["caveat"], reason=pairs["reason"], estimated=pairs["estimated"],
             )
         return metrics, series
 
