@@ -389,7 +389,7 @@ def test_the_parts_add_up_to_the_total_said_whatever_the_seconds(db: Database) -
     out = tool(db, "get_totals", {**LAST_WEEK, "app": "YouTube"})
     parts = [f.value for f in out.facts if f.label.startswith("of that total, ")]
     assert out.facts[0].value == 123 and sum(parts) == 123 and parts in ([110, 13], [109, 14])  # a tie of remainders: either
-    assert ask_module._whole_parts([109.6, 13.6], 123) == [110, 13]  # 109 + 13 = 122: the larger remainder rounds up
+    assert ask_module._whole_parts([109.7, 13.4], 123) == [110, 13]  # 109 + 13 = 122: the larger remainder rounds up
     assert ask_module._whole_parts([0.5, 0.5, 0.5], 2) == [1, 1, 0]
 
 
