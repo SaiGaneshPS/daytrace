@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DT-58: the window theme in dark mode. A dark theme also tells the Dashboard tab's WebView the phone is in dark
+     mode (prefers-color-scheme follows the theme's isLightTheme), so the hub's pages match the app around them. -->
+<resources>
+    <style name="Theme.Daytrace" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/daytrace_bg_dark</item>
+    </style>
+</resources>

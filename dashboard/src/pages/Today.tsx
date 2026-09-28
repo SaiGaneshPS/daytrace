@@ -187,6 +187,17 @@ function StreakStrip({ tz, today }: { tz: string; today: string }) {
   );
 }
 
+/**
+ * The hub's app switches per hour of screen time (a move to a different app or site within 5 minutes), said as a
+ * person would: a whole number of times, never "16.1 app switches per hour".
+ */
+export function switchesWords(perHour: number): string {
+  const times = Math.round(perHour);
+  if (times <= 0) return perHour > 0 ? "Hardly switched apps" : "No app switches yet";
+  if (times === 1) return "Switched apps about once an hour";
+  return `Switched apps about ${times} times an hour`;
+}
+
 export default function Today() {
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const today = useToday();
@@ -267,7 +278,7 @@ export default function Today() {
           value={numbers ? numbers.pickups : undefined}
           error={summaryError}
           tone="social"
-          hint={numbers?.switches_per_hour !== null && numbers?.switches_per_hour !== undefined ? `${numbers.switches_per_hour} app switches per hour` : undefined}
+          hint={numbers?.switches_per_hour !== null && numbers?.switches_per_hour !== undefined ? switchesWords(numbers.switches_per_hour) : undefined}
         />
       </div>
 
