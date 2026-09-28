@@ -1,8 +1,35 @@
-// DT-19: the app module. DT-25 adds the release signing config (keystore from environment variables).
+// DT-19: the app module. DT-25: the release signing key and the version, for signed APKs on GitHub Releases.
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp) // Room's code generator (DT-21)
+}
+
+// DT-25: the release key, from the environment (the release workflow) or android/keystore.properties (ignored by git,
+// for a release built on this PC): storeFile, storePassword, keyAlias and keyPassword. Without one, a release build
+// is left unsigned (app-release-unsigned.apk), as on every pull request.
+val keyFile = rootProject.file("keystore.properties")
+val keyProperties = Properties().apply { if (keyFile.isFile) keyFile.inputStream().use(::load) }
+
+fun releaseKey(env: String, property: String): String? =
+    providers.environmentVariable(env).orNull?.trim()?.takeIf { it.isNotEmpty() }
+        ?: keyProperties.getProperty(property)?.trim()?.takeIf { it.isNotEmpty() }
+
+val keyStore = releaseKey("DAYTRACE_KEYSTORE", "storeFile")
+val keyStorePassword = releaseKey("DAYTRACE_KEYSTORE_PASSWORD", "storePassword")
+val keyAliasName = releaseKey("DAYTRACE_KEY_ALIAS", "keyAlias")
+val keyAliasPassword = releaseKey("DAYTRACE_KEY_PASSWORD", "keyPassword") ?: keyStorePassword // PKCS12: the same
+val signed = keyStore != null && keyStorePassword != null && keyAliasName != null
+
+// DT-25: a release's version comes from its tag (android-v0.2.1 gives 0.2.1), and its versionCode from that
+// (major * 10000 + minor * 100 + patch), so every release installs over the one before.
+val releaseVersion = providers.environmentVariable("DAYTRACE_VERSION").orNull?.trim()?.takeIf { it.isNotEmpty() }
+val releaseCode = releaseVersion?.let { version ->
+    val parts = Regex("([0-9]{1,3})[.]([0-9]{1,2})[.]([0-9]{1,2})").matchEntire(version)?.groupValues?.drop(1)?.map(String::toInt)
+        ?: throw GradleException("DAYTRACE_VERSION must look like 0.2.1 (at most 999.99.99), not '$version'")
+    parts[0] * 10_000 + parts[1] * 100 + parts[2]
 }
 
 android {
@@ -13,8 +40,19 @@ android {
         applicationId = "app.daytrace.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseCode ?: 1
+        versionName = releaseVersion ?: "0.1.0"
+    }
+
+    signingConfigs {
+        if (signed) {
+            create("release") {
+                storeFile = rootProject.file(keyStore!!)
+                storePassword = keyStorePassword
+                keyAlias = keyAliasName
+                keyPassword = keyAliasPassword
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +61,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfig = signingConfigs.findByName("release") // null without a key: unsigned
         }
     }
 
