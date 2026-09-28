@@ -308,3 +308,12 @@ for (const scheme of ["light", "dark"] as const) {
     expect(results.violations.map((v) => `${v.id} (${v.nodes.length}): ${v.help} ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
   });
 }
+
+test("inside the app, Wrapped says where to save the card instead of a save that can't work", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/wrapped?week=2026-W38&embed=1");
+  await expect(page.locator(".wrapped-card")).toBeVisible();
+  await expect(page.getByText("open Wrapped in your computer's browser")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save as image" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Share" })).toHaveCount(0);
+});

@@ -149,7 +149,11 @@ test("a code runs out after 5 minutes, and a new one can be shown", async ({ pag
   await page.clock.install({ time: NOW });
   const seen = await mockHub(page);
   await page.goto("/devices");
-  await page.getByRole("button", { name: "Show a pairing code" }).click();
+  const show = page.getByRole("button", { name: "Show a pairing code" });
+  await expect(show).toBeVisible();
+  // From here only the test moves the page's clock: a busy machine's real seconds never count.
+  await page.clock.pauseAt(NOW + 60_000);
+  await show.click();
   await expect(page.locator(".pair-code")).toContainText("5:00 left");
   await page.clock.runFor(61_000);
   await expect(page.locator(".pair-code")).toContainText("3:59 left");

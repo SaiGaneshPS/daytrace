@@ -78,14 +78,17 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
         return PairingInfo(url, deviceId, prefs.getString(KEY_PROFILE, null).orEmpty())
     }
 
-    override fun load(): HubConfig? = pairing()?.config
+    /** The collector's pairing, for a sync: the dashboard token stays sealed (a sync never needs it). */
+    override fun load(): HubConfig? = current(withViewer = false)?.config
 
     /**
      * The saved pairing, or null when there is none. A token that cannot be decrypted (the Keystore key is gone,
      * which happens only if Android wipes it) can never be used again, so the pairing is cleared: the status screen
      * then offers pairing again instead of looking paired while nothing syncs.
      */
-    fun pairing(): Pairing? {
+    fun pairing(): Pairing? = current(withViewer = true)
+
+    private fun current(withViewer: Boolean): Pairing? {
         val url = prefs.getString(KEY_URL, null) ?: return null
         val deviceId = prefs.getString(KEY_DEVICE, null) ?: return null
         val sealed = prefs.getString(KEY_TOKEN, null) ?: return null
@@ -94,7 +97,7 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
             ?: return null.also { discardCurrent() }
         return Pairing(
             HubConfig(url, token, deviceId), prefs.getString(KEY_PROFILE, null).orEmpty(), prefs.getString(KEY_NAME, null).orEmpty(),
-            viewerToken(),
+            if (withViewer) viewerToken() else null,
         )
     }
 

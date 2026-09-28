@@ -82,6 +82,7 @@ import app.daytrace.android.ui.theme.Sky
 import app.daytrace.android.ui.theme.Sunrise
 import app.daytrace.android.usage.TodaySummary
 import app.daytrace.android.usage.UsageCollector
+import app.daytrace.android.widget.WidgetRefresher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -146,6 +147,7 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                             scope.launch(Dispatchers.IO) {
                                 PairingStore.get(context).clear()
                                 SyncStatusStore(context).reset()
+                                runCatching { WidgetRefresher.forget(context) } // DT-58: its numbers leave the widget
                             }
                         },
                     )

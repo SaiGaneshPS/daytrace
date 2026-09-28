@@ -59,8 +59,39 @@ sealed interface HubResult<out T> {
     data class Unauthorized(val message: String) : HubResult<Nothing>
     /** The hub's address is not on a private network, so nothing was sent. */
     data class Blocked(val message: String) : HubResult<Nothing>
-    /** The hub is off, busy or out of reach, or refused this network: try again later. */
-    data class Retry(val message: String) : HubResult<Nothing>
+    /** The hub is off, busy or out of reach, or refused this network: try again later. [code] is the hub's error code. */
+    data class Retry(val message: String, val code: String? = null) : HubResult<Nothing>
+}
+
+/** Where the hub that paired this phone answered, a client for it there, and its proof (see [findProvenHub]). */
+class ProvenHub(val config: HubConfig, val client: HubClient, val proof: HubResult<HubProof>)
+
+/**
+ * DT-22 / DT-58: asks the saved address to prove it is the hub that paired this phone (asked without the token, which
+ * goes out only after a yes). When nothing proves there, the PC may have a new address: the hubs [findHubs] sees on
+ * the Wi-Fi are asked in turn, and only the hub that paired this phone can prove it, so moving to it is safe (it is
+ * saved with [HubConfigSource.moved]). The sync, the Dashboard tab and the widget all look for the hub this way.
+ */
+suspend fun findProvenHub(
+    hub: HubConfig,
+    http: OkHttpClient,
+    pairing: HubConfigSource,
+    findHubs: suspend () -> List<String>,
+    clientFor: (HubConfig, OkHttpClient) -> HubClient = { config, client -> HubClient(config, client) },
+): ProvenHub {
+    val client = clientFor(hub, http)
+    val proof = client.proveHub()
+    if (proof is HubResult.Ok && proof.value != HubProof.NOT_PROVEN) return ProvenHub(hub, client, proof)
+    for (url in findHubs().filter { it != hub.baseUrl }) {
+        val moved = hub.copy(baseUrl = url)
+        val candidate = clientFor(moved, http)
+        val answer = candidate.proveHub()
+        if (answer is HubResult.Ok && answer.value != HubProof.NOT_PROVEN) {
+            pairing.moved(url)
+            return ProvenHub(moved, candidate, answer)
+        }
+    }
+    return ProvenHub(hub, client, proof)
 }
 
 class NotPrivateAddressException(host: String) :
@@ -267,8 +298,9 @@ class HubClient(
                     if (json.isNull("viewer_token")) null else json.getString("viewer_token"),
                 )
             }
-            // A hub from before DT-58 refuses the field it doesn't know, before it looks at the code: ask again without.
-            val older = dashboard && result is HubResult.Retry && "dashboard" in result.message
+            // A hub from before DT-58 refuses the field it doesn't know (422 invalid_request, naming it only in the
+            // details) before it looks at the code, so the code is still good: ask again without.
+            val older = dashboard && result is HubResult.Retry && result.code == "invalid_request"
             return if (older) claim(baseUrl, code, deviceName, http, previous, dashboard = false) else result
         }
 
@@ -328,8 +360,8 @@ class HubClient(
                             .getOrElse { HubResult.Retry("The hub sent a reply Daytrace doesn't understand") }
                         response.code == 413 -> HubResult.Split(message)
                         response.code == 401 || (response.code == 403 && error?.first == "forbidden") -> HubResult.Unauthorized(message)
-                        response.code == 404 && notFound != null -> HubResult.Retry(notFound)
-                        else -> HubResult.Retry(message)
+                        response.code == 404 && notFound != null -> HubResult.Retry(notFound, error?.first)
+                        else -> HubResult.Retry(message, error?.first)
                     }
                 }
             } catch (e: IOException) {

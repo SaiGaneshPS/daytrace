@@ -5,9 +5,11 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.time.LocalDate
+import java.util.Locale
 
 class WidgetRulesTest {
-    private val day = JSONObject("""{"screen_minutes": 419.37, "phone_minutes": 41.67, "computer_minutes": 377.7}""")
+    private val day = JSONObject("""{"date": "2026-09-27", "screen_minutes": 419.37, "phone_minutes": 41.67, "computer_minutes": 377.7}""")
     private val streaks = JSONObject(
         """{"streaks": [
             {"id": "focus_flame", "name": "Focus flame", "current": 3, "today": "met"},
@@ -23,8 +25,25 @@ class WidgetRulesTest {
     @Test
     fun theWidgetShowsWhatTheHubSaid() {
         val numbers = WidgetRules.numbers(day, streaks, goals, nowMs = 5)
-        assertEquals(WidgetNumbers(419, 42, 378, "Logged it", 14, "met", "Focused time", 100, "5h 36m of 4h", 5), numbers)
-        assertEquals(numbers, WidgetNumbers.fromJson(numbers.toJson())) // kept between refreshes
+        assertEquals(WidgetNumbers(419, 42, 378, "Logged it", 14, "met", "Focused time", 100, "5h 36m of 4h", 5, "2026-09-27"), numbers)
+        assertEquals(WidgetView(numbers), WidgetView.fromJson(WidgetView(numbers).toJson())) // kept between refreshes
+    }
+
+    @Test
+    fun whatTheWidgetSaysWithoutNumbersIsKeptToo() {
+        listOf(WidgetView(), WidgetView(note = WidgetView.UNPAIRED), WidgetView(note = WidgetView.PAIR_AGAIN)).forEach { view ->
+            assertEquals(view, WidgetView.fromJson(view.toJson()))
+        }
+        assertNull(WidgetView.fromJson("not json"))
+    }
+
+    @Test
+    fun numbersFromAnotherDaySayWhichDay() {
+        val today = LocalDate.parse("2026-09-27")
+        assertEquals("Today", WidgetRules.heading("2026-09-27", today, Locale.ENGLISH))
+        assertEquals("Yesterday", WidgetRules.heading("2026-09-26", today, Locale.ENGLISH))
+        assertEquals("Thu 24 Sep", WidgetRules.heading("2026-09-24", today, Locale.ENGLISH))
+        assertEquals("Today", WidgetRules.heading(null, today, Locale.ENGLISH)) // a hub that didn't say
     }
 
     @Test
@@ -39,6 +58,7 @@ class WidgetRulesTest {
         assertNull(empty.streakName) // no run going: no flame
         assertNull(empty.goalProgress)
         assertNull(empty.goalText)
+        assertNull(empty.day)
         assertEquals(empty, WidgetNumbers.fromJson(empty.toJson()))
     }
 

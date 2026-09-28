@@ -16,6 +16,7 @@ import { Chevron, longDay, shiftDay, useToday } from "../components/DayPicker";
 import Skeleton from "../components/Skeleton";
 import { formatMinutes } from "../components/StatCard";
 import { dayCount } from "../components/streakText";
+import { embedded } from "../embed";
 import { EARLIEST, localZone, valueOf } from "./insights/shared";
 
 type WrappedWeek = components["schemas"]["Wrapped"];
@@ -288,17 +289,24 @@ export default function Wrapped() {
         <div className="wrapped-layout">
           <WrappedCard key={week} data={data} card={card} />
           <div className="wrapped-actions">
-            <button type="button" className="button" onClick={save} disabled={!ready || busy !== null}>
-              {busy === "save" ? "Saving..." : "Save as image"}
-            </button>
-            {canShare && (
-              <button type="button" className="button button-ghost" onClick={share} disabled={!ready || busy !== null}>
-                {busy === "share" ? "Sharing..." : "Share"}
-              </button>
+            {embedded ? (
+              // DT-58: the app's Dashboard tab can't save files, so it never offers a save that saves nothing.
+              <p className="muted">To keep this card as an image, open Wrapped in your computer's browser and save it there.</p>
+            ) : (
+              <>
+                <button type="button" className="button" onClick={save} disabled={!ready || busy !== null}>
+                  {busy === "save" ? "Saving..." : "Save as image"}
+                </button>
+                {canShare && (
+                  <button type="button" className="button button-ghost" onClick={share} disabled={!ready || busy !== null}>
+                    {busy === "share" ? "Sharing..." : "Share"}
+                  </button>
+                )}
+                <p className={`field-note${note?.problem ? "" : " field-hint"}`} role="status">
+                  {note?.text}
+                </p>
+              </>
             )}
-            <p className={`field-note${note?.problem ? "" : " field-hint"}`} role="status">
-              {note?.text}
-            </p>
             {data.fallback && data.reason && <p className="muted wrapped-reason">Plain lines: {data.reason}.</p>}
           </div>
         </div>

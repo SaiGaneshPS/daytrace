@@ -20,12 +20,15 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import app.daytrace.android.sync.PairingStore
+import app.daytrace.android.sync.SyncStatusStore
 import app.daytrace.android.ui.AppShell
+import app.daytrace.android.ui.DashboardRules
 import app.daytrace.android.ui.HealthRationaleScreen
 import app.daytrace.android.ui.OnboardingScreen
 import app.daytrace.android.ui.PairingScreen
 import app.daytrace.android.ui.StatusScreen
 import app.daytrace.android.ui.onboarded
+import app.daytrace.android.ui.readyToContinue
 import app.daytrace.android.ui.rememberPermissionRequester
 import app.daytrace.android.ui.rememberPermissionStates
 import app.daytrace.android.ui.setOnboarded
@@ -62,13 +65,16 @@ private fun DaytraceRoot() {
     // Reopened from the status screen: Back returns there instead of closing the app.
     BackHandler(enabled = showOnboarding && onboarded(context)) { showOnboarding = false }
     BackHandler(enabled = showPairing && !showOnboarding) { showPairing = false }
-    // Paired or not, looked at every couple of seconds while the app is in front ("Forget this hub" changes it).
+    // Paired or not, and how the last sync went, looked at every couple of seconds while the app is in front
+    // ("Forget this hub" changes the one, a background sync the other).
     var paired by remember { mutableStateOf(PairingStore.get(context).info() != null) }
+    var lastSync by remember { mutableStateOf(SyncStatusStore(context).read()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 paired = PairingStore.get(context).info() != null
+                lastSync = SyncStatusStore(context).read()
                 delay(2_000)
             }
         }
@@ -85,7 +91,11 @@ private fun DaytraceRoot() {
             showPairing = false
             paired = PairingStore.get(context).info() != null
         })
-        paired -> AppShell(phoneScreen = phone, onPairAgain = { showPairing = true })
+        paired -> AppShell(
+            phoneScreen = phone,
+            warning = DashboardRules.warning(readyToContinue(states), lastSync.result, lastSync.message),
+            onPairAgain = { showPairing = true },
+        )
         else -> phone()
     }
 }

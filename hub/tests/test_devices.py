@@ -901,3 +901,13 @@ def test_pairing_again_replaces_the_dashboard_token(client: TestClient, phone: T
     plain = pair_again(client, phone, previous_device_id="android-1", previous_token=again["token"]).json()
     assert plain["viewer_token"] is None
     assert phone.get("/api/v1/devices", headers=as_device(again["viewer_token"])).status_code == 401
+
+
+def test_reading_the_dashboard_is_not_the_phone_sending(client: TestClient, phone: TestClient, db: Database) -> None:
+    body = pair_again(client, phone, dashboard=True).json()
+    assert phone.get("/api/v1/devices", headers=as_device(body["viewer_token"])).status_code == 200
+    with db.connect() as conn:
+        assert conn.execute("SELECT last_seen FROM devices WHERE device_id = 'android-1'").fetchone()[0] is None
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(body["token"])).status_code == 200
+    with db.connect() as conn:  # sending is
+        assert conn.execute("SELECT last_seen FROM devices WHERE device_id = 'android-1'").fetchone()[0] is not None

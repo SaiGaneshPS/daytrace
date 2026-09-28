@@ -26,10 +26,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -52,6 +54,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -69,14 +72,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.ScriptHandler
+import androidx.webkit.ServiceWorkerClientCompat
+import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import app.daytrace.android.sync.HubClient
+import app.daytrace.android.sync.HubDiscovery
 import app.daytrace.android.sync.HubProof
 import app.daytrace.android.sync.HubResult
 import app.daytrace.android.sync.PairingStore
+import app.daytrace.android.sync.SyncResult
 import app.daytrace.android.sync.WifiOnly
+import app.daytrace.android.sync.findProvenHub
 import app.daytrace.android.ui.theme.DaytraceIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -122,12 +130,25 @@ object DashboardRules {
     /** The script that puts the dashboard token where the dashboard reads it (api/client.ts), before the page runs. */
     fun tokenScript(token: String): String =
         "(function(){try{localStorage.setItem('daytrace.token'," + JSONObject.quote(token) + ")}catch(e){}})();"
+
+    /**
+     * What needs you on this phone, shown above every tab (before the tabs, the app opened on the status screen,
+     * which says these): usage access off, or a last sync that needs you (pair again, or not your hub). Null: nothing.
+     */
+    fun warning(usageOn: Boolean, lastSync: SyncResult?, lastMessage: String?): String? = when {
+        !usageOn -> "Usage access is off, so Daytrace can't see which apps you use."
+        lastSync == SyncResult.PAIR_AGAIN -> lastMessage ?: "Your hub no longer accepts this phone. Pair again."
+        lastSync == SyncResult.BLOCKED -> lastMessage ?: "Something at your hub's address couldn't prove it is your hub, so nothing was sent."
+        else -> null
+    }
 }
 
 /** Whether the Dashboard tab can open, and if not, why (each has its own card). */
 sealed interface HubGate {
     data object Checking : HubGate
-    data class Ready(val baseUrl: String, val viewerToken: String, val network: Network) : HubGate
+    data class Ready(val baseUrl: String, val viewerToken: String, val network: Network) : HubGate {
+        override fun toString() = "Ready(baseUrl=$baseUrl, network=$network)" // never print the token
+    }
     /** Paired before the app had a dashboard (or with an older hub): pairing again gives the token. */
     data object NoDashboardToken : HubGate
     data object NotOnWifi : HubGate
@@ -135,15 +156,19 @@ sealed interface HubGate {
     data object PairAgain : HubGate
 }
 
-/** Proves the hub first (the token goes only to the hub that paired this phone), exactly as a sync does. */
+/**
+ * Proves the hub first (the token goes only to the hub that paired this phone), exactly as a sync does: a hub whose
+ * address changed is found on the Wi-Fi and followed.
+ */
 suspend fun checkGate(context: Context): HubGate = withContext(Dispatchers.IO) {
     val store = PairingStore.get(context)
     val pairing = store.pairing() ?: return@withContext HubGate.PairAgain
     val viewer = pairing.viewerToken ?: return@withContext HubGate.NoDashboardToken
     val network = WifiOnly.network(context) ?: return@withContext HubGate.NotOnWifi
-    when (val proof = HubClient(pairing.config, HubClient.onNetwork(network)).proveHub()) {
+    val found = findProvenHub(pairing.config, HubClient.onNetwork(network), store, findHubs = { HubDiscovery(context).findNow() })
+    when (val proof = found.proof) {
         is HubResult.Ok -> when (proof.value) {
-            HubProof.PAIRED -> HubGate.Ready(pairing.config.baseUrl, viewer, network)
+            HubProof.PAIRED -> HubGate.Ready(found.config.baseUrl, viewer, network)
             HubProof.REVOKED -> HubGate.PairAgain
             HubProof.NOT_PROVEN -> HubGate.Unreachable
         }
@@ -156,15 +181,21 @@ fun forgetDashboardStorage() = runCatching { WebStorage.getInstance().deleteAllD
 
 // --- the screen ------------------------------------------------------------------------------------------------
 
-/** The app once paired: the dashboard's tabs, with this phone's own screen under More. */
+/**
+ * The app once paired: the dashboard's tabs, with this phone's own screen under More. [warning] (see
+ * [DashboardRules.warning]) shows above every tab and opens This phone.
+ */
 @Composable
-fun AppShell(phoneScreen: @Composable () -> Unit, onPairAgain: () -> Unit) {
+fun AppShell(phoneScreen: @Composable () -> Unit, warning: String?, onPairAgain: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(DashboardTab.TODAY) }
     var more by rememberSaveable { mutableStateOf<MorePage?>(null) }
+    // Each tap on a tab (or a page under More) is a new visit: the page opens at its start, with no history before it.
+    var visit by rememberSaveable { mutableIntStateOf(0) }
     val path = when (tab) {
         DashboardTab.MORE -> more?.path
         else -> tab.path
     }
+    val onPhone = tab == DashboardTab.MORE && more == MorePage.PHONE
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -174,6 +205,7 @@ fun AppShell(phoneScreen: @Composable () -> Unit, onPairAgain: () -> Unit) {
                         onClick = {
                             if (tab == item && item == DashboardTab.MORE) more = null // tapping More again: back to its list
                             tab = item
+                            visit++
                         },
                         icon = { Icon(iconFor(item), contentDescription = null) },
                         label = { Text(item.label) },
@@ -182,18 +214,46 @@ fun AppShell(phoneScreen: @Composable () -> Unit, onPairAgain: () -> Unit) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when {
-                path != null -> DashboardPage(path, onPairAgain, onBack = if (tab == DashboardTab.MORE) ({ more = null }) else null)
-                more == MorePage.PHONE -> Column(Modifier.fillMaxSize()) {
-                    BackBar("This phone") { more = null }
-                    Box(Modifier.weight(1f)) { phoneScreen() }
+        // The Scaffold's padding already keeps clear of the system bars: the pages inside mustn't add them again.
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            if (warning != null && !onPhone) {
+                WarningBanner(warning) {
+                    tab = DashboardTab.MORE
+                    more = MorePage.PHONE
                 }
-                else -> MoreList(onOpen = { more = it })
+            }
+            Box(Modifier.weight(1f)) {
+                when {
+                    path != null -> DashboardPage(path, visit, onPairAgain, onBack = if (tab == DashboardTab.MORE) ({ more = null }) else null)
+                    onPhone -> Column(Modifier.fillMaxSize()) {
+                        BackBar("This phone") { more = null }
+                        Box(Modifier.weight(1f)) { phoneScreen() }
+                    }
+                    else -> MoreList(onOpen = {
+                        more = it
+                        visit++
+                    })
+                }
             }
         }
     }
     BackHandler(enabled = tab == DashboardTab.MORE && more != null) { more = null }
+}
+
+@Composable
+private fun WarningBanner(text: String, onOpen: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onOpen) { Text("Open") }
+        }
+    }
 }
 
 private fun iconFor(tab: DashboardTab): ImageVector = when (tab) {
@@ -238,7 +298,7 @@ private fun MoreList(onOpen: (MorePage) -> Unit) {
 
 /** One dashboard page: the hub proven first, then the WebView, or a card saying what to do. */
 @Composable
-private fun DashboardPage(path: String, onPairAgain: () -> Unit, onBack: (() -> Unit)?) {
+private fun DashboardPage(path: String, visit: Int, onPairAgain: () -> Unit, onBack: (() -> Unit)?) {
     val context = LocalContext.current
     var attempt by remember { mutableIntStateOf(0) }
     var gate by remember { mutableStateOf<HubGate>(HubGate.Checking) }
@@ -251,7 +311,7 @@ private fun DashboardPage(path: String, onPairAgain: () -> Unit, onBack: (() -> 
         Box(Modifier.weight(1f)) {
             when (val state = gate) {
                 HubGate.Checking -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                is HubGate.Ready -> DashboardWebView(state, path, onUnreachable = { gate = HubGate.Unreachable })
+                is HubGate.Ready -> DashboardWebView(state, path, visit, onUnreachable = { gate = HubGate.Unreachable }, onRetry = { attempt++ })
                 HubGate.NotOnWifi -> GateCard(
                     "Not on your hub's Wi-Fi",
                     "The dashboard opens on the same Wi-Fi as your hub, like the sync. Connect to it, then try again.",
@@ -291,22 +351,25 @@ private fun GateCard(title: String, text: String, action: String, onAction: () -
 
 /**
  * The WebView itself: the process is bound to the hub's Wi-Fi while it shows (so its requests never leave on
- * cellular), the token is set for the hub's origin only, every request to anywhere else is refused, and Safe
- * Browsing is off (it would send the addresses to Google).
+ * cellular), the token is set for the hub's origin only, every request to anywhere else is refused (a service
+ * worker's too), and Safe Browsing is off (it would send the addresses to Google). A new [visit] opens [path] at
+ * its start and forgets the history before it, so Back never crosses tabs.
  */
 @SuppressLint("SetJavaScriptEnabled") // the dashboard is a JavaScript app, from the hub that just proved itself
 @Composable
-private fun DashboardWebView(gate: HubGate.Ready, path: String, onUnreachable: () -> Unit) {
+private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUnreachable: () -> Unit, onRetry: () -> Unit) {
     val context = LocalContext.current
     val origin = remember(gate.baseUrl) { DashboardRules.origin(gate.baseUrl) }
     if (origin == null || !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-        GateCard("Update Android System WebView", "The dashboard needs a newer Android System WebView. Update it from the Play Store, then try again.", "Try again", onUnreachable)
+        GateCard("Update Android System WebView", "The dashboard needs a newer Android System WebView. Update it from the Play Store, then try again.", "Try again", onRetry)
         return
     }
     var progress by remember { mutableIntStateOf(0) }
     var canGoBack by remember { mutableStateOf(false) }
     val holder = remember { arrayOfNulls<WebView>(1) }
     val script = remember { arrayOfNulls<ScriptHandler>(1) }
+    val forgetHistory = remember { booleanArrayOf(false) } // once the next page has loaded
+    val refuse = { url: String -> if (DashboardRules.onHub(url, gate.baseUrl)) null else WebResourceResponse("text/plain", "utf-8", 403, "Refused", emptyMap(), null) }
 
     DisposableEffect(gate.network) {
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
@@ -330,6 +393,15 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, onUnreachable: (
                     if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) WebSettingsCompat.setSafeBrowsingEnabled(settings, false)
                 }
                 script[0] = WebViewCompat.addDocumentStartJavaScript(web, DashboardRules.tokenScript(gate.viewerToken), setOf(origin))
+                // A service worker's requests skip the WebView's own checks: they get the same ones. (The dashboard
+                // registers none inside the app, and removes one an earlier version registered.)
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
+                    WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)
+                ) {
+                    ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(object : ServiceWorkerClientCompat() {
+                        override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? = refuse(request.url.toString())
+                    })
+                }
                 SwipeRefreshLayout(viewContext).apply {
                     setOnRefreshListener { web.reload() }
                     setOnChildScrollUpCallback { _, _ -> web.canScrollVertically(-1) }
@@ -338,7 +410,7 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, onUnreachable: (
                             !DashboardRules.onHub(request.url.toString(), gate.baseUrl) // anywhere else: refused, no browser opens
 
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                            if (DashboardRules.onHub(request.url.toString(), gate.baseUrl)) null else WebResourceResponse("text/plain", "utf-8", 403, "Refused", emptyMap(), null)
+                            refuse(request.url.toString())
 
                         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                             progress = 1
@@ -347,6 +419,11 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, onUnreachable: (
                         override fun onPageFinished(view: WebView, url: String?) {
                             progress = 100
                             isRefreshing = false
+                            if (forgetHistory[0]) {
+                                forgetHistory[0] = false
+                                view.clearHistory() // everything before this tab's page
+                                canGoBack = view.canGoBack()
+                            }
                         }
 
                         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
@@ -367,15 +444,17 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, onUnreachable: (
                     }
                     addView(web)
                     holder[0] = web
+                    web.tag = "$visit $path"
                     web.loadUrl(DashboardRules.pageUrl(gate.baseUrl, path))
                 }
             },
             update = {
                 val web = holder[0] ?: return@AndroidView
-                val wanted = DashboardRules.pageUrl(gate.baseUrl, path)
-                if (web.tag != wanted) {
+                val wanted = "$visit $path"
+                if (web.tag != wanted) { // another tab, or the same one tapped again
                     web.tag = wanted
-                    if (web.url != null && web.url != wanted) web.loadUrl(wanted)
+                    forgetHistory[0] = true
+                    web.loadUrl(DashboardRules.pageUrl(gate.baseUrl, path))
                 }
             },
             onRelease = {

@@ -71,7 +71,8 @@ def device_for_token(conn: sqlite3.Connection, token: str) -> AuthenticatedDevic
     """The active device this token belongs to, or None (unknown or revoked).
 
     The lookup is by the token's SHA-256, so response timing reveals nothing useful about the token. A device's
-    dashboard token (DT-58) signs in as that device, as a viewer.
+    dashboard token (DT-58) signs in as that device, as a viewer; reading the dashboard is not the device sending
+    anything, so it leaves last_seen alone (the live dots mean "sent something just now").
     """
     token_hash = hash_token(token)
     for column, dashboard in (("token_hash", False), ("viewer_token_hash", True)):
@@ -80,7 +81,8 @@ def device_for_token(conn: sqlite3.Connection, token: str) -> AuthenticatedDevic
             (token_hash,),
         ).fetchone()
         if row is not None:
-            _touch_last_seen(conn, row["device_id"], row["last_seen"])
+            if not dashboard:
+                _touch_last_seen(conn, row["device_id"], row["last_seen"])
             return AuthenticatedDevice(row["device_id"], row["name"], row["device_type"], dashboard=dashboard)
     return None
 

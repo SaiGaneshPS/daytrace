@@ -388,4 +388,26 @@ class SyncerTest {
         assertTrue(!network.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) // a hub LAN may have no internet
         assertEquals(15 * 60_000L, infos.single().periodicityInfo!!.repeatIntervalMillis)
     }
+
+    @Test
+    fun theDashboardAndTheWidgetFindAHubThatMovedAsTheSyncDoes() {
+        val newUrl = server.url("/").toString()
+        hub = hub!!.copy(baseUrl = "http://127.0.0.1:1") // the PC's old address: nothing answers
+        val found = runBlocking { findProvenHub(hub!!, HubClient.httpClient(), pairing, findHubs = { listOf("http://127.0.0.1:2", newUrl) }) }
+        assertEquals(newUrl, found.config.baseUrl)
+        assertEquals(HubResult.Ok(HubProof.PAIRED), found.proof)
+        assertEquals(newUrl, hub!!.baseUrl) // saved, so the next sync goes there
+    }
+
+    @Test
+    fun aHubThatCantProveItIsNeverMovedTo() {
+        val savedUrl = "http://127.0.0.1:1"
+        fakeHub.proofToken = "dt_someone_else" // answers, but for another phone
+        hub = hub!!.copy(baseUrl = savedUrl)
+        val found = runBlocking { findProvenHub(hub!!, HubClient.httpClient(), pairing, findHubs = { listOf(server.url("/").toString()) }) }
+        assertEquals(savedUrl, found.config.baseUrl)
+        assertEquals(savedUrl, hub!!.baseUrl)
+        assertTrue(found.proof !is HubResult.Ok || (found.proof as HubResult.Ok).value == HubProof.NOT_PROVEN)
+    }
 }
+

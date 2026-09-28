@@ -93,13 +93,19 @@ Once the phone is paired, Daytrace opens on your dashboard: **Today**, **Story**
   WebView's Safe Browsing checks and usage reports are off.
 - **Paired before the dashboard came along?** The tab asks you to pair again: the phone keeps its id and history, and
   gets its dashboard token.
-- **Moving around:** pull down to refresh, and Back goes back inside the page.
+- **Moving around:** each tab opens at its start (tap it again to go back there), pull down to refresh, and Back goes
+  back inside the page.
+- **Something to fix on the phone?** When usage access is off, or the last sync needs you (pair again, or something
+  that isn't your hub answered), a banner above every tab says so and opens **This phone**.
+- **Wrapped:** the app can't save files, so save the card from Wrapped in your computer's browser.
 
 **The widget:** long-press your home screen, then **Widgets**, then **Daytrace today**.
 - **What it shows:** today's screen time (phone and computers), the longest streak going, with its flame and day
   count, and progress on your main goal. Tapping it opens the app.
 - **Where the numbers come from:** your hub, the same answers as the dashboard. It refreshes after each background
-  sync and every 30 minutes on your hub's Wi-Fi, and shows the time of the numbers it has.
+  sync and every 30 minutes on your hub's Wi-Fi (internet or not), and shows the day and time of the numbers it has.
+  It reads with the app's dashboard token, so a phone paired before the dashboard came along asks you to pair again,
+  and forgetting the hub clears it.
 
 ## Live mode and nudges
 

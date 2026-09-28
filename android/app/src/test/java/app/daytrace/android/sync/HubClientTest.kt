@@ -123,7 +123,10 @@ class HubClientTest {
 
     @Test
     fun aHubFromBeforeTheDashboardIsAskedAgainWithout() {
-        server.enqueue(reply(422, """{"error": {"code": "invalid", "message": "dashboard: Extra inputs are not permitted", "details": []}}"""))
+        // What a hub from before DT-58 really answers: the field is named only in the details.
+        server.enqueue(
+            reply(422, """{"error": {"code": "invalid_request", "message": "the request is not valid", "details": ["body.dashboard: Extra inputs are not permitted"]}}"""),
+        )
         server.enqueue(reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Phone", "token": "dt_new", "profile": "personal"}"""))
         val result = HubClient.claim(server.url("/").toString(), "493817", "Phone", http)
         assertEquals(HubResult.Ok(Paired("android-1", "dt_new", "personal", "Phone")), result) // paired, without a dashboard
@@ -185,7 +188,8 @@ class HubClientTest {
     @Test
     fun aWrongCodeComesBackWithTheHubsMessage() {
         server.enqueue(reply(400, """{"error": {"code": "invalid_code", "message": "wrong code, 4 tries left"}}"""))
-        assertEquals(HubResult.Retry("wrong code, 4 tries left"), HubClient.claim(server.url("/").toString(), "000000", "Phone", http))
+        assertEquals(HubResult.Retry("wrong code, 4 tries left", "invalid_code"), HubClient.claim(server.url("/").toString(), "000000", "Phone", http))
+        assertEquals(1, server.requestCount) // not asked again: that would use up one of the tries left
         assertTrue(HubClient.claim("http://8.8.8.8:8765", "493817", "Phone", http) is HubResult.Blocked)
     }
 
@@ -257,7 +261,7 @@ class HubClientTest {
             assertEquals("for ${answer.code}", expected, result::class)
         }
         server.enqueue(reply(503, error("busy")))
-        assertEquals(HubResult.Retry("the hub says busy"), client().send(listOf(event(1))))
+        assertEquals(HubResult.Retry("the hub says busy", "busy"), client().send(listOf(event(1))))
     }
 
     @Test

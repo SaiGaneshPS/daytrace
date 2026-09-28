@@ -18,3 +18,22 @@ function readEmbedded(): boolean {
 
 /** True inside the Daytrace app's Dashboard tab. Read once, when the page loads. */
 export const embedded: boolean = typeof window !== "undefined" && readEmbedded();
+
+/**
+ * The service worker (DT-30) makes the dashboard installable and caches the app itself. Inside the app there is
+ * none: the app checks every request its page makes, and a service worker could serve an old copy while the hub is
+ * off. One an earlier visit registered is removed. [register] is vite-plugin-pwa's registerSW.
+ */
+export async function startServiceWorker(
+  inApp: boolean,
+  register: () => unknown,
+  container: ServiceWorkerContainer | undefined = typeof navigator === "undefined" ? undefined : navigator.serviceWorker,
+): Promise<void> {
+  if (!inApp) {
+    register();
+    return;
+  }
+  if (!container) return;
+  const registrations = await container.getRegistrations();
+  await Promise.all(registrations.map((registration) => registration.unregister()));
+}

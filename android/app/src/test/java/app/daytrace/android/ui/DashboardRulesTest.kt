@@ -1,12 +1,20 @@
 // DT-58: the Dashboard tab's rules: the hub's own address only, its pages in embed mode, and the token script.
 package app.daytrace.android.ui
 
+import android.app.Application
+import app.daytrace.android.sync.SyncResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowNetwork
 
+@RunWith(RobolectricTestRunner::class) // for a real Network in HubGate.Ready
+@Config(application = Application::class)
 class DashboardRulesTest {
     private val hub = "http://192.168.137.1:8765"
 
@@ -42,5 +50,21 @@ class DashboardRulesTest {
         val script = DashboardRules.tokenScript("dt_abc'\"-_")
         assertTrue(script, script.contains("localStorage.setItem('daytrace.token',\"dt_abc'\\\"-_\")"))
         assertFalse(script.contains("\n"))
+    }
+
+    @Test
+    fun theTabsSayWhatNeedsYouOnThisPhone() {
+        assertEquals("Usage access is off, so Daytrace can't see which apps you use.", DashboardRules.warning(false, SyncResult.SENT, "Sent 3 events"))
+        assertEquals("Your hub no longer accepts this phone. Pair again.", DashboardRules.warning(true, SyncResult.PAIR_AGAIN, "Your hub no longer accepts this phone. Pair again."))
+        assertEquals("not your hub", DashboardRules.warning(true, SyncResult.BLOCKED, "not your hub"))
+        listOf(SyncResult.SENT, SyncResult.NOT_ON_WIFI, SyncResult.UNREACHABLE, SyncResult.NOT_PAIRED, null).forEach { result ->
+            assertNull("for $result", DashboardRules.warning(true, result, "whatever")) // nothing for you to do
+        }
+    }
+
+    @Test
+    fun theReadyGateNeverPrintsTheToken() {
+        val text = HubGate.Ready("http://192.168.1.23:8765", "dt_viewer_secret", ShadowNetwork.newInstance(1)).toString()
+        assertFalse(text, "dt_viewer_secret" in text)
     }
 }
