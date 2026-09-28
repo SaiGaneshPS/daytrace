@@ -49,6 +49,9 @@ val LocalDaytraceExtras = staticCompositionLocalOf {
     DaytraceExtras(Granted, Needed, Brush.linearGradient(listOf(Indigo, Blush, Sunrise)))
 }
 
+/** Whether [DaytraceTheme] is dark: for what must match it outside Compose, like the dashboard page in the WebView. */
+val LocalDarkTheme = staticCompositionLocalOf { false }
+
 @Composable
 fun DaytraceTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
     val extras = if (darkTheme) {
@@ -56,7 +59,7 @@ fun DaytraceTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composab
     } else {
         DaytraceExtras(Granted, Needed, Brush.linearGradient(listOf(Indigo, Blush, Sunrise)))
     }
-    androidx.compose.runtime.CompositionLocalProvider(LocalDaytraceExtras provides extras) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalDaytraceExtras provides extras, LocalDarkTheme provides darkTheme) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
             typography = DaytraceTypography,

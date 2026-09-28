@@ -21,7 +21,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -89,6 +88,7 @@ import app.daytrace.android.sync.SyncResult
 import app.daytrace.android.sync.WifiOnly
 import app.daytrace.android.sync.findProvenHub
 import app.daytrace.android.ui.theme.DaytraceIcons
+import app.daytrace.android.ui.theme.LocalDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -141,10 +141,14 @@ object DashboardRules {
      */
     fun themeScript(dark: Boolean): String {
         val theme = if (dark) "dark" else "light"
-        return "(function(){var t='$theme';function s(){var e=document.documentElement;if(!e)return false;" +
-            "e.setAttribute('data-theme',t);e.style.colorScheme=t;return true}" +
-            "if(!s()){new MutationObserver(function(r,o){if(s())o.disconnect()}).observe(document,{childList:true})}})();"
+        return "(function(){try{var t='$theme';function s(){var e=document.documentElement;if(!e)return false;" +
+            "e.setAttribute('data-theme',t);if(e.style)e.style.colorScheme=t;return true}" +
+            "if(!s()){new MutationObserver(function(r,o){try{if(s())o.disconnect()}catch(x){o.disconnect()}})" +
+            ".observe(document,{childList:true})}}catch(x){}})();"
     }
+
+    /** Everything the app puts in the page before it runs: the token, then the theme. */
+    fun pageScript(token: String, dark: Boolean): String = tokenScript(token) + themeScript(dark)
 
     /**
      * What needs you on this phone, shown above every tab (before the tabs, the app opened on the status screen,
@@ -374,7 +378,7 @@ private fun GateCard(title: String, text: String, action: String, onAction: () -
 @Composable
 private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUnreachable: () -> Unit, onRetry: () -> Unit) {
     val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
+    val dark = LocalDarkTheme.current // the theme the app shows, which the page must match
     val origin = remember(gate.baseUrl) { DashboardRules.origin(gate.baseUrl) }
     if (origin == null || !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
         GateCard("Update Android System WebView", "The dashboard needs a newer Android System WebView. Update it from the Play Store, then try again.", "Try again", onRetry)
@@ -384,6 +388,7 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUn
     var canGoBack by remember { mutableStateOf(false) }
     val holder = remember { arrayOfNulls<WebView>(1) }
     val script = remember { arrayOfNulls<ScriptHandler>(1) }
+    val scriptDark = remember { booleanArrayOf(dark) } // the theme in the registered script
     val forgetHistory = remember { booleanArrayOf(false) } // once the next page has loaded
     val refuse = { url: String -> if (DashboardRules.onHub(url, gate.baseUrl)) null else WebResourceResponse("text/plain", "utf-8", 403, "Refused", emptyMap(), null) }
 
@@ -410,8 +415,8 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUn
                     settings.setSupportMultipleWindows(false)
                     if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) WebSettingsCompat.setSafeBrowsingEnabled(settings, false)
                 }
-                val pageScript = DashboardRules.tokenScript(gate.viewerToken) + DashboardRules.themeScript(dark)
-                script[0] = WebViewCompat.addDocumentStartJavaScript(web, pageScript, setOf(origin))
+                script[0] = WebViewCompat.addDocumentStartJavaScript(web, DashboardRules.pageScript(gate.viewerToken, dark), setOf(origin))
+                scriptDark[0] = dark
                 // A service worker's requests skip the WebView's own checks: they get the same ones. (The dashboard
                 // registers none inside the app, and removes one an earlier version registered.)
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
@@ -469,6 +474,13 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUn
             },
             update = {
                 val web = holder[0] ?: return@AndroidView
+                if (scriptDark[0] != dark) { // the app turned light or dark with this WebView kept: every page follows
+                    script[0]?.remove()
+                    script[0] = WebViewCompat.addDocumentStartJavaScript(web, DashboardRules.pageScript(gate.viewerToken, dark), setOf(origin))
+                    scriptDark[0] = dark
+                    web.setBackgroundColor(ContextCompat.getColor(web.context, if (dark) R.color.daytrace_bg_dark else R.color.daytrace_bg))
+                    web.evaluateJavascript(DashboardRules.themeScript(dark), null) // and the page open now
+                }
                 val wanted = "$visit $path"
                 if (web.tag != wanted) { // another tab, or the same one tapped again
                     web.tag = wanted
