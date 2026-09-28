@@ -853,3 +853,61 @@ def test_bad_returning_fields_get_422(client: TestClient, phone: TestClient, ext
 
 def test_an_unknown_field_is_still_refused(client: TestClient, phone: TestClient) -> None:
     assert pair_again(client, phone, device_key="k" * 43).status_code == 422
+
+
+# --- DT-58: the app's own dashboard token ---------------------------------------------------------------------
+
+NUDGE_CHOICES = {"disabled": [], "desktop": True}
+
+
+def test_the_app_asking_for_its_dashboard_gets_a_viewer_token_too(client: TestClient, phone: TestClient) -> None:
+    body = pair_again(client, phone, dashboard=True).json()
+    collector, viewer = body["token"], body["viewer_token"]
+    assert viewer.startswith("dt_") and viewer != collector
+    # The dashboard token reads and changes settings, and never sends events.
+    assert phone.get("/api/v1/devices", headers=as_device(viewer)).status_code == 200
+    assert phone.put("/api/v1/nudges", json=NUDGE_CHOICES, headers=as_device(viewer)).status_code == 200
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(viewer)).status_code == 403
+    # The collector token still sends, and still can't change settings.
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(collector)).status_code == 200
+    assert phone.put("/api/v1/nudges", json=NUDGE_CHOICES, headers=as_device(collector)).status_code == 403
+    # It is the same device on the Devices page: one phone, one row.
+    assert [d["device_id"] for d in client.get("/api/v1/devices").json()["devices"]] == ["android-1"]
+
+
+def test_without_asking_there_is_no_dashboard_token(client: TestClient, phone: TestClient) -> None:
+    assert pair_again(client, phone).json()["viewer_token"] is None
+
+
+@pytest.mark.parametrize("device_type", ["ios", "windows", "viewer"])
+def test_only_the_android_app_can_ask_for_a_dashboard_token(client: TestClient, phone: TestClient, device_type: str) -> None:
+    assert pair_again(client, phone, dashboard=True, device_type=device_type).status_code == 422
+
+
+def test_revoking_the_phone_ends_both_tokens(client: TestClient, phone: TestClient) -> None:
+    body = pair_again(client, phone, dashboard=True).json()
+    assert client.delete("/api/v1/devices/android-1").status_code == 204
+    for token in (body["token"], body["viewer_token"]):
+        assert phone.get("/api/v1/devices", headers=as_device(token)).status_code == 401
+
+
+def test_pairing_again_replaces_the_dashboard_token(client: TestClient, phone: TestClient) -> None:
+    first = pair_again(client, phone, dashboard=True).json()
+    again = pair_again(client, phone, dashboard=True, previous_device_id="android-1", previous_token=first["token"]).json()
+    assert again["returning"] and again["viewer_token"] != first["viewer_token"]
+    assert phone.get("/api/v1/devices", headers=as_device(first["viewer_token"])).status_code == 401
+    assert phone.get("/api/v1/devices", headers=as_device(again["viewer_token"])).status_code == 200
+    # And pairing again without asking takes it away.
+    plain = pair_again(client, phone, previous_device_id="android-1", previous_token=again["token"]).json()
+    assert plain["viewer_token"] is None
+    assert phone.get("/api/v1/devices", headers=as_device(again["viewer_token"])).status_code == 401
+
+
+def test_reading_the_dashboard_is_not_the_phone_sending(client: TestClient, phone: TestClient, db: Database) -> None:
+    body = pair_again(client, phone, dashboard=True).json()
+    assert phone.get("/api/v1/devices", headers=as_device(body["viewer_token"])).status_code == 200
+    with db.connect() as conn:
+        assert conn.execute("SELECT last_seen FROM devices WHERE device_id = 'android-1'").fetchone()[0] is None
+    assert phone.post("/api/v1/events", json=SESSION, headers=as_device(body["token"])).status_code == 200
+    with db.connect() as conn:  # sending is
+        assert conn.execute("SELECT last_seen FROM devices WHERE device_id = 'android-1'").fetchone()[0] is not None

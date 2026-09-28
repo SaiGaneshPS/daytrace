@@ -305,7 +305,7 @@ function ClaimForm({ purposes, code: fixedCode, linkCode = "", autoSubmit = fals
       setFailure(null);
       try {
         const claimed = await api.post("/api/v1/pair/claim", {
-          body: { code: value, device_name: deviceName.trim() || chosen.name(), device_type: chosen.type },
+          body: { code: value, device_name: deviceName.trim() || chosen.name(), device_type: chosen.type, dashboard: false },
         });
         if (chosen.type === "viewer") {
           setToken(claimed.token);

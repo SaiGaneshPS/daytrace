@@ -77,6 +77,27 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- DT-58: the Dashboard tab's WebView sends nothing to Google: no Safe Browsing checks, no usage metrics. -->
+        <meta-data
+            android:name="android.webkit.WebView.EnableSafeBrowsing"
+            android:value="false" />
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
+
+        <!-- DT-58: the home-screen widget (today's screen time, the streak and the main goal). -->
+        <receiver
+            android:name=".widget.TodayWidgetReceiver"
+            android:exported="true"
+            android:label="Daytrace today">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_widget_info" />
+        </receiver>
+
         <!-- Live mode: started only from the app's screen, never by itself. -->
         <service
             android:name=".live.LiveModeService"

@@ -261,12 +261,20 @@ collector checks what the hub already has.
   - **Still needs a code:** a fresh code from the hub computer, which sees the device come back (`GET /pair/status`:
     `claimed_by.returning`; the Devices page says "paired again").
   - **A reinstall starts a new device:** nothing the phone kept survives it.
+- **A dashboard token for the app (DT-58).** The Daytrace Android app also sends `"dashboard": true` (for
+  `device_type: android` only; anything else gets `422`), and gets `viewer_token` next to `token`.
+  - **What it can do:** it is the same device, signed in as a viewer: it reads the dashboard and changes settings
+    (categories, goals, nudges, redaction), and never sends events (`403`). The collector token still can't change
+    settings.
+  - **How long it lasts:** pairing again replaces it (or takes it away, without `dashboard`), and revoking the device
+    ends both. Only its hash is stored, and the export leaves it out, as it does the collector token's.
+  - **Only at pairing:** it comes with a code from the hub computer, so a copied collector token can never make one.
 
-Response `201` with `Cache-Control: no-store`. The token is shown only once:
+Response `201` with `Cache-Control: no-store`. The tokens are shown only once:
 
 ```json
 { "device_id": "android-1", "device_type": "android", "name": "Galaxy phone", "token": "dt_...", "profile": "personal",
-  "returning": false }
+  "returning": false, "viewer_token": "dt_..." }
 ```
 
 - Device IDs count up per type and are never reused by another device: `windows-1`, `mac-1`, `android-1`,

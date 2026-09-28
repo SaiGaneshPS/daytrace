@@ -28,6 +28,7 @@ import app.daytrace.android.data.EventStore
 import app.daytrace.android.health.HealthCollector
 import app.daytrace.android.nudge.NudgeNotifier
 import app.daytrace.android.usage.UsageCollector
+import app.daytrace.android.widget.WidgetRefresher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -61,6 +62,19 @@ object WifiOnly {
     }
 
     const val WAITING = "Waiting for Wi-Fi: this phone syncs only when it is on the same Wi-Fi as your hub"
+
+    /**
+     * WorkManager's condition for background work with the hub (the sync, DT-58's widget): on Wi-Fi, whether or not
+     * it reaches the internet (a hub LAN may not), and never through a VPN.
+     */
+    fun workConstraints(): Constraints {
+        val wifi = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        return Constraints.Builder().setRequiredNetworkRequest(wifi, NetworkType.UNMETERED).build()
+    }
 }
 
 data class SyncReport(val result: SyncResult, val message: String, val sent: Int = 0, val refused: Int = 0)
@@ -125,27 +139,13 @@ class Syncer(
     }
 
     private suspend fun syncLocked(): SyncReport {
-        var hub = pairing.load() ?: return SyncReport(SyncResult.NOT_PAIRED, "Not paired with a hub yet")
+        val saved = pairing.load() ?: return SyncReport(SyncResult.NOT_PAIRED, "Not paired with a hub yet")
         val http = wifi() ?: return SyncReport(SyncResult.NOT_ON_WIFI, WifiOnly.WAITING)
-        var client = clientFor(hub, http)
-        // Is this really the hub that paired this phone? Asked without the token, which only goes out after a yes.
-        var proof = client.proveHub()
-        if (proof !is HubResult.Ok || proof.value == HubProof.NOT_PROVEN) {
-            // Not there any more: the PC may have a new address. Look for hubs on the Wi-Fi and ask each one; only
-            // the hub that paired this phone can prove it, so moving to it is safe.
-            for (url in findHubs().filter { it != hub.baseUrl }) {
-                val candidate = clientFor(hub.copy(baseUrl = url), http)
-                val answer = candidate.proveHub()
-                if (answer is HubResult.Ok && answer.value != HubProof.NOT_PROVEN) {
-                    hub = hub.copy(baseUrl = url)
-                    pairing.moved(url)
-                    client = candidate
-                    proof = answer
-                    break
-                }
-            }
-        }
-        when (proof) {
+        // Is this really the hub that paired this phone (where it is now, if the PC's address changed)?
+        val found = findProvenHub(saved, http, pairing, findHubs, clientFor)
+        val hub = found.config
+        val client = found.client
+        when (val proof = found.proof) {
             is HubResult.Ok -> when (proof.value) {
                 HubProof.PAIRED -> Unit
                 HubProof.REVOKED -> return SyncReport(SyncResult.PAIR_AGAIN, PAIR_AGAIN_MESSAGE)
@@ -261,7 +261,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             collecting { HealthCollector(applicationContext).collect() }
             collecting { CalendarCollector(applicationContext).collect() }
         }
-        Syncer.get(applicationContext).sync()
+        val report = Syncer.get(applicationContext).sync()
+        // DT-58: the widget shows the hub's numbers, so it asks again once the hub has what was just sent.
+        if (report.result == SyncResult.SENT) collecting { WidgetRefresher.refresh(applicationContext) }
         // Always a success, even when the hub was out of reach: a retry would swap the 15-minute period for
         // WorkManager's backoff (up to 5 hours), and the next run tries again anyway. The result is on the screen.
         return Result.success()
@@ -290,15 +292,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
         /** Every 15 minutes (Android's shortest period) while on an unmetered network. Kept across restarts. */
         fun schedule(context: Context) {
-            // On Wi-Fi, whether or not it reaches the internet (a hub LAN may not), and never through a VPN.
-            val wifi = NetworkRequest.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-                .build()
-            val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-                .setConstraints(Constraints.Builder().setRequiredNetworkRequest(wifi, NetworkType.UNMETERED).build())
-                .build()
+            val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES).setConstraints(WifiOnly.workConstraints()).build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, request)
         }
 

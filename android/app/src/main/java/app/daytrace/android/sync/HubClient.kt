@@ -59,8 +59,39 @@ sealed interface HubResult<out T> {
     data class Unauthorized(val message: String) : HubResult<Nothing>
     /** The hub's address is not on a private network, so nothing was sent. */
     data class Blocked(val message: String) : HubResult<Nothing>
-    /** The hub is off, busy or out of reach, or refused this network: try again later. */
-    data class Retry(val message: String) : HubResult<Nothing>
+    /** The hub is off, busy or out of reach, or refused this network: try again later. [code] is the hub's error code. */
+    data class Retry(val message: String, val code: String? = null) : HubResult<Nothing>
+}
+
+/** Where the hub that paired this phone answered, a client for it there, and its proof (see [findProvenHub]). */
+class ProvenHub(val config: HubConfig, val client: HubClient, val proof: HubResult<HubProof>)
+
+/**
+ * DT-22 / DT-58: asks the saved address to prove it is the hub that paired this phone (asked without the token, which
+ * goes out only after a yes). When nothing proves there, the PC may have a new address: the hubs [findHubs] sees on
+ * the Wi-Fi are asked in turn, and only the hub that paired this phone can prove it, so moving to it is safe (it is
+ * saved with [HubConfigSource.moved]). The sync, the Dashboard tab and the widget all look for the hub this way.
+ */
+suspend fun findProvenHub(
+    hub: HubConfig,
+    http: OkHttpClient,
+    pairing: HubConfigSource,
+    findHubs: suspend () -> List<String>,
+    clientFor: (HubConfig, OkHttpClient) -> HubClient = { config, client -> HubClient(config, client) },
+): ProvenHub {
+    val client = clientFor(hub, http)
+    val proof = client.proveHub()
+    if (proof is HubResult.Ok && proof.value != HubProof.NOT_PROVEN) return ProvenHub(hub, client, proof)
+    for (url in findHubs().filter { it != hub.baseUrl }) {
+        val moved = hub.copy(baseUrl = url)
+        val candidate = clientFor(moved, http)
+        val answer = candidate.proveHub()
+        if (answer is HubResult.Ok && answer.value != HubProof.NOT_PROVEN) {
+            pairing.moved(url)
+            return ProvenHub(moved, candidate, answer)
+        }
+    }
+    return ProvenHub(hub, client, proof)
 }
 
 class NotPrivateAddressException(host: String) :
@@ -145,8 +176,16 @@ object PrivateNetwork {
 }
 
 /** What pairing gave this phone (POST /pair/claim). [returning]: the hub knew it, so it kept its first id (DT-22). */
-data class Paired(val deviceId: String, val token: String, val profile: String, val name: String, val returning: Boolean = false) {
-    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name, returning=$returning)" // never print the token
+data class Paired(
+    val deviceId: String,
+    val token: String,
+    val profile: String,
+    val name: String,
+    val returning: Boolean = false,
+    /** DT-58: the token for the app's own dashboard (reads and changes settings, never sends events), if the hub gave one. */
+    val viewerToken: String? = null,
+) {
+    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name, returning=$returning)" // never print a token
 }
 
 /** What the hub proved about this phone's pairing (POST /devices/{id}/proof). */
@@ -204,6 +243,16 @@ class HubClient(
         }
     }
 
+    /**
+     * DT-58: GET a dashboard answer (the widget's numbers: /insights/day, /streaks, /goals) as this device. Call it only
+     * after [proveHub] said PAIRED, like the sync: the token goes only to the hub that paired this phone.
+     */
+    fun read(path: String, query: Map<String, String> = emptyMap()): HubResult<JSONObject> {
+        val url = apiUrl(config.baseUrl, path)?.newBuilder()?.apply { query.forEach { (key, value) -> addQueryParameter(key, value) } }?.build()
+            ?: return badUrl(config.baseUrl)
+        return execute(http, Request.Builder().url(url).get(), config.token) { JSONObject(it) }
+    }
+
     /** POST /events with these events, in this order (at most 500; the sync sends 200 at a time). */
     fun send(events: List<EventEntity>): HubResult<IngestReply> {
         val url = apiUrl(config.baseUrl, "events") ?: return badUrl(config.baseUrl)
@@ -235,17 +284,24 @@ class HubClient(
             deviceName: String,
             http: OkHttpClient,
             previous: HubConfig? = null,
+            dashboard: Boolean = true,
         ): HubResult<Paired> {
             val url = apiUrl(baseUrl, "pair/claim") ?: return badUrl(baseUrl)
             val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android")
             if (previous != null) body.put("previous_device_id", previous.deviceId).put("previous_token", previous.token)
-            return execute(http, Request.Builder().url(url).post(body.toString().toRequestBody(JSON)), token = null) { text ->
+            if (dashboard) body.put("dashboard", true) // DT-58: a token for the app's own dashboard too
+            val result = execute(http, Request.Builder().url(url).post(body.toString().toRequestBody(JSON)), token = null) { text ->
                 val json = JSONObject(text)
                 Paired(
                     json.getString("device_id"), json.getString("token"), json.getString("profile"), json.getString("name"),
                     json.optBoolean("returning", false),
+                    if (json.isNull("viewer_token")) null else json.getString("viewer_token"),
                 )
             }
+            // A hub from before DT-58 refuses the field it doesn't know (422 invalid_request, naming it only in the
+            // details) before it looks at the code, so the code is still good: ask again without.
+            val older = dashboard && result is HubResult.Retry && result.code == "invalid_request"
+            return if (older) claim(baseUrl, code, deviceName, http, previous, dashboard = false) else result
         }
 
         /**
@@ -304,8 +360,8 @@ class HubClient(
                             .getOrElse { HubResult.Retry("The hub sent a reply Daytrace doesn't understand") }
                         response.code == 413 -> HubResult.Split(message)
                         response.code == 401 || (response.code == 403 && error?.first == "forbidden") -> HubResult.Unauthorized(message)
-                        response.code == 404 && notFound != null -> HubResult.Retry(notFound)
-                        else -> HubResult.Retry(message)
+                        response.code == 404 && notFound != null -> HubResult.Retry(notFound, error?.first)
+                        else -> HubResult.Retry(message, error?.first)
                     }
                 }
             } catch (e: IOException) {

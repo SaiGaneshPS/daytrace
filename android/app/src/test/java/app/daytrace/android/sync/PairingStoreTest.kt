@@ -21,11 +21,13 @@ class PairingStoreTest {
     /** Stands in for the Keystore (the JVM has none): XOR with a key, and a switch to lose the key. */
     private class FakeCipher : TokenCipher {
         var lost = false
+        var decrypts = 0
 
         override fun encrypt(plain: ByteArray) = byteArrayOf(7) to plain.map { (it.toInt() xor 0x5A).toByte() }.toByteArray()
 
         override fun decrypt(iv: ByteArray, sealed: ByteArray): ByteArray {
             check(!lost) { "key gone" }
+            decrypts++
             return sealed.map { (it.toInt() xor 0x5A).toByte() }.toByteArray()
         }
     }
@@ -41,6 +43,25 @@ class PairingStoreTest {
         assertEquals(pairing, store.pairing())
         assertEquals(pairing.config, store.load())
         assertEquals(PairingInfo("http://192.168.1.23:8765", "android-1", "personal"), store.info())
+    }
+
+    @Test
+    fun theDashboardTokenGoesWithThePairingEncryptedLikeTheOther() {
+        val withDashboard = pairing.copy(viewerToken = "dt_viewer_token")
+        store.save(withDashboard)
+        assertEquals(withDashboard, store.pairing())
+        assertEquals("dt_viewer_token", store.viewerToken())
+        val saved = context.getSharedPreferences("pairing", Context.MODE_PRIVATE).all.values.joinToString()
+        assertFalse(saved, "dt_viewer_token" in saved)
+        assertFalse("dt_viewer_token" in withDashboard.toString()) // never printed
+        cipher.decrypts = 0
+        assertEquals(withDashboard.config, store.load()) // what a sync reads: the dashboard token stays sealed
+        assertEquals(1, cipher.decrypts)
+        store.save(pairing) // paired again without one (an older hub): the old one goes
+        assertNull(store.viewerToken())
+        store.save(withDashboard)
+        store.clear() // forgotten: gone too
+        assertNull(store.viewerToken())
     }
 
     @Test

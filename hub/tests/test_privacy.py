@@ -418,7 +418,7 @@ PHRASE = privacy_api.DELETE_PHRASE
 SCHEMA = {
     "achievements": {"achievement_id", "earned_on", "tz", "dates", "unlocked_at"},
     "category_overrides": {"app_key", "category", "source", "updated_at"},
-    "devices": {"device_id", "name", "device_type", "token_hash", "paired_at", "last_seen", "revoked_at"},
+    "devices": {"device_id", "name", "device_type", "token_hash", "paired_at", "last_seen", "revoked_at", "viewer_token_hash"},
     "device_gaps": {"device_id", "from_utc", "until_utc"},
     "events": {"id", "device_id", "dedup_key", "seq", "external_id", "kind", "source", "start_utc", "end_utc", "utc_offset_min",
                "app", "app_id", "title", "category", "data", "received_at", "updated_at"},
@@ -486,7 +486,7 @@ def test_the_export_is_every_table_as_json(seeded: tuple[TestClient, Settings]) 
     assert (body["daytrace_export"], body["profile"], body["schema_version"]) == (1, "demo", Database(settings.database_path).schema_version())
     assert {table: len(rows) for table, rows in body["tables"].items()} == counts(settings)  # every table, every row
     assert "schema_migrations" not in body["tables"] and "data_changes" not in body["tables"]
-    assert all("token_hash" not in device for device in body["tables"]["devices"])
+    assert all("token_hash" not in device and "viewer_token_hash" not in device for device in body["tables"]["devices"])
     assert token not in response.text and hash_token(token) not in response.text  # no secret, not even its hash
     assert isinstance(body["tables"]["events"][0]["data"], dict)
     assert body["tables"]["settings"] == [{"key": "redaction", "value": {"disabled": ["health"], "custom": []}}]

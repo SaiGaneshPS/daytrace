@@ -29,7 +29,7 @@ from typing import Annotated, Literal
 
 import qrcode
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from ..auth import DeviceType, Reader, get_database, hash_token, new_token, register_device, require_local
 from ..config import Settings
@@ -190,6 +190,11 @@ class PairClaim(BaseModel):
         description="DT-22: the token it had here, even a revoked one. Send it only to a hub that proved it holds "
         "its hash (POST /devices/{id}/proof). It stops working now either way.",
     )] = None
+    dashboard: bool = Field(
+        default=False,
+        description="DT-58: the Daytrace app asks for a second token for its built-in dashboard (viewer_token): it "
+        "reads the dashboard and changes settings, but never sends events. Android only.",
+    )
 
     @field_validator("device_name")
     @classmethod
@@ -197,6 +202,12 @@ class PairClaim(BaseModel):
         if has_hidden_characters(name):  # U+202E and friends could disguise a name in the device list
             raise ValueError("device_name must not contain control or formatting characters")
         return name
+
+    @model_validator(mode="after")
+    def _dashboard_for_the_app(self) -> PairClaim:
+        if self.dashboard and self.device_type != "android":
+            raise ValueError("dashboard is for the Daytrace Android app (device_type android)")
+        return self
 
 
 class PairClaimed(BaseModel):
@@ -208,6 +219,11 @@ class PairClaimed(BaseModel):
     returning: bool = Field(
         default=False,
         description="DT-22: the same device paired before, so it keeps its id (and history); the old token no longer works.",
+    )
+    viewer_token: str | None = Field(
+        default=None,
+        description="DT-58: shown once, when the claim asked for a dashboard: the app's dashboard token (reads and "
+        "changes settings, never sends events).",
     )
 
 
@@ -298,9 +314,13 @@ def add_device(database: Database, body: PairClaim, profile: str) -> PairClaimed
         else:
             device_id = next_device_id(conn, body.device_type)
             token = register_device(conn, device_id=device_id, name=body.device_name, device_type=body.device_type)
+        # DT-58: a new pairing always replaces the dashboard token too (or clears it when none was asked for).
+        viewer_token = new_token() if body.dashboard else None
+        conn.execute("UPDATE devices SET viewer_token_hash = ? WHERE device_id = ?",
+                     (hash_token(viewer_token) if viewer_token else None, device_id))
     return PairClaimed(
         device_id=device_id, device_type=body.device_type, name=body.device_name, token=token, profile=profile,
-        returning=earlier is not None,
+        returning=earlier is not None, viewer_token=viewer_token,
     )
 
 

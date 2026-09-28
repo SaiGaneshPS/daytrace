@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DT-58: the widget's card, in the dashboard's hero gradient (white text stays readable across it). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="24dp" />
+    <gradient
+        android:angle="315"
+        android:centerColor="@color/daytrace_hero_middle"
+        android:endColor="@color/daytrace_hero_end"
+        android:startColor="@color/daytrace_hero_start" />
+</shape>

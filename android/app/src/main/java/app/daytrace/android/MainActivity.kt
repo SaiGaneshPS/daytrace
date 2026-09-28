@@ -1,5 +1,5 @@
-// DT-19 / DT-22: entry activity. Onboarding until usage access is granted, then the status screen, which opens
-// pairing with the hub.
+// DT-19 / DT-22 / DT-58: entry activity. Onboarding until usage access is granted, then the status screen, which opens
+// pairing with the hub. Once paired, the dashboard's tabs, with the status screen under More, This phone.
 package app.daytrace.android
 
 import android.content.Intent
@@ -9,20 +9,31 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import app.daytrace.android.sync.PairingStore
+import app.daytrace.android.sync.SyncStatusStore
+import app.daytrace.android.ui.AppShell
+import app.daytrace.android.ui.DashboardRules
 import app.daytrace.android.ui.HealthRationaleScreen
 import app.daytrace.android.ui.OnboardingScreen
 import app.daytrace.android.ui.PairingScreen
 import app.daytrace.android.ui.StatusScreen
 import app.daytrace.android.ui.onboarded
+import app.daytrace.android.ui.readyToContinue
 import app.daytrace.android.ui.rememberPermissionRequester
 import app.daytrace.android.ui.rememberPermissionStates
 import app.daytrace.android.ui.setOnboarded
 import app.daytrace.android.ui.theme.DaytraceTheme
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,12 +65,37 @@ private fun DaytraceRoot() {
     // Reopened from the status screen: Back returns there instead of closing the app.
     BackHandler(enabled = showOnboarding && onboarded(context)) { showOnboarding = false }
     BackHandler(enabled = showPairing && !showOnboarding) { showPairing = false }
+    // Paired or not, and how the last sync went, looked at every couple of seconds while the app is in front
+    // ("Forget this hub" changes the one, a background sync the other).
+    var paired by remember { mutableStateOf(PairingStore.get(context).info() != null) }
+    var lastSync by remember { mutableStateOf(SyncStatusStore(context).read()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                paired = PairingStore.get(context).info() != null
+                lastSync = SyncStatusStore(context).read()
+                delay(2_000)
+            }
+        }
+    }
+    val phone: @Composable () -> Unit = {
+        StatusScreen(states, grant, onShowOnboarding = { showOnboarding = true }, onPair = { showPairing = true })
+    }
     when {
         showOnboarding -> OnboardingScreen(states, grant, onContinue = {
             setOnboarded(context, true)
             showOnboarding = false
         })
-        showPairing -> PairingScreen(onClose = { showPairing = false })
-        else -> StatusScreen(states, grant, onShowOnboarding = { showOnboarding = true }, onPair = { showPairing = true })
+        showPairing -> PairingScreen(onClose = {
+            showPairing = false
+            paired = PairingStore.get(context).info() != null
+        })
+        paired -> AppShell(
+            phoneScreen = phone,
+            warning = DashboardRules.warning(readyToContinue(states), lastSync.result, lastSync.message),
+            onPairAgain = { showPairing = true },
+        )
+        else -> phone()
     }
 }

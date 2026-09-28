@@ -118,7 +118,7 @@ ever replaces demo data.
 | **Windows desktop tracker** | Works: foreground app, window title and away time, using about 0.5% of one CPU core. |
 | **Local AI** (LM Studio or Ollama) | Works with any OpenAI-compatible server on this computer or your LAN. Tested with Gemma 4 E4B. |
 | **Nudges** | Work. Shown as a desktop notification (tried on Windows; the macOS and Linux paths are written but untried), and returned to the phone that triggered them. |
-| **Android app** | Works on a Galaxy S25 Ultra: finds the hub on the Wi-Fi, pairs by QR code or typed code, and sends app use, screen on and off, sleep, steps and meals (from Health Connect) and the calendar. Every event waits on the phone until the hub has it. Live mode sends app use within about 5 seconds, and the hub's nudges show as notifications. See [install-android.md](docs/install-android.md). |
+| **Android app** | Works on a Galaxy S25 Ultra: finds the hub on the Wi-Fi, pairs by QR code or typed code, and sends app use, screen on and off, sleep, steps and meals (from Health Connect) and the calendar. Every event waits on the phone until the hub has it. Live mode sends app use within about 5 seconds, and the hub's nudges show as notifications. The app opens on your dashboard (native tabs over the hub's pages), and has a home-screen widget. See [install-android.md](docs/install-android.md). |
 | **iPhone** | The dashboard works in Safari once the browser is paired. The Shortcuts that send app use, health and meals aren't built yet (DT-26 to DT-28). |
 | **macOS desktop tracker** | Not built yet (DT-17). |
 | **Mac bridge** for full iPhone Screen Time | Not built yet (DT-29). |
