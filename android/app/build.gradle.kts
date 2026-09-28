@@ -1,8 +1,56 @@
-// DT-19: the app module. DT-25 adds the release signing config (keystore from environment variables).
+// DT-19: the app module. DT-25: the release signing key and the version, for signed APKs on GitHub Releases.
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp) // Room's code generator (DT-21)
+}
+
+// DT-25: the release key, from the environment (the release workflow) or android/keystore.properties (ignored by git,
+// for a release built on this PC): storeFile, storePassword, keyAlias and keyPassword. Without one, a release build
+// is left unsigned (app-release-unsigned.apk), as on every pull request.
+val keyFile = rootProject.file("keystore.properties")
+val keyProperties = Properties().apply { if (keyFile.isFile) keyFile.inputStream().use(::load) }
+
+fun releaseKey(env: String, property: String): String? =
+    providers.environmentVariable(env).orNull?.trim()?.takeIf { it.isNotEmpty() }
+        ?: keyProperties.getProperty(property)?.trim()?.takeIf { it.isNotEmpty() }
+
+val keyStore = releaseKey("DAYTRACE_KEYSTORE", "storeFile")
+val keyStorePassword = releaseKey("DAYTRACE_KEYSTORE_PASSWORD", "storePassword")
+val keyAliasName = releaseKey("DAYTRACE_KEY_ALIAS", "keyAlias")
+val keyAliasPassword = releaseKey("DAYTRACE_KEY_PASSWORD", "keyPassword") ?: keyStorePassword // PKCS12: the same
+val keyParts = mapOf(
+    "DAYTRACE_KEYSTORE (storeFile)" to keyStore,
+    "DAYTRACE_KEYSTORE_PASSWORD (storePassword)" to keyStorePassword,
+    "DAYTRACE_KEY_ALIAS (keyAlias)" to keyAliasName,
+)
+val signed = keyParts.values.all { it != null }
+if (!signed && keyParts.values.any { it != null }) { // half a key would quietly build an unsigned APK
+    throw GradleException("A release key needs ${keyParts.keys.joinToString()}; missing: ${keyParts.filterValues { it == null }.keys.joinToString()}")
+}
+if (signed && !rootProject.file(keyStore!!).isFile) {
+    throw GradleException(
+        "No key file at ${rootProject.file(keyStore)}. In keystore.properties write the path with forward slashes " +
+            "(D:/Hackathon/keys/daytrace-release.jks): a backslash there is an escape character.",
+    )
+}
+
+// DT-25: a release's version comes from its tag (android-v0.2.1 gives 0.2.1), and its versionCode from that
+// (major * 10000 + minor * 100 + patch), so every release installs over the one before. The same rule as the tag
+// check in .github/workflows/android.yml: no leading zeros, at most 999.99.99, above 0.0.0.
+val releaseVersion = providers.environmentVariable("DAYTRACE_VERSION").orNull?.trim()?.takeIf { it.isNotEmpty() }
+val releaseCode = releaseVersion?.let { version ->
+    val parts = Regex("(0|[1-9][0-9]{0,2})[.](0|[1-9][0-9]?)[.](0|[1-9][0-9]?)").matchEntire(version)?.groupValues?.drop(1)?.map(String::toInt)
+    val code = parts?.let { it[0] * 10_000 + it[1] * 100 + it[2] }
+    if (code == null || code == 0) {
+        throw GradleException("DAYTRACE_VERSION must look like 0.2.1 (no leading zeros, at most 999.99.99, above 0.0.0), not '$version'")
+    }
+    code
+}
+if (signed && releaseVersion == null) { // else it would look like the real 0.1.0, with versionCode 1
+    throw GradleException("A signed build is a release: set DAYTRACE_VERSION too (for example 0.1.0).")
 }
 
 android {
@@ -13,8 +61,19 @@ android {
         applicationId = "app.daytrace.android"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseCode ?: 1
+        versionName = releaseVersion ?: "0.1.0"
+    }
+
+    signingConfigs {
+        if (signed) {
+            create("release") {
+                storeFile = rootProject.file(keyStore!!)
+                storePassword = keyStorePassword
+                keyAlias = keyAliasName
+                keyPassword = keyAliasPassword
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +82,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfig = signingConfigs.findByName("release") // null without a key: unsigned
         }
     }
 

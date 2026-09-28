@@ -28,7 +28,10 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 ```
 
 The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/android.yml`) builds the same
-APK on every PR and keeps it as an artifact for 14 days.
+APK on every PR and keeps it as an artifact for 14 days. It also builds the release (`assembleRelease`, shrunk by R8,
+unsigned unless a key is given), so R8's errors show on the PR; only installing it shows the shrunk app runs. A tag
+`android-v<version>` on a commit of `development` publishes a signed release on GitHub Releases (DT-25; see
+[docs/install-android.md](../docs/install-android.md), "Making a release").
 
 The database and sync tests run on the JVM with Robolectric, which downloads an Android jar (about 200 MB) on the
 first run. It is kept in `$GRADLE_USER_HOME/robolectric` (on this PC `D:\Hackathon\Cache\gradle\robolectric`)

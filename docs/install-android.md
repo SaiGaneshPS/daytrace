@@ -5,16 +5,30 @@ and sends them to your hub over your own Wi-Fi. It isn't on the Play Store: you 
 
 ## Download the APK
 
-Signed releases on GitHub Releases come with DT-25. Until then, use the debug APK:
-
-- **From CI:** every pull request builds it. Open the PR's **Checks** tab, then the `android` run, and download
-  the `daytrace-debug-apk` artifact (kept for 14 days).
-- **Build it yourself:** see [android/README.md](../android/README.md) (`./gradlew assembleDebug`), then install it
-  with `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
+- **A release (recommended):** open the repository's **Releases** page on the phone and download
+  `daytrace-android-<version>.apk` from the newest **Daytrace for Android** release. Each release is signed with the
+  same key, so a new one installs over the one before and keeps everything (the pairing, and events not sent yet).
+  The release notes give the file's SHA-256 and the signing certificate's, if you want to check them.
+- **A debug build, for development:** every pull request builds one (the PR's **Checks** tab, the `android` run, the
+  `daytrace-debug-apk` artifact, kept for 14 days), or build it yourself (see [android/README.md](../android/README.md))
+  and install it with `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
+- **Moving between builds:** a release and a debug build are signed with different keys, and so are debug builds
+  from different CI runs (each makes its own debug key), so Android refuses to install one over another ("App not
+  installed"). Sync first (**Sync now**), then uninstall and install the other. The phone then pairs as a new device
+  (a reinstall always does); its history so far stays on the hub under the old one, which you can revoke on the
+  Devices page. Releases always install over each other.
 
 ## Allow installing unknown apps (Samsung)
 
-TODO (DT-25)
+1. **Auto Blocker:** if it's on (Settings > Security and privacy > Auto Blocker), it blocks apps from outside the
+   Galaxy Store and the Play Store, and installs over a USB cable too. Turn it off to install Daytrace, and back on
+   afterwards if you like (an installed app keeps running); each new release needs it off again.
+2. **Open the APK** from the download notification, or from **My Files** > **Downloads**.
+3. **Allow the source once:** Android says the app you opened it from (Chrome, or My Files) can't install unknown
+   apps. Tap **Settings**, turn on **Allow from this source**, then go back and tap **Install**. You can turn it off
+   again under Settings > Apps > (menu) > Special access > Install unknown apps.
+4. **Play Protect** may warn that it doesn't know the app (it isn't on the Play Store): tap **More details** >
+   **Install anyway**. If it offers to send the app for a scan, you can say no.
 
 ## Permissions
 
@@ -147,4 +161,51 @@ Other phone makers have similar settings, usually under Battery or App info.
 
 ## Google developer verification note
 
-TODO (DT-25)
+Google is starting to require that apps on certified Android phones come from a registered developer
+([Android developer verification](https://developer.android.com/developer-verification), checked 2026-09-28):
+
+- **When:** from September 30, 2026 in Brazil, Indonesia, Singapore and Thailand only, and on every certified
+  Android phone in 2027.
+- **What it means for Daytrace:** nothing yet elsewhere. Once it applies, a release needs either a registered
+  developer or Google's free **limited distribution** account (for students and hobbyists: no fee, no ID, up to 20
+  devices), which fits a hackathon team.
+- **Without either:** Google keeps two ways in for your own phone: an "advanced flow" in the phone's settings (a
+  one-time setup) and `adb install`, which works for developers as today
+  ([Google's help page](https://support.google.com/android-developer-console/answer/16561738)).
+
+## Making a release (maintainers)
+
+The key is made once, kept off GitHub except as two secrets of the `android-release` environment, and never
+committed:
+
+1. **The key** (done on the hub PC): `D:\Hackathon\keys\daytrace-release.jks` (PKCS12, alias `daytrace`, RSA 4096,
+   valid until 2054), with its password in `daytrace-release-password.txt` next to it. Its certificate's SHA-256,
+   `35e83a98f1bd83b369ff3ce7febbe5902b8e4cda6e36086667794b4fe385119f`, is pinned in `android.yml`: a release signed
+   any other way fails. **Back both files up somewhere safe**: without them no later release can install over an
+   earlier one.
+2. **The environment** `android-release` (Settings > Environments) takes only tags `android-v*`, so no branch or pull
+   request run can read its secrets.
+3. **The secrets** (once), in PowerShell from the repository folder, so the password never appears in a command line:
+
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("D:\Hackathon\keys\daytrace-release.jks")) | gh secret set DAYTRACE_KEYSTORE_BASE64 --env android-release
+   Get-Content -Raw D:\Hackathon\keys\daytrace-release-password.txt | gh secret set DAYTRACE_KEYSTORE_PASSWORD --env android-release
+   ```
+
+4. **Before the first tag:** CI builds the shrunk release (R8) on every pull request, which shows it builds, not that
+   it runs. So install a signed build on a phone once (step 6) and open every tab, the widget and live mode.
+5. **A release:** tag a commit that is on `development` and push the tag. The `android release` job checks the
+   commit is on `development` and the version is higher than every release so far, builds the APK (the version and
+   its versionCode come from the tag), checks it is signed with the pinned key and publishes the GitHub Release:
+
+   ```bash
+   git tag android-v0.1.0 && git push origin android-v0.1.0
+   ```
+
+   Versions are `major.minor.patch` without leading zeros, at most `999.99.99` (versionCode is
+   `major * 10000 + minor * 100 + patch`).
+6. **On this PC** (optional): `android/keystore.properties` (ignored by git) with `storeFile` (with forward slashes,
+   `D:/Hackathon/keys/daytrace-release.jks`: a backslash there is an escape), `storePassword` and `keyAlias`; or set
+   `DAYTRACE_KEYSTORE`, `DAYTRACE_KEYSTORE_PASSWORD` and `DAYTRACE_KEY_ALIAS`. A signed build also needs
+   `DAYTRACE_VERSION` (for example `0.1.0`), the release it is. Half a key, or a key without a version, fails the
+   build. Without a key, the release build is unsigned (`app-release-unsigned.apk`).
