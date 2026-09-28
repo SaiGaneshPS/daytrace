@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockWhen } from "../components/timelineText";
+import { blockWhen, NOW_LEAD_MS, nowMark } from "../components/timelineText";
 
 const at = (clock: string) => new Date(`2026-09-28T${clock}`).getTime();
 const withSeconds = /\d{1,2}:\d{2}:\d{2}/;
@@ -27,5 +27,23 @@ describe("a timeline block's tooltip", () => {
   it("has no length for a block the hub gives no minutes (a calendar event)", () => {
     expect(blockWhen(at("09:00:00"), at("10:30:00"), null)).toEqual({ times: expect.any(String), length: null });
     expect(blockWhen(at("09:00:00"), at("09:00:30"), null).times).toMatch(withSeconds);
+  });
+});
+
+describe("the timeline's now line", () => {
+  const now = at("12:19:00");
+
+  it("stays on the clock when everything recorded ended before it", () => {
+    expect(nowMark(now, [])).toBe(now);
+    expect(nowMark(now, [at("12:18:40"), at("09:00:00")])).toBe(now);
+  });
+
+  it("moves up to a block that came in after the clock last moved", () => {
+    expect(nowMark(now, [at("12:18:40"), at("12:19:20"), at("12:19:08")])).toBe(at("12:19:20"));
+  });
+
+  it("ignores an end far past the clock (a device's wrong clock)", () => {
+    expect(nowMark(now, [now + NOW_LEAD_MS + 1_000, at("12:19:05")])).toBe(at("12:19:05"));
+    expect(nowMark(now, [now + NOW_LEAD_MS])).toBe(now + NOW_LEAD_MS);
   });
 });

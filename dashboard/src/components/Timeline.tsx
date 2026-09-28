@@ -17,7 +17,7 @@ import type { components } from "../api/schema";
 import { CATEGORY_DECALS, CATEGORY_LABELS, type Category, type ChartOption, token, useEChart } from "../theme/charts";
 import { useMediaQuery } from "../theme/motion";
 import { formatMinutes } from "./StatCard";
-import { blockWhen } from "./timelineText";
+import { blockWhen, nowMark } from "./timelineText";
 
 type TimelineData = components["schemas"]["Timeline"];
 
@@ -40,6 +40,8 @@ type Block = {
   category: Category | null;
   color: string;
   opacity: number;
+  /** A calendar event: planned, so it may run past now. */
+  planned: boolean;
 };
 type Meal = { row: number; time: number; name: string };
 type View = { date: string; start: number; end: number };
@@ -97,7 +99,7 @@ export default function Timeline({ data, now }: Props) {
         blocks.push({
           row, start: Date.parse(session.start), end: Date.parse(session.end), name: session.app ?? session.app_id ?? "Unknown app",
           detail: CATEGORY_LABELS[category], minutes: session.minutes, estimated: session.estimated, category,
-          color: `var(--cat-${category})`, opacity: lane.counted ? 1 : 0.55,
+          color: `var(--cat-${category})`, opacity: lane.counted ? 1 : 0.55, planned: false,
         });
       }
     });
@@ -109,7 +111,7 @@ export default function Timeline({ data, now }: Props) {
         const end = Date.parse(entry.end);
         blocks.push({
           row, start, end, name: entry.title || "Calendar event", detail: "Calendar", minutes: null, estimated: false,
-          category: null, color: "var(--accent)", opacity: 0.35,
+          category: null, color: "var(--accent)", opacity: 0.35, planned: true,
         });
       }
     }
@@ -123,6 +125,7 @@ export default function Timeline({ data, now }: Props) {
           row, start: Date.parse(entry.start), end: Date.parse(entry.end), name: SLEEP_NAMES[entry.stage ?? "asleep"] ?? "Sleep",
           detail: entry.stage === "in_bed" ? "In bed (not counted as sleep)" : entry.stage === "awake" ? "Awake (not counted as sleep)" : "Sleep",
           minutes: entry.minutes, estimated: entry.estimated, category: null, color: "var(--cat-study)", opacity: background ? 0.22 : 0.55,
+          planned: false,
         });
       }
     }
@@ -137,6 +140,10 @@ export default function Timeline({ data, now }: Props) {
     }
     return { rows, blocks, meals };
   }, [lanes, data.calendar, data.sleep, data.meals]);
+  const line = useMemo(
+    () => (now === undefined ? undefined : nowMark(now, blocks.filter((block) => !block.planned).map((block) => block.end))),
+    [now, blocks],
+  );
 
   const dayStart = Date.parse(data.meta.range.start);
   const dayEnd = Date.parse(data.meta.range.end);
@@ -254,9 +261,9 @@ export default function Timeline({ data, now }: Props) {
             itemStyle: { color: block.color, opacity: block.opacity, ...(block.category ? { decal: CATEGORY_DECALS[block.category] } : {}) },
           })),
           markLine:
-            now !== undefined
+            line !== undefined
               ? { silent: true, symbol: "none", label: { formatter: "now", position: "start", color: "var(--accent-ink)" },
-                  lineStyle: { color: "var(--accent)", type: "dashed", width: 2 }, data: [{ xAxis: now }] }
+                  lineStyle: { color: "var(--accent)", type: "dashed", width: 2 }, data: [{ xAxis: line }] }
               : undefined,
         },
         {
@@ -268,7 +275,7 @@ export default function Timeline({ data, now }: Props) {
         },
       ],
     };
-  }, [blocks, meals, rows, dayStart, dayEnd, now, touch, narrow, currentView]);
+  }, [blocks, meals, rows, dayStart, dayEnd, line, touch, narrow, currentView]);
 
   const chart = useEChart(option, `Timeline of ${data.date}, one lane per device`, { merge: true, events: { datazoom: onZoom } });
   const categories = [...new Set(blocks.map((block) => block.category).filter((c): c is Category => c !== null))];
