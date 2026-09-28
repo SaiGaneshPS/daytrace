@@ -43,7 +43,13 @@ fun interface HubConfigSource {
 /** An event the hub did not store, and why (docs/api.md, "rejected"). [index] is its place in the batch. */
 data class Rejection(val index: Int, val code: String, val reason: String)
 
-data class IngestReply(val rejected: List<Rejection>)
+/** DT-24: a nudge the hub picked for this phone after its events (docs/api.md), shown as a notification. */
+data class Nudge(val rule: String, val title: String, val body: String, val createdAt: String) {
+    /** Which nudge it is (its rule and when the hub fired it), or null without its time. */
+    val id: String? get() = createdAt.takeIf { it.isNotEmpty() }?.let { "$rule@$it" }
+}
+
+data class IngestReply(val rejected: List<Rejection>, val nudge: Nudge? = null)
 
 sealed interface HubResult<out T> {
     data class Ok<T>(val value: T) : HubResult<T>
@@ -209,6 +215,7 @@ class HubClient(
                 (0 until rejected.length()).map { rejected.getJSONObject(it) }.map {
                     Rejection(it.getInt("index"), it.optString("code", "invalid"), it.optString("reason"))
                 },
+                nudgeOf(reply),
             )
         }
     }
@@ -314,6 +321,8 @@ class HubClient(
         private val JSON = "application/json; charset=utf-8".toMediaType()
         const val MAX_TEXT = 200 // the hub's limit for app and app_id
         const val MAX_TITLE = 500 // and for a title (DT-23)
+        private const val MAX_NUDGE_TITLE = 80 // the hub's limits for a nudge (DT-43)
+        private const val MAX_NUDGE_BODY = 240
         private const val ZERO_WIDTH_JOINER = 0x200D
 
         /**
@@ -350,6 +359,17 @@ class HubClient(
                 ),
             )
             .build()
+
+        /**
+         * The reply's nudge, cleaned like any text, or null. A nudge that can't be read is dropped, never the reply:
+         * the events were stored either way.
+         */
+        fun nudgeOf(reply: JSONObject): Nudge? = runCatching {
+            val nudge = reply.optJSONObject("nudge") ?: return null
+            val title = cleanText(nudge.getString("title"), MAX_NUDGE_TITLE) ?: return null
+            val body = cleanText(nudge.getString("body"), MAX_NUDGE_BODY) ?: return null
+            Nudge(nudge.optString("rule"), title, body, nudge.optString("created_at"))
+        }.getOrNull()
 
         /** {"error": {"code", "message"}} from the hub, or null for any other body. */
         private fun errorOf(text: String): Pair<String, String>? = runCatching {

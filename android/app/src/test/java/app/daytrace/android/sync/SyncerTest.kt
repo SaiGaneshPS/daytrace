@@ -115,6 +115,31 @@ class SyncerTest {
     }
 
     @Test
+    fun aNudgeInTheReplyIsHandedOnAndAFailingNotificationNeverStopsTheSync() {
+        collect(1)
+        enqueue(cursor(null))
+        enqueue(
+            reply(
+                200,
+                """{"accepted": 1, "replaced": 0, "duplicates": 0, "rejected": [], "last_seq": 0,
+                   "nudge": {"rule": "focus_block", "title": "Time to focus", "body": "TikTok during \"Study\".", "created_at": "2026-09-27T22:37:30Z"}}""",
+            ),
+        )
+        val shown = mutableListOf<Nudge>()
+        val report = runBlocking {
+            Syncer(
+                store, pairing, status,
+                wifi = { HubClient.httpClient() },
+                clock = { 1_000L },
+                onNudge = { shown += it; error("the notification failed") },
+            ).sync()
+        }
+        assertEquals(SyncResult.SENT, report.result)
+        assertEquals(listOf("focus_block@2026-09-27T22:37:30Z"), shown.map { it.id })
+        assertEquals(0, store.counts().waiting) // the batch was marked sent all the same
+    }
+
+    @Test
     fun somethingThatCannotProveItIsTheHubNeverGetsTheToken() {
         collect(1)
         fakeHub.proofToken = "dt_someone_else" // a stranger's device at the hub's address

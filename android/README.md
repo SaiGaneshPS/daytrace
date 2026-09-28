@@ -52,7 +52,7 @@ The onboarding screen walks through each one and the status screen shows them af
 | Permission | Why | Required |
 |---|---|---|
 | Usage access (`PACKAGE_USAGE_STATS`, granted in Settings) | which apps you used and for how long | yes |
-| Notifications | nudges (DT-24) and the live-mode notice | no |
+| Notifications | the hub's nudges and the live-mode notice (DT-24) | no |
 | Calendar (read) | today's events on the timeline (DT-23) | no |
 | Health Connect (read sleep, steps, nutrition, and in the background where offered) | sleep, steps and meals on the timeline (DT-23) | no |
 

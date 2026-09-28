@@ -30,9 +30,8 @@ desktop notification. The focus nudge rests 20 minutes after it fires, and no nu
 retry in that time stays quiet and says why; `--again` lets it speak now. The start script's re-seeding clears the
 rehearsal's nudges, so the real demo starts rested.
 
-**Until live mode is built,** steps 2 and 3 always use these two commands: the Android app pairs and syncs, but
-only every 15 minutes or on "Sync now", and showing nudges on the phone is DT-24. The checklist's phone battery
-item waits for that too.
+**With a paired phone,** steps 2 and 3 run on the phone itself: turn on **Live mode** on its status screen before
+the demo. The two commands stay as the fallbacks.
 
 ## Before the demo (checklist)
 
@@ -41,8 +40,8 @@ item waits for that too.
       Check: Devices shows the phone's last contact as "just now".
 - [ ] **Pairing.** The phone is paired to the demo hub (Devices, pairing code or QR), and its lane
       shows on Today.
-- [ ] **Phone battery** (once DT-24 is in). Above 50%, charger nearby. Daytrace is in Samsung's "Never sleeping
-      apps", battery Unrestricted, and live mode is on.
+- [ ] **Phone battery.** Above 50%, charger nearby. Daytrace is in Samsung's "Never auto sleeping apps", its
+      battery is Unrestricted, and live mode is on (its notice shows "Live mode is on").
 - [ ] **Model loaded.** LM Studio is running with the model loaded; the start script said "The model ... answers".
       A question on Ask answers in under 20 seconds.
 - [ ] **Screen scaling.** The browser zoom is 100% (Ctrl+0), and the display scaling is what the room's screen needs.
@@ -69,8 +68,8 @@ item waits for that too.
 ## 2. Live: phone to PC (30 s)
 
 - **Say:** "Watch: I open Instagram on my phone..."
-- **Do:** open Instagram on the paired phone for a few seconds, then YouTube, then lock it. Until live mode sends
-  within seconds (DT-24), use the fallback.
+- **Do:** open Instagram on the paired phone for a few seconds, then YouTube, then lock it. Live mode sends each app
+  within about 5 seconds.
 - **See:** within a few seconds the Android lane on Today grows up to now, with its live dot.
 - **Fallback:** no phone, or it doesn't sync: run `daytrace_hub demo live` on the PC. The same thing lands on the
   Android lane at once (Today refreshes by itself).
@@ -80,8 +79,8 @@ item waits for that too.
 - **Say:** "Tracking alone rarely changes anything, so Daytrace nudges at the right moment. I'm meant to be
   studying..."
 - **Do:** during a calendar block called "Study ...", open TikTok on the phone.
-- **See:** the phone shows "Time to focus: TikTok during "Study ...", which runs until ..." (once DT-24 is in;
-  until then use the fallback, whose nudge shows as a desktop notification).
+- **See:** within seconds the phone shows "Time to focus: TikTok during "Study ...", which runs until ...". The
+  block must be on the phone's calendar (the phone sends it with each sync; tap **Sync now** after adding it).
 - **Fallback:** `daytrace_hub demo nudge` on the PC. It puts a study block on the phone's calendar and opens TikTok in
   it, and the same nudge shows as a desktop notification. If it prints "No nudge", run it with `--again`.
 

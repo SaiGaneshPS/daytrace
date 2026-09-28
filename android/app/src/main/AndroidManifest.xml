@@ -28,6 +28,10 @@
     <!-- Syncs run in the background, and reading there needs this one too (asked where the phone offers it). -->
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
+    <!-- Live mode (DT-24): a foreground service, with its notice, that sends app use to the hub within seconds. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <queries>
         <!-- The Health Connect app on Android 13 and older. -->
         <package android:name="com.google.android.apps.healthdata" />
@@ -72,5 +76,11 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+
+        <!-- Live mode: started only from the app's screen, never by itself. -->
+        <service
+            android:name=".live.LiveModeService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

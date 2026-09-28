@@ -26,6 +26,7 @@ import app.daytrace.android.calendar.CalendarCollector
 import app.daytrace.android.data.EventEntity
 import app.daytrace.android.data.EventStore
 import app.daytrace.android.health.HealthCollector
+import app.daytrace.android.nudge.NudgeNotifier
 import app.daytrace.android.usage.UsageCollector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -110,6 +111,8 @@ class Syncer(
     private val findHubs: suspend () -> List<String> = { emptyList() },
     private val clientFor: (HubConfig, OkHttpClient) -> HubClient = { config, http -> HubClient(config, http) },
     private val clock: () -> Long = System::currentTimeMillis,
+    /** DT-24: a nudge the hub sent back with a batch (see [NudgeNotifier]). */
+    private val onNudge: (Nudge) -> Unit = {},
 ) {
     suspend fun sync(): SyncReport = LOCK.withLock {
         withContext(Dispatchers.IO) {
@@ -167,6 +170,8 @@ class Syncer(
             when (val reply = client.send(batch)) {
                 is HubResult.Ok -> {
                     val applied = apply(batch, reply.value)
+                    // After the batch is marked: showing a nudge must never stop what is stored from going.
+                    reply.value.nudge?.let { nudge -> runCatching { onNudge(nudge) } }
                     sent += applied.sent
                     refused += applied.refused
                     if (applied.wrongDevice) return SyncReport(SyncResult.PAIR_AGAIN, PAIR_AGAIN_MESSAGE, sent, refused)
@@ -238,6 +243,7 @@ class Syncer(
                     SyncStatusStore(app),
                     wifi = { WifiOnly.network(app)?.let(HubClient::onNetwork) },
                     findHubs = { HubDiscovery(app).findNow() },
+                    onNudge = { NudgeNotifier(app).show(it) },
                 )
             }.also { instance = it }
         }

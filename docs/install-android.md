@@ -24,7 +24,7 @@ needed; the others add to what your timeline shows.
 | Step | What Daytrace reads | What leaves the phone |
 |---|---|---|
 | **Usage access** (Settings > Usage access) | which apps you used, when, and screen on and off | the app's name and package, and the times |
-| **Notifications** | nothing | nothing (nudges and the live-mode notice, DT-24) |
+| **Notifications** | nothing | nothing: it shows your hub's nudges and the live-mode notice |
 | **Calendar** | the calendars shown in your Calendar app, from yesterday to tomorrow | each event's title and times, and whether it is all day. Never the place, notes or guests |
 | **Health Connect** | sleep with its stages, daily step totals, and the foods you logged | the times, sleep stages, step counts, food names and meal type. Never calories or other nutrients |
 
@@ -80,9 +80,43 @@ together are one meal on your timeline, each food an item.
   - every occurrence of a repeating event whose time you change for the whole series;
   - the extra stages of a night that Samsung Health later splits into fewer stages.
 
-## Battery settings (Never sleeping apps)
+## Live mode and nudges
 
-TODO (DT-24)
+The status screen's **Live mode** card is for demos, or any time you want the PC to see this phone at once.
+
+- **While it's on:** Daytrace reads your app use every 5 seconds and sends anything new straight away. An app you open
+  shows on the hub's timeline within about 5 seconds (5.5 s measured on a Galaxy S25 Ultra), and grows as you keep
+  using it.
+- **The notice:** "Live mode is on" stays in your notifications, with a **Stop** button.
+- **Screen off:** it reads once a minute instead, and at once when the screen comes back on.
+- **When it ends:** when you stop it, forget the hub, or swipe Daytrace away from your recent apps; when the hub no
+  longer accepts this phone; or after Android's limit for this kind of background work (6 hours a day on Android 15
+  and newer).
+- **When the hub is out of reach:** it tries again every 30 seconds, and everything waits safely on the phone.
+- **Without it:** the phone syncs every 15 minutes on Wi-Fi, and whenever you tap **Sync now**.
+
+**Nudges** come from your hub, with the events that set them off. The hub's rules:
+- **Focus time:** a social, video or game app during a study or work block on your calendar.
+- **Late night:** social or video after your bedtime goal.
+- **Streak at risk:** from 20:00, a streak not kept yet today.
+- **Social limit:** past your daily social goal.
+
+The phone shows each nudge once, in Daytrace's colors, for example "Time to focus: YouTube during "Study", which runs
+until 22:15." It needs the **Notifications** permission; without it the nudge is only in the hub's log
+(`GET /api/v1/nudges`). Nudges arrive with a sync: within seconds in live mode, otherwise at the next sync.
+
+## Battery settings
+
+Samsung phones put apps they think you don't use to sleep, which delays the 15-minute sync. So that Daytrace keeps
+syncing (and live mode keeps running during a demo), change two settings. The names are from One UI on a Galaxy
+S25 Ultra:
+
+1. **Settings > Battery > Background usage limits > Never auto sleeping apps**. Tap **+** (Add apps), choose
+   **Daytrace**, then **Add**. Older One UI versions call the list **Never sleeping apps**.
+2. **Settings > Apps > Daytrace > Battery**: choose **Unrestricted**.
+
+Check that Daytrace is not in **Sleeping apps** or **Deep sleeping apps** on the same Background usage limits page.
+Other phone makers have similar settings, usually under Battery or App info.
 
 ## Google developer verification note
 
