@@ -44,6 +44,22 @@ class PairingStoreTest {
     }
 
     @Test
+    fun theDashboardTokenGoesWithThePairingEncryptedLikeTheOther() {
+        val withDashboard = pairing.copy(viewerToken = "dt_viewer_token")
+        store.save(withDashboard)
+        assertEquals(withDashboard, store.pairing())
+        assertEquals("dt_viewer_token", store.viewerToken())
+        val saved = context.getSharedPreferences("pairing", Context.MODE_PRIVATE).all.values.joinToString()
+        assertFalse(saved, "dt_viewer_token" in saved)
+        assertFalse("dt_viewer_token" in withDashboard.toString()) // never printed
+        store.save(pairing) // paired again without one (an older hub): the old one goes
+        assertNull(store.viewerToken())
+        store.save(withDashboard)
+        store.clear() // forgotten: gone too
+        assertNull(store.viewerToken())
+    }
+
+    @Test
     fun theTokenIsNeverStoredInTheClear() {
         store.save(pairing)
         val saved = context.getSharedPreferences("pairing", Context.MODE_PRIVATE).all.values.joinToString()

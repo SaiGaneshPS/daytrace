@@ -12,7 +12,8 @@ Only what the collectors send, as events ([event-schema.json](event-schema.json)
   titles, and nothing from inside the apps. With those permissions, also from Health Connect: sleep and its stages,
   each day's step total, and the names and meal type of the foods you logged (never calories or other nutrients);
   and from the calendar, each event's title and times from yesterday to tomorrow (never the place, notes or
-  guests).
+  guests). The app's Dashboard tab (DT-58) shows the hub's own pages in a WebView that opens only the hub, and
+  sends nothing to Google (Safe Browsing and WebView usage reports are off).
 - **Collectors not built yet:**
   - the browser extension sends the active tab's domain only, never the full address or the page (DT-18);
   - iPhone Shortcuts send app opens and closes, sleep, steps, calendar events and the meals you log (DT-26 to

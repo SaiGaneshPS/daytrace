@@ -140,4 +140,5 @@ cable, or turn on the PC's Mobile hotspot and connect the phone to it.
 | `sync/HubDiscovery.kt`, `sync/PairingStore.kt`, `ui/PairingScreen.kt` (plus the hub's proof endpoint) | DT-22 |
 | `health/HealthCollector.kt`, `calendar/CalendarCollector.kt` | DT-23 |
 | `live/LiveModeService.kt`, `nudge/NudgeNotifier.kt` | DT-24 |
+| `ui/DashboardScreen.kt`, `widget/TodayWidget.kt`, `widget/TodayWidgetReceiver.kt` | DT-58 |
 | `app/build.gradle.kts` signing config | DT-25 |

@@ -28,6 +28,7 @@ import app.daytrace.android.data.EventStore
 import app.daytrace.android.health.HealthCollector
 import app.daytrace.android.nudge.NudgeNotifier
 import app.daytrace.android.usage.UsageCollector
+import app.daytrace.android.widget.WidgetRefresher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -261,7 +262,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             collecting { HealthCollector(applicationContext).collect() }
             collecting { CalendarCollector(applicationContext).collect() }
         }
-        Syncer.get(applicationContext).sync()
+        val report = Syncer.get(applicationContext).sync()
+        // DT-58: the widget shows the hub's numbers, so it asks again once the hub has what was just sent.
+        if (report.result == SyncResult.SENT) collecting { WidgetRefresher.refresh(applicationContext) }
         // Always a success, even when the hub was out of reach: a retry would swap the 15-minute period for
         // WorkManager's backoff (up to 5 hours), and the next run tries again anyway. The result is on the screen.
         return Result.success()

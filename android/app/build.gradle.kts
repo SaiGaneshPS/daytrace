@@ -64,6 +64,9 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.okhttp)
     implementation(libs.play.services.code.scanner) // QR pairing: ML Kit inside Google Play services, no camera permission
+    implementation(libs.androidx.webkit) // DT-58: the Dashboard tab's token, set for the hub's page only
+    implementation(libs.androidx.swiperefreshlayout) // DT-58: pull to refresh the Dashboard tab
+    implementation(libs.androidx.glance.appwidget) // DT-58: the home-screen widget
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.org.json) // Android's org.json is a stub in local unit tests

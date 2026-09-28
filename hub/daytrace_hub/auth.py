@@ -36,10 +36,13 @@ class AuthenticatedDevice:
     device_id: str
     name: str
     device_type: str
+    dashboard: bool = False  # DT-58: signed in with the device's dashboard (viewer) token, not its collector token
 
     @property
     def is_viewer(self) -> bool:
-        return self.device_type == "viewer"
+        """A dashboard: a viewer device (a phone's browser) or an app's own dashboard. It reads and changes settings,
+        and never sends events."""
+        return self.device_type == "viewer" or self.dashboard
 
 
 def new_token() -> str:
@@ -67,16 +70,19 @@ def register_device(conn: sqlite3.Connection, *, device_id: str, name: str, devi
 def device_for_token(conn: sqlite3.Connection, token: str) -> AuthenticatedDevice | None:
     """The active device this token belongs to, or None (unknown or revoked).
 
-    The lookup is by the token's SHA-256, so response timing reveals nothing useful about the token.
+    The lookup is by the token's SHA-256, so response timing reveals nothing useful about the token. A device's
+    dashboard token (DT-58) signs in as that device, as a viewer.
     """
-    row = conn.execute(
-        "SELECT device_id, name, device_type, last_seen FROM devices WHERE token_hash = ? AND revoked_at IS NULL",
-        (hash_token(token),),
-    ).fetchone()
-    if row is None:
-        return None
-    _touch_last_seen(conn, row["device_id"], row["last_seen"])
-    return AuthenticatedDevice(row["device_id"], row["name"], row["device_type"])
+    token_hash = hash_token(token)
+    for column, dashboard in (("token_hash", False), ("viewer_token_hash", True)):
+        row = conn.execute(
+            f"SELECT device_id, name, device_type, last_seen FROM devices WHERE {column} = ? AND revoked_at IS NULL",
+            (token_hash,),
+        ).fetchone()
+        if row is not None:
+            _touch_last_seen(conn, row["device_id"], row["last_seen"])
+            return AuthenticatedDevice(row["device_id"], row["name"], row["device_type"], dashboard=dashboard)
+    return None
 
 
 def _touch_last_seen(conn: sqlite3.Connection, device_id: str, last_seen: str | None) -> None:

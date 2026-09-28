@@ -35,11 +35,11 @@ type Mocks = {
   health?: () => { status: number } | null;
   devices?: () => Device[] | { status: number };
   status?: (latestId: string) => Status;
-  claim?: (body: Record<string, string>) => { status?: number; json: object } | Promise<{ status?: number; json: object }>;
+  claim?: (body: Record<string, string | boolean>) => { status?: number; json: object } | Promise<{ status?: number; json: object }>;
 };
 
 async function mockHub(page: Page, mocks: Mocks = {}) {
-  const seen = { starts: 0, claims: [] as Record<string, string>[], deleted: [] as string[], qr: [] as string[], urls: [] as string[], devices: 0, statuses: 0 };
+  const seen = { starts: 0, claims: [] as Record<string, string | boolean>[], deleted: [] as string[], qr: [] as string[], urls: [] as string[], devices: 0, statuses: 0 };
   page.on("request", (request) => seen.urls.push(request.url()));
   const local = () => (typeof mocks.local === "function" ? mocks.local() : (mocks.local ?? true));
   const url = mocks.url === undefined ? LAN : mocks.url;
@@ -75,7 +75,7 @@ async function mockHub(page: Page, mocks: Mocks = {}) {
     return route.fulfill({ body: PNG, contentType: "image/png" });
   });
   await page.route("**/api/v1/pair/claim", async (route) => {
-    const body = route.request().postDataJSON() as Record<string, string>;
+    const body = route.request().postDataJSON() as Record<string, string | boolean>;
     seen.claims.push(body);
     const reply = mocks.claim ? await mocks.claim(body) : {
       status: 201,
@@ -129,7 +129,7 @@ test("a token given on the hub computer is shown once, with the hub's network ad
   await expect(page.getByRole("radio", { name: /Get a token for iPhone Shortcuts/ })).toBeChecked();
   await expect(page.getByLabel("Name in the device list")).toHaveValue("iPhone Shortcuts");
   await page.getByRole("button", { name: "Get the token" }).click();
-  expect(seen.claims).toEqual([{ code: CODE, device_name: "iPhone Shortcuts", device_type: "ios" }]);
+  expect(seen.claims).toEqual([{ code: CODE, device_name: "iPhone Shortcuts", device_type: "ios", dashboard: false }]);
   const reveal = page.locator(".token-reveal");
   await expect(reveal.locator(".token")).toHaveText("tok-SECRET-1234");
   await expect(reveal).toContainText(`Hub address: ${LAN}`); // not localhost: the iPhone needs the network address
@@ -332,7 +332,7 @@ test("a phone's browser pairs by typing the code, and then shows your data", asy
   state.paired = true;
   await page.getByRole("button", { name: "Pair this browser" }).click();
   await expect(page.locator(".pair-success")).toContainText("This browser is paired as Sai's Galaxy.");
-  expect(seen.claims).toEqual([{ code: CODE, device_name: "Sai's Galaxy", device_type: "viewer" }]);
+  expect(seen.claims).toEqual([{ code: CODE, device_name: "Sai's Galaxy", device_type: "viewer", dashboard: false }]);
   expect(await page.evaluate(() => localStorage.getItem("daytrace.token"))).toBe("tok-SECRET-1234");
   await expect(page.getByRole("list", { name: "Paired devices" }).getByRole("listitem")).toHaveCount(4);
   await expect(page.getByText("Devices can be revoked on the hub computer.")).toBeVisible();
@@ -433,7 +433,7 @@ test("a phone can get a token for iPhone Shortcuts, and copy it", async ({ page,
   await expect(page.getByLabel("Name in the device list")).toHaveValue("iPhone Shortcuts");
   await page.getByLabel("Pairing code").fill(CODE);
   await page.getByRole("button", { name: "Get the token" }).click();
-  expect(seen.claims).toEqual([{ code: CODE, device_name: "iPhone Shortcuts", device_type: "ios" }]);
+  expect(seen.claims).toEqual([{ code: CODE, device_name: "iPhone Shortcuts", device_type: "ios", dashboard: false }]);
   const reveal = page.locator(".token-reveal");
   await expect(reveal.locator(".token")).toHaveText("tok-SECRET-1234");
   await expect(reveal).toContainText(`Hub address: ${new URL(page.url()).origin}`);

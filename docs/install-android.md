@@ -80,9 +80,30 @@ together are one meal on your timeline, each food an item.
   - every occurrence of a repeating event whose time you change for the whole series;
   - the extra stages of a night that Samsung Health later splits into fewer stages.
 
+## The Dashboard tab and the widget
+
+Once the phone is paired, Daytrace opens on your dashboard: **Today**, **Story**, **Ask**, **Insights** and **More**
+(Streaks and goals, Wrapped, Devices, Privacy, and **This phone**, with the sync, live mode and permissions).
+
+- **The same dashboard as on the PC:** the pages come from your hub, with its numbers, inside the app. No browser
+  opens.
+- **Only your hub:** the app first checks that the hub is the one that paired this phone (as a sync does). It opens
+  the page only on your hub's Wi-Fi, and refuses to go anywhere else. The page gets its own dashboard token from
+  pairing, which can change settings (your goals, say) but not send events. It sends nothing to Google: the
+  WebView's Safe Browsing checks and usage reports are off.
+- **Paired before the dashboard came along?** The tab asks you to pair again: the phone keeps its id and history, and
+  gets its dashboard token.
+- **Moving around:** pull down to refresh, and Back goes back inside the page.
+
+**The widget:** long-press your home screen, then **Widgets**, then **Daytrace today**.
+- **What it shows:** today's screen time (phone and computers), the longest streak going, with its flame and day
+  count, and progress on your main goal. Tapping it opens the app.
+- **Where the numbers come from:** your hub, the same answers as the dashboard. It refreshes after each background
+  sync and every 30 minutes on your hub's Wi-Fi, and shows the time of the numbers it has.
+
 ## Live mode and nudges
 
-The status screen's **Live mode** card is for demos, or any time you want the PC to see this phone at once.
+The **Live mode** card (More, then This phone) is for demos, or any time you want the PC to see this phone at once.
 
 - **While it's on:** Daytrace reads your app use every 5 seconds and sends anything new straight away. An app you open
   shows on the hub's timeline within about 5 seconds (5.5 s measured on a Galaxy S25 Ultra), and grows as you keep

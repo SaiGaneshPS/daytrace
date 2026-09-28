@@ -353,7 +353,7 @@ private fun pairWith(context: Context, url: String, code: String): PairState {
     return when (val result = HubClient.claim(url, code, deviceName(context), http, previous)) {
         is HubResult.Ok -> {
             val paired = result.value
-            val pairing = Pairing(HubConfig(url, paired.token, paired.deviceId), paired.profile, paired.name)
+            val pairing = Pairing(HubConfig(url, paired.token, paired.deviceId), paired.profile, paired.name, paired.viewerToken)
             try {
                 store.save(pairing)
             } catch (e: Exception) { // the Keystore can fail on some phones; say so instead of crashing

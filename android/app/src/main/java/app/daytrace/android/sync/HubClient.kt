@@ -145,8 +145,16 @@ object PrivateNetwork {
 }
 
 /** What pairing gave this phone (POST /pair/claim). [returning]: the hub knew it, so it kept its first id (DT-22). */
-data class Paired(val deviceId: String, val token: String, val profile: String, val name: String, val returning: Boolean = false) {
-    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name, returning=$returning)" // never print the token
+data class Paired(
+    val deviceId: String,
+    val token: String,
+    val profile: String,
+    val name: String,
+    val returning: Boolean = false,
+    /** DT-58: the token for the app's own dashboard (reads and changes settings, never sends events), if the hub gave one. */
+    val viewerToken: String? = null,
+) {
+    override fun toString() = "Paired(deviceId=$deviceId, profile=$profile, name=$name, returning=$returning)" // never print a token
 }
 
 /** What the hub proved about this phone's pairing (POST /devices/{id}/proof). */
@@ -204,6 +212,16 @@ class HubClient(
         }
     }
 
+    /**
+     * DT-58: GET a dashboard answer (the widget's numbers: /insights/day, /streaks, /goals) as this device. Call it only
+     * after [proveHub] said PAIRED, like the sync: the token goes only to the hub that paired this phone.
+     */
+    fun read(path: String, query: Map<String, String> = emptyMap()): HubResult<JSONObject> {
+        val url = apiUrl(config.baseUrl, path)?.newBuilder()?.apply { query.forEach { (key, value) -> addQueryParameter(key, value) } }?.build()
+            ?: return badUrl(config.baseUrl)
+        return execute(http, Request.Builder().url(url).get(), config.token) { JSONObject(it) }
+    }
+
     /** POST /events with these events, in this order (at most 500; the sync sends 200 at a time). */
     fun send(events: List<EventEntity>): HubResult<IngestReply> {
         val url = apiUrl(config.baseUrl, "events") ?: return badUrl(config.baseUrl)
@@ -235,17 +253,23 @@ class HubClient(
             deviceName: String,
             http: OkHttpClient,
             previous: HubConfig? = null,
+            dashboard: Boolean = true,
         ): HubResult<Paired> {
             val url = apiUrl(baseUrl, "pair/claim") ?: return badUrl(baseUrl)
             val body = JSONObject().put("code", code).put("device_name", deviceName).put("device_type", "android")
             if (previous != null) body.put("previous_device_id", previous.deviceId).put("previous_token", previous.token)
-            return execute(http, Request.Builder().url(url).post(body.toString().toRequestBody(JSON)), token = null) { text ->
+            if (dashboard) body.put("dashboard", true) // DT-58: a token for the app's own dashboard too
+            val result = execute(http, Request.Builder().url(url).post(body.toString().toRequestBody(JSON)), token = null) { text ->
                 val json = JSONObject(text)
                 Paired(
                     json.getString("device_id"), json.getString("token"), json.getString("profile"), json.getString("name"),
                     json.optBoolean("returning", false),
+                    if (json.isNull("viewer_token")) null else json.getString("viewer_token"),
                 )
             }
+            // A hub from before DT-58 refuses the field it doesn't know, before it looks at the code: ask again without.
+            val older = dashboard && result is HubResult.Retry && "dashboard" in result.message
+            return if (older) claim(baseUrl, code, deviceName, http, previous, dashboard = false) else result
         }
 
         /**

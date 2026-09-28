@@ -111,6 +111,38 @@ class HubClientTest {
     }
 
     @Test
+    fun theAppAsksForItsDashboardTokenToo() {
+        server.enqueue(
+            reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Phone", "token": "dt_new", "profile": "personal", "viewer_token": "dt_view"}"""),
+        )
+        val result = HubClient.claim(server.url("/").toString(), "493817", "Phone", http)
+        assertEquals(HubResult.Ok(Paired("android-1", "dt_new", "personal", "Phone", viewerToken = "dt_view")), result)
+        assertTrue(JSONObject(server.takeRequest().body!!.utf8()).getBoolean("dashboard"))
+        assertFalse("dt_view" in result.toString() || "dt_new" in result.toString()) // never printed
+    }
+
+    @Test
+    fun aHubFromBeforeTheDashboardIsAskedAgainWithout() {
+        server.enqueue(reply(422, """{"error": {"code": "invalid", "message": "dashboard: Extra inputs are not permitted", "details": []}}"""))
+        server.enqueue(reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Phone", "token": "dt_new", "profile": "personal"}"""))
+        val result = HubClient.claim(server.url("/").toString(), "493817", "Phone", http)
+        assertEquals(HubResult.Ok(Paired("android-1", "dt_new", "personal", "Phone")), result) // paired, without a dashboard
+        assertTrue(JSONObject(server.takeRequest().body!!.utf8()).has("dashboard"))
+        assertFalse(JSONObject(server.takeRequest().body!!.utf8()).has("dashboard"))
+    }
+
+    @Test
+    fun theWidgetsReadsGoAsThisDeviceWithTheirQuery() {
+        server.enqueue(reply(200, """{"screen_minutes": 419.4}"""))
+        val result = client().read("insights/day", mapOf("tz" to "America/St_Johns"))
+        assertEquals(419.4, (result as HubResult.Ok).value.getDouble("screen_minutes"), 0.0)
+        val request = server.takeRequest()
+        assertEquals("/api/v1/insights/day", request.url.encodedPath)
+        assertEquals("America/St_Johns", request.url.queryParameter("tz"))
+        assertEquals("Bearer dt_secret", request.headers["Authorization"])
+    }
+
+    @Test
     fun pairingAgainSendsTheEarlierPairingSoThePhoneKeepsItsId() {
         server.enqueue(
             reply(201, """{"device_id": "android-1", "device_type": "android", "name": "Phone", "token": "dt_new", "profile": "personal", "returning": true}"""),

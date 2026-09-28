@@ -50,8 +50,13 @@ class KeystoreCipher(private val alias: String = "daytrace_pairing") : TokenCiph
     }
 }
 
-/** This phone's pairing: how to reach the hub, and which profile and name the hub gave it. */
-data class Pairing(val config: HubConfig, val profile: String, val deviceName: String)
+/**
+ * This phone's pairing: how to reach the hub, and which profile and name the hub gave it. [viewerToken] (DT-58): the
+ * token for the app's own dashboard, kept encrypted like the collector token.
+ */
+data class Pairing(val config: HubConfig, val profile: String, val deviceName: String, val viewerToken: String? = null) {
+    override fun toString() = "Pairing(config=$config, profile=$profile, deviceName=$deviceName)" // never print a token
+}
 
 /** The pairing without the token. */
 data class PairingInfo(val baseUrl: String, val deviceId: String, val profile: String)
@@ -87,7 +92,17 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
         val iv = prefs.getString(KEY_IV, null) ?: return null
         val token = runCatching { String(cipher.decrypt(decode(iv), decode(sealed)), Charsets.UTF_8) }.getOrNull()
             ?: return null.also { discardCurrent() }
-        return Pairing(HubConfig(url, token, deviceId), prefs.getString(KEY_PROFILE, null).orEmpty(), prefs.getString(KEY_NAME, null).orEmpty())
+        return Pairing(
+            HubConfig(url, token, deviceId), prefs.getString(KEY_PROFILE, null).orEmpty(), prefs.getString(KEY_NAME, null).orEmpty(),
+            viewerToken(),
+        )
+    }
+
+    /** DT-58: the dashboard token of the current pairing, or null (paired before DT-58, or with an older hub). */
+    fun viewerToken(): String? {
+        val sealed = prefs.getString(KEY_VIEWER, null) ?: return null
+        val iv = prefs.getString(KEY_VIEWER_IV, null) ?: return null
+        return runCatching { String(cipher.decrypt(decode(iv), decode(sealed)), Charsets.UTF_8) }.getOrNull()
     }
 
     /** The hub proved itself at a new address (see [Syncer]): keep using that one. */
@@ -101,6 +116,7 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
      */
     fun save(pairing: Pairing) {
         val (iv, sealed) = cipher.encrypt(pairing.config.token.toByteArray(Charsets.UTF_8))
+        val viewer = pairing.viewerToken?.let { cipher.encrypt(it.toByteArray(Charsets.UTF_8)) }
         val kept = (listOfNotNull(currentEntry()) + formerEntries())
             .filterNot { it.optString("device") == pairing.config.deviceId && it.optString("profile") == pairing.profile }
         prefs.edit(commit = true) {
@@ -110,6 +126,13 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
             putString(KEY_NAME, pairing.deviceName)
             putString(KEY_IV, encode(iv))
             putString(KEY_TOKEN, encode(sealed))
+            if (viewer != null) {
+                putString(KEY_VIEWER_IV, encode(viewer.first))
+                putString(KEY_VIEWER, encode(viewer.second))
+            } else {
+                remove(KEY_VIEWER_IV)
+                remove(KEY_VIEWER)
+            }
             putString(KEY_FORMER, JSONArray(kept.take(MAX_FORMER)).toString())
         }
     }
@@ -159,7 +182,9 @@ class PairingStore(context: Context, private val cipher: TokenCipher = KeystoreC
         private const val KEY_IV = "token_iv"
         private const val KEY_TOKEN = "token_sealed"
         private const val KEY_FORMER = "former" // DT-22: pairings set aside, newest first
-        private val CURRENT_KEYS = listOf(KEY_URL, KEY_DEVICE, KEY_PROFILE, KEY_NAME, KEY_IV, KEY_TOKEN)
+        private const val KEY_VIEWER_IV = "viewer_iv" // DT-58: the dashboard token, current pairing only
+        private const val KEY_VIEWER = "viewer_sealed"
+        private val CURRENT_KEYS = listOf(KEY_URL, KEY_DEVICE, KEY_PROFILE, KEY_NAME, KEY_IV, KEY_TOKEN, KEY_VIEWER_IV, KEY_VIEWER)
         const val MAX_FORMER = 5
 
         private fun encode(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)

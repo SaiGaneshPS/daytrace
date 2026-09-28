@@ -142,6 +142,7 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                         onPair = onPair,
                         onForget = {
                             LiveModeService.stop(context) // live mode has no hub to send to any more
+                            forgetDashboardStorage() // DT-58: and the dashboard's copy of its token goes too
                             scope.launch(Dispatchers.IO) {
                                 PairingStore.get(context).clear()
                                 SyncStatusStore(context).reset()

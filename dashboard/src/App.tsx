@@ -1,4 +1,5 @@
 // DT-30 + DT-52: the app shell. Wide screens get a sidebar; phones get a top bar and a bottom nav (BottomNav).
+// DT-58: inside the Android app (?embed=1) there is none of them: the app has its own tabs.
 // Pages fade in and their cards follow one after another; everything respects reduced motion (MotionConfig).
 // Also here: the hub's status (a live dot), pairing and error notices, toasts, and page titles.
 // Each page is filled in by its own ticket (Today DT-31, Devices DT-32, Story and Ask DT-33, Insights and Wrapped
@@ -8,6 +9,7 @@ import { Component, type ReactNode, Suspense, lazy, useEffect, useState } from "
 import { BrowserRouter, Link, NavLink, Route, Routes, useLocation } from "react-router";
 import { PAIRED_EVENT, UNPAIRED_EVENT, dismissToast, useApi, useToasts } from "./api/client";
 import BottomNav, { Icon, type NavItem } from "./components/BottomNav";
+import { embedded } from "./embed";
 import Skeleton, { SkeletonText } from "./components/Skeleton";
 import { pageVariants } from "./theme/motion";
 
@@ -132,27 +134,31 @@ function Shell() {
       : { text: "Hub unreachable", state: "bad" as const };
 
   return (
-    <div className="app">
+    <div className={embedded ? "app embedded" : "app"}>
       <a className="skip-link" href="#content">
         Skip to content
       </a>
-      <aside className="sidebar">
-        <Brand />
-        <nav aria-label="Pages" className="sidebar-nav">
-          {pages.map((page) => (
-            <NavLink key={page.path} to={page.path} end className="sidebar-item">
-              <Icon name={page.icon} />
-              <span>{page.label}</span>
-            </NavLink>
-          ))}
-        </nav>
-        <HubStatus {...status} />
-      </aside>
-      <div className="main-column">
-        <header className="topbar">
+      {!embedded && (
+        <aside className="sidebar">
           <Brand />
+          <nav aria-label="Pages" className="sidebar-nav">
+            {pages.map((page) => (
+              <NavLink key={page.path} to={page.path} end className="sidebar-item">
+                <Icon name={page.icon} />
+                <span>{page.label}</span>
+              </NavLink>
+            ))}
+          </nav>
           <HubStatus {...status} />
-        </header>
+        </aside>
+      )}
+      <div className="main-column">
+        {!embedded && (
+          <header className="topbar">
+            <Brand />
+            <HubStatus {...status} />
+          </header>
+        )}
         {health.error && !health.loading && (
           <div className="notice bad" role="alert">
             <span>{health.error.message}</span>
@@ -161,7 +167,15 @@ function Shell() {
             </button>
           </div>
         )}
-        {unpaired && location.pathname !== "/devices" && (
+        {unpaired && embedded && (
+          <div className="notice" role="alert">
+            <span>
+              The hub didn&apos;t accept this phone&apos;s dashboard. In Daytrace, open More, then This phone, and pair
+              with your hub again.
+            </span>
+          </div>
+        )}
+        {unpaired && !embedded && location.pathname !== "/devices" && (
           <div className="notice" role="alert">
             <span>This browser isn&apos;t paired with the hub yet, so it can&apos;t show your data.</span>
             <Link to="/devices">Pair it</Link>
@@ -193,7 +207,7 @@ function Shell() {
           </AnimatePresence>
         </main>
       </div>
-      <BottomNav items={pages} />
+      {!embedded && <BottomNav items={pages} />}
       <Toasts />
     </div>
   );

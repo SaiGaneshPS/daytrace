@@ -1605,6 +1605,12 @@ export interface components {
              * @description DT-22: the token it had here, even a revoked one. Send it only to a hub that proved it holds its hash (POST /devices/{id}/proof). It stops working now either way.
              */
             previous_token?: string | null;
+            /**
+             * Dashboard
+             * @description DT-58: the Daytrace app asks for a second token for its built-in dashboard (viewer_token): it reads the dashboard and changes settings, but never sends events. Android only.
+             * @default false
+             */
+            dashboard: boolean;
         };
         /** PairClaimed */
         PairClaimed: {
@@ -1630,6 +1636,11 @@ export interface components {
              * @default false
              */
             returning: boolean;
+            /**
+             * Viewer Token
+             * @description DT-58: shown once, when the claim asked for a dashboard: the app's dashboard token (reads and changes settings, never sends events).
+             */
+            viewer_token?: string | null;
         };
         /** PairStarted */
         PairStarted: {
