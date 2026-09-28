@@ -3,12 +3,13 @@
 // theme.
 //
 // - Blocks are colored by category and carry the category's pattern, and wide blocks show the app's name, so color is
-//   never the only clue. Hover or tap shows the app, its start and end, and the exact minutes from the hub.
+//   never the only clue. Hover or tap shows the app, its start and end, and how long it ran (to the second).
 // - Zoom with Ctrl and the wheel, drag to pan, or use the slider (on touch screens, the slider only, so the page still
 //   scrolls). The first view frames the part of the day with activity, and the view you choose is kept, even when
 //   the chart is rebuilt for a theme change.
 // - Live: the page refreshes the data every few seconds; the chart updates in place, so new blocks slide in. A dashed
-//   line marks now, and devices that synced in the last minute get a pulsing dot.
+//   line marks now (never before a block that just came in), and devices that synced in the last minute get a
+//   pulsing dot.
 // Every number is the hub's (GET /timeline); nothing is added up here.
 import type { CustomSeriesRenderItemAPI, CustomSeriesRenderItemParams } from "echarts";
 import * as echarts from "echarts/core";
@@ -17,6 +18,7 @@ import type { components } from "../api/schema";
 import { CATEGORY_DECALS, CATEGORY_LABELS, type Category, type ChartOption, token, useEChart } from "../theme/charts";
 import { useMediaQuery } from "../theme/motion";
 import { formatMinutes } from "./StatCard";
+import { blockWhen, clock, nowMark } from "./timelineText";
 
 type TimelineData = components["schemas"]["Timeline"];
 
@@ -44,7 +46,6 @@ type Meal = { row: number; time: number; name: string };
 type View = { date: string; start: number; end: number };
 
 const escape = (text: string) => echarts.format.encodeHTML(text);
-const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** Dark or white text, whichever reads better on a block's color. */
 function readableOn(color: unknown): string {
@@ -136,6 +137,17 @@ export default function Timeline({ data, now }: Props) {
     }
     return { rows, blocks, meals };
   }, [lanes, data.calendar, data.sleep, data.meals]);
+  // The now line: never before a block that just came in, and never back. Calendar events don't count (they're
+  // planned, and the only blocks without minutes).
+  const lastLine = useRef<{ date: string; at: number } | undefined>(undefined);
+  const line = useMemo(() => {
+    if (now === undefined) return undefined;
+    const before = lastLine.current?.date === data.date ? lastLine.current.at : undefined;
+    return nowMark(now, blocks.filter((block) => block.minutes !== null).map((block) => block.end), before);
+  }, [now, blocks, data.date]);
+  useEffect(() => {
+    if (line !== undefined) lastLine.current = { date: data.date, at: line };
+  }, [line, data.date]);
 
   const dayStart = Date.parse(data.meta.range.start);
   const dayEnd = Date.parse(data.meta.range.end);
@@ -204,8 +216,8 @@ export default function Timeline({ data, now }: Props) {
           }
           const block = blocks[item.dataIndex];
           if (!block) return "";
-          const minutes = block.minutes === null ? "" : `<br/>${block.minutes.toLocaleString()} min (${formatMinutes(block.minutes)})`;
-          return `<strong>${escape(block.name)}</strong><br/>${escape(block.detail)}<br/>${clock(block.start)} to ${clock(block.end)}${minutes}${block.estimated ? "<br/><em>Estimated</em>" : ""}`;
+          const when = blockWhen(block.start, block.end, block.minutes !== null);
+          return `<strong>${escape(block.name)}</strong><br/>${escape(block.detail)}<br/>${when.times}${when.length ? `<br/>${when.length}` : ""}${block.estimated ? "<br/><em>Estimated</em>" : ""}`;
         },
       },
       xAxis: {
@@ -253,9 +265,9 @@ export default function Timeline({ data, now }: Props) {
             itemStyle: { color: block.color, opacity: block.opacity, ...(block.category ? { decal: CATEGORY_DECALS[block.category] } : {}) },
           })),
           markLine:
-            now !== undefined
+            line !== undefined
               ? { silent: true, symbol: "none", label: { formatter: "now", position: "start", color: "var(--accent-ink)" },
-                  lineStyle: { color: "var(--accent)", type: "dashed", width: 2 }, data: [{ xAxis: now }] }
+                  lineStyle: { color: "var(--accent)", type: "dashed", width: 2 }, data: [{ xAxis: line }] }
               : undefined,
         },
         {
@@ -267,7 +279,7 @@ export default function Timeline({ data, now }: Props) {
         },
       ],
     };
-  }, [blocks, meals, rows, dayStart, dayEnd, now, touch, narrow, currentView]);
+  }, [blocks, meals, rows, dayStart, dayEnd, line, touch, narrow, currentView]);
 
   const chart = useEChart(option, `Timeline of ${data.date}, one lane per device`, { merge: true, events: { datazoom: onZoom } });
   const categories = [...new Set(blocks.map((block) => block.category).filter((c): c is Category => c !== null))];
