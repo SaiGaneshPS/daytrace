@@ -12,10 +12,11 @@ and sends them to your hub over your own Wi-Fi. It isn't on the Play Store: you 
 - **A debug build, for development:** every pull request builds one (the PR's **Checks** tab, the `android` run, the
   `daytrace-debug-apk` artifact, kept for 14 days), or build it yourself (see [android/README.md](../android/README.md))
   and install it with `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
-- **Moving between the two:** a debug build and a release are signed with different keys, so Android refuses to
-  install one over the other ("App not installed"). Sync first (**Sync now**), then uninstall and install the other.
-  The phone then pairs as a new device (a reinstall always does); its history so far stays on the hub under the old
-  one, which you can revoke on the Devices page.
+- **Moving between builds:** a release and a debug build are signed with different keys, and so are debug builds
+  from different CI runs (each makes its own debug key), so Android refuses to install one over another ("App not
+  installed"). Sync first (**Sync now**), then uninstall and install the other. The phone then pairs as a new device
+  (a reinstall always does); its history so far stays on the hub under the old one, which you can revoke on the
+  Devices page. Releases always install over each other.
 
 ## Allow installing unknown apps (Samsung)
 
@@ -174,27 +175,37 @@ Google is starting to require that apps on certified Android phones come from a 
 
 ## Making a release (maintainers)
 
-The key is made once, kept off GitHub except as two repository secrets, and never committed:
+The key is made once, kept off GitHub except as two secrets of the `android-release` environment, and never
+committed:
 
 1. **The key** (done on the hub PC): `D:\Hackathon\keys\daytrace-release.jks` (PKCS12, alias `daytrace`, RSA 4096,
-   valid until 2054), with its password in `daytrace-release-password.txt` next to it. **Back both up somewhere safe**:
-   without them no later release can install over an earlier one.
-2. **The secrets** (once), in PowerShell from the repository folder, so the password never appears in a command line:
+   valid until 2054), with its password in `daytrace-release-password.txt` next to it. Its certificate's SHA-256,
+   `35e83a98f1bd83b369ff3ce7febbe5902b8e4cda6e36086667794b4fe385119f`, is pinned in `android.yml`: a release signed
+   any other way fails. **Back both files up somewhere safe**: without them no later release can install over an
+   earlier one.
+2. **The environment** `android-release` (Settings > Environments) takes only tags `android-v*`, so no branch or pull
+   request run can read its secrets.
+3. **The secrets** (once), in PowerShell from the repository folder, so the password never appears in a command line:
 
    ```powershell
-   [Convert]::ToBase64String([IO.File]::ReadAllBytes("D:\Hackathon\keys\daytrace-release.jks")) | gh secret set DAYTRACE_KEYSTORE_BASE64
-   Get-Content -Raw D:\Hackathon\keys\daytrace-release-password.txt | gh secret set DAYTRACE_KEYSTORE_PASSWORD
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("D:\Hackathon\keys\daytrace-release.jks")) | gh secret set DAYTRACE_KEYSTORE_BASE64 --env android-release
+   Get-Content -Raw D:\Hackathon\keys\daytrace-release-password.txt | gh secret set DAYTRACE_KEYSTORE_PASSWORD --env android-release
    ```
 
-3. **A release:** tag a commit on `development` and push the tag. The `android release` job builds it (the version
-   and its versionCode come from the tag), checks the signature and publishes the GitHub Release:
+4. **Before the first tag:** CI builds the shrunk release (R8) on every pull request, which shows it builds, not that
+   it runs. So install a signed build on a phone once (step 6) and open every tab, the widget and live mode.
+5. **A release:** tag a commit that is on `development` and push the tag. The `android release` job checks the
+   commit is on `development` and the version is higher than every release so far, builds the APK (the version and
+   its versionCode come from the tag), checks it is signed with the pinned key and publishes the GitHub Release:
 
    ```bash
    git tag android-v0.1.0 && git push origin android-v0.1.0
    ```
 
-   Versions are `major.minor.patch`, at most `999.99.99`, and each must be higher than the last (versionCode is
+   Versions are `major.minor.patch` without leading zeros, at most `999.99.99` (versionCode is
    `major * 10000 + minor * 100 + patch`).
-4. **On this PC** (optional): `android/keystore.properties` (ignored by git) with `storeFile`, `storePassword` and
-   `keyAlias` signs `./gradlew assembleRelease` locally; or set `DAYTRACE_KEYSTORE`, `DAYTRACE_KEYSTORE_PASSWORD`
-   and `DAYTRACE_KEY_ALIAS`. Without a key, the release build is unsigned (`app-release-unsigned.apk`).
+6. **On this PC** (optional): `android/keystore.properties` (ignored by git) with `storeFile` (with forward slashes,
+   `D:/Hackathon/keys/daytrace-release.jks`: a backslash there is an escape), `storePassword` and `keyAlias`; or set
+   `DAYTRACE_KEYSTORE`, `DAYTRACE_KEYSTORE_PASSWORD` and `DAYTRACE_KEY_ALIAS`. A signed build also needs
+   `DAYTRACE_VERSION` (for example `0.1.0`), the release it is. Half a key, or a key without a version, fails the
+   build. Without a key, the release build is unsigned (`app-release-unsigned.apk`).
