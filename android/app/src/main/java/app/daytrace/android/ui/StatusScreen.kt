@@ -141,6 +141,7 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                         onSyncNow = { SyncWorker.syncNow(context) },
                         onPair = onPair,
                         onForget = {
+                            LiveModeService.stop(context) // live mode has no hub to send to any more
                             scope.launch(Dispatchers.IO) {
                                 PairingStore.get(context).clear()
                                 SyncStatusStore(context).reset()
@@ -462,14 +463,8 @@ private val PROBLEMS = setOf(SyncResult.PAIR_AGAIN, SyncResult.BLOCKED, SyncResu
 private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
     val context = LocalContext.current
     val live by LiveModeService.running.collectAsStateWithLifecycle()
-    var refused by remember { mutableStateOf(false) }
+    val refused by LiveModeService.refused.collectAsStateWithLifecycle()
     val needed = LocalDaytraceExtras.current.needed
-    val pulse = rememberInfiniteTransition(label = "live").animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
-        label = "pulse",
-    )
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -484,12 +479,7 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Live mode", style = MaterialTheme.typography.titleMedium)
-                        if (live) {
-                            Spacer(Modifier.size(8.dp))
-                            Box(Modifier.size(8.dp).graphicsLayer { alpha = pulse.value }.clip(CircleShape).background(Blush))
-                            Spacer(Modifier.size(6.dp))
-                            Text("On", style = MaterialTheme.typography.labelLarge, color = Blush)
-                        }
+                        if (live) LiveDot()
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -509,14 +499,14 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
                     color = needed,
                 )
             }
-            if (refused) {
+            if (refused && !live) {
                 Spacer(Modifier.height(8.dp))
                 Text("Android didn't let live mode start. Try again with Daytrace open.", style = MaterialTheme.typography.bodySmall, color = needed)
             }
             Spacer(Modifier.height(12.dp))
             when {
                 live -> FilledTonalButton(onClick = { LiveModeService.stop(context) }) { Text("Stop live mode") }
-                else -> Button(onClick = { refused = !LiveModeService.start(context) }, enabled = paired) { Text("Start live mode") }
+                else -> Button(onClick = { LiveModeService.start(context) }, enabled = paired) { Text("Start live mode") }
             }
             if (!paired) {
                 Spacer(Modifier.height(4.dp))
@@ -524,4 +514,19 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
             }
         }
     }
+}
+
+/** The pulsing "On" beside the title: its animation runs only while it is shown. */
+@Composable
+private fun LiveDot() {
+    val pulse = rememberInfiniteTransition(label = "live").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "pulse",
+    )
+    Spacer(Modifier.size(8.dp))
+    Box(Modifier.size(8.dp).graphicsLayer { alpha = pulse.value }.clip(CircleShape).background(Blush))
+    Spacer(Modifier.size(6.dp))
+    Text("On", style = MaterialTheme.typography.labelLarge, color = Blush)
 }

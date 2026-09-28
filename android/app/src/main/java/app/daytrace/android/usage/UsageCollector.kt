@@ -23,8 +23,12 @@ enum class UsageType { RESUMED, PAUSED, STOPPED, SCREEN_ON, SCREEN_OFF, SHUTDOWN
 
 data class RawUsageEvent(val timeMs: Long, val packageName: String, val className: String?, val type: UsageType)
 
-/** An app on screen at a checkpoint: when its session started and which of its activities were resumed. */
-data class OpenApp(val startMs: Long, val activities: Set<String> = emptySet())
+/**
+ * An app on screen at a checkpoint: when its session started and which of its activities were resumed. [pausedAtMs]:
+ * its last activity paused so close to the checkpoint that it may still resume (a move between its screens), so the
+ * next collection decides whether the session goes on or ended at that pause.
+ */
+data class OpenApp(val startMs: Long, val activities: Set<String> = emptySet(), val pausedAtMs: Long? = null)
 
 /**
  * Where the last collection stopped, which apps were still on screen then, and the phone's uptime at that moment
@@ -56,6 +60,9 @@ object UsageSessionizer {
      *   next collection sends the same session again, longer (DT-24): the store extends it in place and the hub
      *   replaces its copy, with no gap and nothing counted twice. Live mode reads every 5 s: one growing session
      *   instead of a new piece each time.
+     *   A pause within [SAME_APP_GRACE_MS] of [untilMs] is carried too: the session so far is sent, and the next
+     *   collection continues it (a resume just after) or ends it at that pause, so a move between screens across
+     *   two reads stays one session.
      * - [ignored] packages (the home screen, the status bar) are not app time.
      */
     fun collect(
@@ -67,8 +74,13 @@ object UsageSessionizer {
     ): Collected {
         val events = mutableListOf<PhoneEvent>()
         val open = LinkedHashMap<String, Open>()
-        state.open.forEach { (pkg, app) -> if (pkg !in ignored) open[pkg] = Open(app.startMs, app.activities.toMutableSet()) }
         val closing = LinkedHashMap<String, Long>() // app -> when its last activity paused (not final yet)
+        state.open.forEach { (pkg, app) ->
+            if (pkg !in ignored) {
+                open[pkg] = Open(app.startMs, app.activities.toMutableSet())
+                app.pausedAtMs?.let { closing[pkg] = it }
+            }
+        }
         var lastSeen = state.checkpointMs
 
         fun emit(pkg: String, startMs: Long, endMs: Long) {
@@ -117,9 +129,11 @@ object UsageSessionizer {
             }
             lastSeen = event.timeMs
         }
-        closing.keys.toList().forEach(::finish)
-        val carried = open.mapValues { (_, app) -> OpenApp(app.startMs, app.activities.toSet()) }
-        open.forEach { (pkg, app) -> emit(pkg, app.startMs, untilMs) }
+        val pausing = closing.filterValues { untilMs - it <= SAME_APP_GRACE_MS }
+        closing.keys.filter { it !in pausing }.forEach(::finish)
+        pausing.forEach { (pkg, at) -> open[pkg]?.let { emit(pkg, it.startMs, at) } }
+        val carried = open.mapValues { (pkg, app) -> OpenApp(app.startMs, app.activities.toSet(), pausing[pkg]) }
+        open.forEach { (pkg, app) -> if (pkg !in pausing) emit(pkg, app.startMs, untilMs) }
         return Collected(events.sortedBy { it.startMs }, UsageState(untilMs, carried))
     }
 }
@@ -143,7 +157,8 @@ object ClockCheck {
         if (abs(shift) <= THRESHOLD_MS) return state
         return state.copy(
             checkpointMs = state.checkpointMs + shift,
-            open = state.open.mapValues { (_, app) -> app.copy(startMs = state.checkpointMs + shift) },
+            // An app that was pausing ended at that pause: its session is stored already.
+            open = state.open.filterValues { it.pausedAtMs == null }.mapValues { (_, app) -> app.copy(startMs = state.checkpointMs + shift) },
         )
     }
 }
@@ -218,7 +233,7 @@ class UsageCollector(private val context: Context, private val store: EventStore
         }
         val usageStats = context.getSystemService(UsageStatsManager::class.java)
         val raw = read(usageStats.queryEvents(state.checkpointMs, untilMs))
-        val collected = UsageSessionizer.collect(raw, state, untilMs, ignoredPackages(), ::label)
+        val collected = UsageSessionizer.collect(raw, state, untilMs, ignored, ::label)
         val changed = store.add(collected.events) // on disk before the checkpoint moves: a crash repeats work, never loses it
         saveState(collected.state, nowUptimeMs - latenessMs)
         return changed
@@ -248,6 +263,8 @@ class UsageCollector(private val context: Context, private val store: EventStore
      * The home screen and the system UI: time there is not time in an app. Only real launchers count; fallback
      * home screens with a negative priority (Settings registers one for first boot) are ordinary apps.
      */
+    private val ignored by lazy { ignoredPackages() } // read once per collector (live mode keeps one for its session)
+
     private fun ignoredPackages(): Set<String> {
         val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         val pm = context.packageManager
@@ -279,7 +296,10 @@ class UsageCollector(private val context: Context, private val store: EventStore
     private fun saveState(state: UsageState, checkpointUptimeMs: Long) {
         val open = JSONObject()
         state.open.forEach { (pkg, app) ->
-            open.put(pkg, JSONObject().put("start", app.startMs).put("activities", JSONArray(app.activities.toList())))
+            open.put(
+                pkg,
+                JSONObject().put("start", app.startMs).put("activities", JSONArray(app.activities.toList())).putOpt("paused", app.pausedAtMs),
+            )
         }
         val saved = prefs.edit()
             .putLong(KEY_CHECKPOINT, state.checkpointMs)
@@ -303,7 +323,11 @@ class UsageCollector(private val context: Context, private val store: EventStore
                 when (val value = json.get(pkg)) {
                     is JSONObject -> {
                         val names = value.optJSONArray("activities") ?: JSONArray()
-                        OpenApp(value.getLong("start"), (0 until names.length()).map { names.getString(it) }.toSet())
+                        OpenApp(
+                            value.getLong("start"),
+                            (0 until names.length()).map { names.getString(it) }.toSet(),
+                            if (value.has("paused")) value.getLong("paused") else null,
+                        )
                     }
                     else -> OpenApp(json.getLong(pkg))
                 }

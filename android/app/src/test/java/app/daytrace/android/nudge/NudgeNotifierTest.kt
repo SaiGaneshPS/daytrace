@@ -1,9 +1,10 @@
-// DT-24: the hub's nudge on the phone: read from the reply, shown once in the app's colors, and never without
-// notifications allowed.
+// DT-24: the hub's nudge on the phone: read from the reply, shown in the app's colors, and never when notifications
+// or the Nudges channel are off.
 package app.daytrace.android.nudge
 
 import android.Manifest
 import android.app.Application
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import androidx.core.app.NotificationCompat
@@ -31,7 +32,6 @@ class NudgeNotifierTest {
 
     @Before
     fun allow() {
-        context.getSharedPreferences("nudges", 0).edit().clear().commit()
         shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         shadowOf(manager).setNotificationsEnabled(true)
     }
@@ -46,33 +46,39 @@ class NudgeNotifierTest {
     }
 
     @Test
-    fun aNudgeIsShownOnceInTheAppsColors() {
+    fun aNudgeIsShownInTheAppsColorsAndARepeatOnlyReplacesIt() {
         assertTrue(NudgeNotifier(context).show(nudge))
         val shown = shadowOf(manager).allNotifications.single()
         assertEquals("Time to focus", shown.extras.getString(NotificationCompat.EXTRA_TITLE))
         assertEquals(nudge.body, shown.extras.getCharSequence(NotificationCompat.EXTRA_BIG_TEXT).toString())
         assertEquals(NudgeNotifier.ACCENT, shown.color)
         assertEquals(NudgeNotifier.CHANNEL, shown.channelId)
-        assertFalse(NudgeNotifier(context).show(nudge)) // the same nudge in a second reply
+        assertTrue(NudgeNotifier(context).show(nudge)) // the same nudge again: the same notification, not a second
         assertEquals(1, shadowOf(manager).allNotifications.size)
-        assertTrue(NudgeNotifier(context).show(nudge.copy(createdAt = "2026-09-27T23:00:00Z"))) // a later one shows
+        assertTrue(NudgeNotifier(context).show(nudge.copy(createdAt = "2026-09-27T23:00:00Z")))
+        assertEquals(2, shadowOf(manager).allNotifications.size) // a later nudge stands next to it
+    }
+
+    @Test
+    fun aNudgeWithoutItsTimeIsStillShown() {
+        val untimed = nudge.copy(createdAt = "")
+        assertNull(untimed.id)
+        assertTrue(NudgeNotifier(context).show(untimed))
+        assertTrue(NudgeNotifier(context).show(untimed.copy(body = "Another one.")))
+        assertEquals(2, shadowOf(manager).allNotifications.size) // never taken for the same nudge
     }
 
     @Test
     fun withoutNotificationsNothingIsShown() {
         shadowOf(manager).setNotificationsEnabled(false)
         assertFalse(NudgeNotifier(context).show(nudge))
-        shadowOf(manager).setNotificationsEnabled(true)
-        assertTrue(NudgeNotifier(context).show(nudge)) // not marked as shown while it couldn't be
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
     }
 
     @Test
-    fun onlyTheLastFewAreRemembered() {
-        var shown = emptyList<String>()
-        (1..25).forEach { shown = ShownNudges.add(shown, "n$it")!! }
-        assertEquals(ShownNudges.KEEP, shown.size)
-        assertEquals("n25", shown.last())
-        assertNull(ShownNudges.add(shown, "n25"))
-        assertEquals(shown, ShownNudges.parse(shown.joinToString("\n")))
+    fun withTheNudgesChannelSwitchedOffNothingIsShown() {
+        manager.createNotificationChannel(NotificationChannel(NudgeNotifier.CHANNEL, "Nudges", NotificationManager.IMPORTANCE_NONE))
+        assertFalse(NudgeNotifier(context).show(nudge))
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
     }
 }

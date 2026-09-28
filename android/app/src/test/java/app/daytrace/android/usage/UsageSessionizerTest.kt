@@ -109,6 +109,30 @@ class UsageSessionizerTest {
     }
 
     @Test
+    fun movingBetweenScreensAcrossTwoReadsStaysOneSession() {
+        // The feed pauses 300 ms before the read ends; the profile resumes 200 ms into the next read.
+        val first = run(ev(10, "instagram", UsageType.RESUMED, "Feed"), ev(14, "instagram", UsageType.PAUSED, "Feed", millis = 700), until = 15)
+        assertEquals(listOf(at(10) to at(14, 700)), sessions(first).map { it.startMs to it.endMs }) // sent so far
+        assertEquals(at(14, 700), first.state.open.getValue("instagram").pausedAtMs) // and carried as pausing
+        val second = run(ev(15, "instagram", UsageType.RESUMED, "Profile", millis = 200), until = 20, state = first.state)
+        assertEquals(listOf(at(10) to at(20)), sessions(second).map { it.startMs to it.endMs })
+        assertEquals(sessions(first).single().key, sessions(second).single().key)
+    }
+
+    @Test
+    fun aPauseJustBeforeTheReadEndsIsFinalWhenTheAppDoesNotResume() {
+        val first = run(ev(10, "instagram", UsageType.RESUMED), ev(14, "instagram", UsageType.PAUSED, millis = 700), until = 15)
+        val second = run(ev(18, "maps", UsageType.RESUMED), until = 20, state = first.state)
+        assertEquals(
+            listOf("instagram" to (at(10) to at(14, 700)), "maps" to (at(18) to at(20))),
+            sessions(second).map { it.appId to (it.startMs to it.endMs) },
+        )
+        assertEquals(setOf("maps"), second.state.open.keys)
+        // And a read with no events at all ends it too, once the grace is over.
+        assertTrue(run(until = 20, state = first.state).state.open.isEmpty())
+    }
+
+    @Test
     fun liveModeReadingEveryFiveSecondsKeepsOneSession() {
         var state = UsageState(start)
         val keys = mutableSetOf<String>()
@@ -183,6 +207,12 @@ class UsageSessionizerTest {
         val corrected = ClockCheck.correct(state, nowWallMs = 10_060_000 + 30_000, nowUptimeMs = 560_000) // 60 s later, clock +30 s
         assertEquals(10_030_000L, corrected.checkpointMs)
         assertEquals(10_030_000L, corrected.open.getValue("yt").startMs)
+    }
+
+    @Test
+    fun afterAClockChangeAnAppThatWasPausingHasEnded() {
+        val state = UsageState(checkpointMs = 10_000_000, open = mapOf("yt" to OpenApp(9_400_000, pausedAtMs = 9_999_700)), checkpointUptimeMs = 500_000)
+        assertTrue(ClockCheck.correct(state, nowWallMs = 10_060_000 + 30_000, nowUptimeMs = 560_000).open.isEmpty())
     }
 
     @Test

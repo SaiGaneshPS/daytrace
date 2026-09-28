@@ -1,11 +1,13 @@
-// DT-24: live mode's timing: what is new goes at once, a quiet phone syncs now and then, the screen off slows it
-// down, and a failed pass never ends it.
+// DT-24: live mode's timing: whatever is waiting goes at once, a failed sync waits a little, the screen off slows it
+// down (but not once it's back on), a failed pass never ends it, and a phone that isn't paired any more stops it.
 package app.daytrace.android.live
 
 import android.app.Application
+import app.daytrace.android.sync.SyncResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,41 +18,76 @@ import org.robolectric.annotation.Config
 class LiveLoopTest {
     private class Stop : CancellationException("enough passes")
 
-    /** Runs [passes] passes: each returns the next of [changes] from collect, then the loop sleeps. */
-    private fun run(passes: Int, changes: List<Int>, screen: (Int) -> Boolean = { true }, collectFails: Set<Int> = emptySet(), syncFails: Boolean = false): Pair<List<Int>, List<Long>> {
+    /** What the loop did: the passes that synced, when each pass read, and whether it ended by itself. */
+    private data class Ran(val synced: List<Int>, val reads: List<Long>, val ended: Boolean)
+
+    /** Runs the loop on a fake clock for [passes] passes (a pass starts with its read). */
+    private fun run(
+        passes: Int,
+        changes: List<Int> = emptyList(),
+        waiting: (Int) -> Boolean = { false },
+        results: (Int) -> LiveSync = { LiveSync.SENT },
+        screenAt: (Long) -> Boolean = { true },
+        collectFails: Set<Int> = emptySet(),
+    ): Ran {
         val synced = mutableListOf<Int>()
-        val sleeps = mutableListOf<Long>()
-        var pass = 0
+        val reads = mutableListOf<Long>()
+        var pass = -1
         var now = 0L
+        var ended = false
         val loop = LiveLoop(
-            collect = { if (pass in collectFails) error("usage access was taken away") else changes.getOrElse(pass) { 0 } },
-            sync = { synced += pass; if (syncFails) error("the hub is off") },
-            screenOn = { screen(pass) },
-            sleep = { ms -> sleeps += ms; now += ms; pass++; if (pass == passes) throw Stop() },
+            collect = {
+                pass++
+                if (pass >= passes) throw Stop()
+                reads += now
+                if (pass in collectFails) throw NoSuchMethodError("an Error, not an Exception")
+                changes.getOrElse(pass) { 0 }
+            },
+            waiting = { waiting(pass) },
+            sync = { synced += pass; results(pass) },
+            screenOn = { screenAt(now) },
+            sleep = { ms -> now += ms },
             clock = { now },
         )
-        runCatching { runBlocking { loop.run() } }
-        return synced to sleeps
+        runCatching { runBlocking { loop.run(); ended = true } }
+        return Ran(synced, reads, ended)
     }
 
     @Test
-    fun somethingNewIsSentAtOnceAndAQuietPhoneOnlyNowAndThen() {
-        // pass 0 syncs to start with; 3 and 4 found something; nothing else changes, so the next sync is a minute on
-        val (synced, sleeps) = run(passes = 20, changes = listOf(0, 0, 0, 1, 2))
-        assertEquals(listOf(0, 3, 4, 16), synced)
-        assertEquals(List(20) { LiveLoop.EVERY_MS }, sleeps)
+    fun whateverIsWaitingGoesAtOnce() {
+        // Pass 3 read something new; pass 6 found events left over from before (a sync that failed elsewhere).
+        val ran = run(passes = 10, changes = listOf(0, 0, 0, 1), waiting = { it == 6 })
+        assertEquals(listOf(3, 6), ran.synced)
+        assertEquals(List(10) { it * LiveLoop.EVERY_MS }, ran.reads) // a read every 5 s
     }
 
     @Test
-    fun withTheScreenOffItReadsOnceAMinute() {
-        val (_, sleeps) = run(passes = 3, changes = emptyList(), screen = { it != 1 })
-        assertEquals(listOf(LiveLoop.EVERY_MS, LiveLoop.SCREEN_OFF_EVERY_MS, LiveLoop.EVERY_MS), sleeps)
+    fun aFailedSyncWaitsThirtySecondsEvenForNewEvents() {
+        val ran = run(passes = 12, changes = List(12) { 1 }, results = { if (it == 0) LiveSync.LATER else LiveSync.SENT })
+        assertEquals(listOf(0, 6, 7, 8, 9, 10, 11), ran.synced) // 30 s after the failure, then every pass again
     }
 
     @Test
-    fun aFailedReadOrSyncNeverEndsLiveMode() {
-        val (synced, sleeps) = run(passes = 4, changes = listOf(1, 1, 1, 1), collectFails = setOf(1), syncFails = true)
-        assertEquals(listOf(0, 2, 3), synced) // pass 1 read nothing, the rest still ran
-        assertEquals(4, sleeps.size)
+    fun withTheScreenOffItReadsOnceAMinuteAndAtOnceWhenItComesBackOn() {
+        assertEquals(listOf(0L, 60_000L, 120_000L), run(passes = 3, screenAt = { false }).reads)
+        // Back on 20 s in: the next read is then, not a minute after the last one.
+        assertEquals(listOf(0L, 20_000L, 25_000L), run(passes = 3, screenAt = { now -> now >= 20_000 }).reads)
+    }
+
+    @Test
+    fun aFailedPassEvenAnErrorNeverEndsLiveMode() {
+        val ran = run(passes = 4, changes = List(4) { 1 }, collectFails = setOf(1))
+        assertEquals(listOf(0, 2, 3), ran.synced) // pass 1 read nothing, the rest still ran
+    }
+
+    @Test
+    fun aPhoneThatIsNotPairedAnyMoreEndsLiveMode() {
+        val ran = run(passes = 10, changes = List(10) { 1 }, results = { if (it == 2) LiveSync.STOP else LiveSync.SENT })
+        assertTrue(ran.ended)
+        assertEquals(listOf(0, 1, 2), ran.synced)
+        assertEquals(LiveSync.STOP, LiveLoop.of(SyncResult.PAIR_AGAIN))
+        assertEquals(LiveSync.STOP, LiveLoop.of(SyncResult.NOT_PAIRED))
+        assertEquals(LiveSync.LATER, LiveLoop.of(SyncResult.UNREACHABLE))
+        assertEquals(LiveSync.LATER, LiveLoop.of(SyncResult.NOT_ON_WIFI))
     }
 }

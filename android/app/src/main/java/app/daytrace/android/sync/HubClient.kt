@@ -45,8 +45,8 @@ data class Rejection(val index: Int, val code: String, val reason: String)
 
 /** DT-24: a nudge the hub picked for this phone after its events (docs/api.md), shown as a notification. */
 data class Nudge(val rule: String, val title: String, val body: String, val createdAt: String) {
-    /** The same nudge in two replies (a batch sent again) is one nudge. */
-    val id: String get() = "$rule@$createdAt"
+    /** Which nudge it is (its rule and when the hub fired it), or null without its time. */
+    val id: String? get() = createdAt.takeIf { it.isNotEmpty() }?.let { "$rule@$it" }
 }
 
 data class IngestReply(val rejected: List<Rejection>, val nudge: Nudge? = null)

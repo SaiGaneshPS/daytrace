@@ -1,7 +1,8 @@
 // DT-24: live mode, for demos. A foreground service (with its notice in the notifications) reads usage every 5 s
-// and syncs as soon as anything new is stored, so opening an app shows on the hub's timeline within seconds. With
-// the screen off it reads once a minute. It never runs by itself: you turn it on, and it ends when you turn it off,
-// when the app is closed from recents, or after Android's limit for this kind of service (6 hours a day).
+// and syncs as soon as anything is waiting, so opening an app shows on the hub's timeline within seconds. With the
+// screen off it reads once a minute, and at once when the screen comes back on. It never runs by itself: you turn
+// it on, and it ends when you turn it off, forget the hub, swipe the app away from recents, when the hub no longer
+// accepts this phone, or after Android's limit for this kind of service (6 hours a day).
 package app.daytrace.android.live
 
 import android.app.PendingIntent
@@ -11,6 +12,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -19,7 +21,9 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import app.daytrace.android.MainActivity
 import app.daytrace.android.R
+import app.daytrace.android.data.EventStore
 import app.daytrace.android.nudge.NudgeNotifier
+import app.daytrace.android.sync.SyncResult
 import app.daytrace.android.sync.Syncer
 import app.daytrace.android.usage.UsageCollector
 import kotlinx.coroutines.CancellationException
@@ -35,39 +39,56 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
+/** What a sync means for live mode: go on, try again a little later, or stop (the phone isn't paired any more). */
+enum class LiveSync { SENT, LATER, STOP }
+
 /**
- * One pass after another: read what is new, send it if anything was stored, wait. A failed read or sync never ends
- * the loop (the next pass tries again); only cancelling it does. Everything it touches is passed in, so the timing
- * rules have tests.
+ * One pass after another: read what is new, send whatever is waiting, wait. A failed read or sync never ends the
+ * loop (the next pass tries again, a failed sync after [RETRY_MS]); only [LiveSync.STOP] or cancelling does. Every
+ * input is passed in, so the timing rules have tests.
  */
 class LiveLoop(
     /** Reads usage; returns how many events were added or changed. */
     private val collect: () -> Int,
-    private val sync: suspend () -> Unit,
+    /** Whether anything is still waiting to go to the hub. */
+    private val waiting: () -> Boolean,
+    private val sync: suspend () -> LiveSync,
     private val screenOn: () -> Boolean,
     private val sleep: suspend (Long) -> Unit = { delay(it) },
-    private val clock: () -> Long = System::currentTimeMillis,
+    /** Time since boot: setting the wall clock never changes the waits. */
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
     suspend fun run() {
-        var lastSync = Long.MIN_VALUE
+        var failedAt: Long? = null
         while (true) {
             currentCoroutineContext().ensureActive()
             val changed = attempt { collect() } ?: 0
-            val now = clock()
-            // Something new goes at once; otherwise a sync now and then keeps the hub's "last seen" fresh.
-            if (changed > 0 || lastSync == Long.MIN_VALUE || now - lastSync >= KEEP_ALIVE_MS) {
-                attempt { sync() }
-                lastSync = now
+            val due = failedAt?.let { clock() - it >= RETRY_MS } ?: true
+            if (due && (changed > 0 || attempt { waiting() } == true)) {
+                when (attempt { sync() } ?: LiveSync.LATER) {
+                    LiveSync.SENT -> failedAt = null
+                    LiveSync.LATER -> failedAt = clock()
+                    LiveSync.STOP -> return
+                }
             }
-            sleep(if (screenOn()) EVERY_MS else SCREEN_OFF_EVERY_MS)
+            pause()
         }
+    }
+
+    /** [EVERY_MS]; with the screen off, up to [SCREEN_OFF_EVERY_MS], but no longer once it comes back on. */
+    private suspend fun pause() {
+        var waited = 0L
+        do {
+            sleep(EVERY_MS)
+            waited += EVERY_MS
+        } while (waited < SCREEN_OFF_EVERY_MS && attempt { screenOn() } == false)
     }
 
     private inline fun <T> attempt(block: () -> T): T? = try {
         block()
     } catch (cancelled: CancellationException) {
         throw cancelled
-    } catch (failure: Exception) {
+    } catch (failure: Throwable) {
         Log.w(TAG, "Live mode: a pass failed; the next one tries again", failure)
         null
     }
@@ -75,10 +96,21 @@ class LiveLoop(
     companion object {
         const val EVERY_MS = 5_000L
         const val SCREEN_OFF_EVERY_MS = 60_000L
-        const val KEEP_ALIVE_MS = 60_000L
-        /** How far behind now live mode reads: Android records usage events within milliseconds. */
-        const val LATENESS_MS = 2_000L
+        /** After a failed sync (the hub away, the phone off its Wi-Fi), the next try waits this long. */
+        const val RETRY_MS = 30_000L
+        /**
+         * How far behind now live mode reads. Android stamps usage events as it reports them, so they are there
+         * within milliseconds; one recorded later than this is never read, and its app's session then ends at the
+         * next screen-off instead (the background sync reads 15 s behind, but can't go back past live mode's reads).
+         */
+        const val LATENESS_MS = 3_000L
         private const val TAG = "Daytrace"
+
+        fun of(result: SyncResult): LiveSync = when (result) {
+            SyncResult.SENT -> LiveSync.SENT
+            SyncResult.NOT_PAIRED, SyncResult.PAIR_AGAIN -> LiveSync.STOP
+            SyncResult.NOT_ON_WIFI, SyncResult.BLOCKED, SyncResult.UNREACHABLE -> LiveSync.LATER
+        }
     }
 }
 
@@ -96,23 +128,28 @@ class LiveModeService : Service() {
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } catch (refused: Exception) {
-            // Android refuses a foreground service started while the app is in the background (or past today's
-            // limit): stay off, and say so on the status screen.
+            // Android refuses a foreground service started from the background, or past today's limit.
             Log.w(TAG, "Live mode could not start", refused)
+            refusedState.value = true
             shutDown()
             return START_NOT_STICKY
         }
+        refusedState.value = false
         state.value = true
         if (loop == null) {
             val app = applicationContext
             val power = app.getSystemService(PowerManager::class.java)
+            val usage = UsageCollector(app) // one for the whole session: it keeps its app names and home screens
+            val store = EventStore.get(app)
             val syncer = Syncer.get(app)
             loop = scope.launch {
                 LiveLoop(
-                    collect = { UsageCollector(app).collect(latenessMs = LiveLoop.LATENESS_MS) },
-                    sync = { syncer.sync() },
+                    collect = { usage.collect(latenessMs = LiveLoop.LATENESS_MS) },
+                    waiting = { store.counts().waiting > 0 },
+                    sync = { LiveLoop.of(syncer.sync().result) },
                     screenOn = { power.isInteractive },
                 ).run()
+                ContextCompat.getMainExecutor(app).execute { shutDown() } // the phone isn't paired any more
             }
         }
         return START_NOT_STICKY // after the app is killed, live mode stays off until you turn it on again
@@ -169,14 +206,22 @@ class LiveModeService : Service() {
         private const val ACTION_STOP = "app.daytrace.android.live.STOP"
         private const val TAG = "Daytrace"
         private val state = MutableStateFlow(false)
+        private val refusedState = MutableStateFlow(false)
 
         /** True while live mode runs. */
         val running: StateFlow<Boolean> get() = state
 
+        /** True when Android refused the last start (shown on the status screen until the next one works). */
+        val refused: StateFlow<Boolean> get() = refusedState
+
         /** From the screen (the app in front): Android lets a foreground service start only then. */
-        fun start(context: Context): Boolean = runCatching {
-            ContextCompat.startForegroundService(context, Intent(context, LiveModeService::class.java))
-        }.onFailure { Log.w(TAG, "Live mode could not start", it) }.isSuccess
+        fun start(context: Context) {
+            runCatching { ContextCompat.startForegroundService(context, Intent(context, LiveModeService::class.java)) }
+                .onFailure {
+                    Log.w(TAG, "Live mode could not start", it)
+                    refusedState.value = true
+                }
+        }
 
         fun stop(context: Context) {
             context.stopService(Intent(context, LiveModeService::class.java))

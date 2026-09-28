@@ -88,9 +88,11 @@ The status screen's **Live mode** card is for demos, or any time you want the PC
   shows on the hub's timeline within about 5 seconds (5.5 s measured on a Galaxy S25 Ultra), and grows as you keep
   using it.
 - **The notice:** "Live mode is on" stays in your notifications, with a **Stop** button.
-- **Screen off:** it reads once a minute instead.
-- **When it ends:** only when you stop it, when you swipe Daytrace away from your recent apps, or after Android's
-  limit for this kind of background work (6 hours a day on Android 15 and newer).
+- **Screen off:** it reads once a minute instead, and at once when the screen comes back on.
+- **When it ends:** when you stop it, forget the hub, or swipe Daytrace away from your recent apps; when the hub no
+  longer accepts this phone; or after Android's limit for this kind of background work (6 hours a day on Android 15
+  and newer).
+- **When the hub is out of reach:** it tries again every 30 seconds, and everything waits safely on the phone.
 - **Without it:** the phone syncs every 15 minutes on Wi-Fi, and whenever you tap **Sync now**.
 
 **Nudges** come from your hub, with the events that set them off. The hub's rules:
