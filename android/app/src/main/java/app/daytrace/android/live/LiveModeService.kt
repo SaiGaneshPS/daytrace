@@ -19,6 +19,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import app.daytrace.android.MainActivity
 import app.daytrace.android.R
 import app.daytrace.android.data.EventStore
@@ -135,6 +136,7 @@ class LiveModeService : Service() {
             return START_NOT_STICKY
         }
         refusedState.value = false
+        setTimedOut(this, false)
         state.value = true
         if (loop == null) {
             val app = applicationContext
@@ -155,8 +157,11 @@ class LiveModeService : Service() {
         return START_NOT_STICKY // after the app is killed, live mode stays off until you turn it on again
     }
 
-    /** Android 15 and newer end a data-sync service after 6 hours in a day. */
-    override fun onTimeout(startId: Int, fgsType: Int) = shutDown()
+    /** Android 15 and newer end a data-sync service after 6 hours in a day; the status screen then says so. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        setTimedOut(this, true)
+        shutDown()
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) = shutDown()
 
@@ -207,12 +212,40 @@ class LiveModeService : Service() {
         private const val TAG = "Daytrace"
         private val state = MutableStateFlow(false)
         private val refusedState = MutableStateFlow(false)
+        private val timedOutState = MutableStateFlow(false)
 
         /** True while live mode runs. */
         val running: StateFlow<Boolean> get() = state
 
         /** True when Android refused the last start (shown on the status screen until the next one works). */
         val refused: StateFlow<Boolean> get() = refusedState
+
+        /**
+         * True when Android ended live mode at its time limit, until the next start (or Stop, or Forget). Kept on the
+         * phone: after a timeout overnight Android has usually ended the app too, and the screen must still say why.
+         */
+        fun timedOut(context: Context): StateFlow<Boolean> {
+            if (!timedOutRead) {
+                timedOutState.value = prefs(context).getBoolean(KEY_TIMED_OUT, false)
+                timedOutRead = true
+            }
+            return timedOutState
+        }
+
+        internal fun setTimedOut(context: Context, value: Boolean) {
+            prefs(context).edit(commit = true) { putBoolean(KEY_TIMED_OUT, value) }
+            timedOutState.value = value
+            timedOutRead = true
+        }
+
+        /** For tests: forget what was read, as a new process would. */
+        internal fun forgetTimedOutRead() {
+            timedOutRead = false
+        }
+
+        private fun prefs(context: Context) = context.applicationContext.getSharedPreferences("live_mode", Context.MODE_PRIVATE)
+        private const val KEY_TIMED_OUT = "timed_out"
+        @Volatile private var timedOutRead = false
 
         /** From the screen (the app in front): Android lets a foreground service start only then. */
         fun start(context: Context) {
@@ -224,6 +257,7 @@ class LiveModeService : Service() {
         }
 
         fun stop(context: Context) {
+            setTimedOut(context, false) // stopped on purpose (or Forget): nothing left to explain
             context.stopService(Intent(context, LiveModeService::class.java))
         }
     }

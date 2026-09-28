@@ -21,6 +21,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +71,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.ScriptHandler
 import androidx.webkit.ServiceWorkerClientCompat
@@ -77,6 +79,7 @@ import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import app.daytrace.android.R
 import app.daytrace.android.sync.HubClient
 import app.daytrace.android.sync.HubDiscovery
 import app.daytrace.android.sync.HubProof
@@ -359,6 +362,7 @@ private fun GateCard(title: String, text: String, action: String, onAction: () -
 @Composable
 private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUnreachable: () -> Unit, onRetry: () -> Unit) {
     val context = LocalContext.current
+    val dark = isSystemInDarkTheme()
     val origin = remember(gate.baseUrl) { DashboardRules.origin(gate.baseUrl) }
     if (origin == null || !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
         GateCard("Update Android System WebView", "The dashboard needs a newer Android System WebView. Update it from the Play Store, then try again.", "Try again", onRetry)
@@ -383,6 +387,8 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUn
             factory = { viewContext ->
                 val web = WebView(viewContext).apply {
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    // The dashboard's own background (tokens.css --bg) until its page paints: no white flash in dark mode.
+                    setBackgroundColor(ContextCompat.getColor(viewContext, if (dark) R.color.daytrace_bg_dark else R.color.daytrace_bg))
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false

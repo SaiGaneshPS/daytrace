@@ -318,7 +318,7 @@ def social_cap(moment: Moment) -> Draft | None:
     if goal is None or goal.target is None or goal.today.value is None or round(goal.today.value) <= round(goal.target):
         return None
     return ("Over your social limit",
-            f"{duration(goal.today.value)} in social apps today, over your {duration(goal.target)} goal. {_named(social)} can wait.")
+            f"{duration(goal.today.value)} in social apps today, over your goal of {duration(goal.target)}. {_named(social)} can wait.")
 
 
 CHECKS: dict[str, Callable[[Moment], Draft | None]] = {

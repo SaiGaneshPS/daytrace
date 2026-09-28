@@ -8,6 +8,7 @@ import ChartCard from "../../components/ChartCard";
 import { shortDay } from "../../components/DayPicker";
 import Skeleton from "../../components/Skeleton";
 import StatCard, { formatMinutes } from "../../components/StatCard";
+import { timesWords } from "../../components/streakText";
 import { CATEGORY_LABELS, type ChartOption, asCategory, categoryStyle, escapeHTML, useEChart } from "../../theme/charts";
 import { deviceColors } from "../../theme/devices";
 import { useMediaQuery } from "../../theme/motion";
@@ -254,7 +255,7 @@ function Handoffs({ series }: { series: Series }) {
             <span>
               {link.source}, {link.target}
             </span>
-            <strong>{link.value === 1 ? "once" : `${link.value} times`}</strong>
+            <strong>{timesWords(link.value)}</strong>
           </li>
         ))}
       </ol>

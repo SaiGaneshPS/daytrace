@@ -10,6 +10,11 @@ type Streak = components["schemas"]["Streak"];
 export const dayCount = (count: number) => `${count} ${count === 1 ? "day" : "days"}`;
 
 /** An amount in a streak's or goal's unit: "45m" for minutes, "1 meal", "2 devices". */
+/** "once" or "3 times". */
+export function timesWords(count: number): string {
+  return count === 1 ? "once" : `${count.toLocaleString()} times`;
+}
+
 export function amountWords(value: number, unit: string): string {
   if (unit === "minutes") return formatMinutes(value);
   const shown = value.toLocaleString(undefined, { maximumFractionDigits: 1 });

@@ -4,6 +4,7 @@
      colors for text; each has a light and a dark version (_dark). -->
 <resources>
     <color name="daytrace_background">#FFFFF8F2</color>
+    <color name="daytrace_background_night">#FF141122</color> <!-- Compose's Night: the dark window before it draws -->
     <color name="daytrace_icon_background">#FF3B2A8C</color>
 
     <!-- surfaces, text and accent -->

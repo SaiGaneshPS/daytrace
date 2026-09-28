@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import ChartCard from "../../components/ChartCard";
 import { longDay, shortDay } from "../../components/DayPicker";
 import StatCard, { formatMinutes } from "../../components/StatCard";
+import { timesWords } from "../../components/streakText";
 import { type ChartOption, escapeHTML, useEChart } from "../../theme/charts";
 import { useMediaQuery } from "../../theme/motion";
 import { type Format, eventSplitOption, lateWindow, mealTimesOption, mealsByDayOption, planByDayOption } from "./foodCharts";
@@ -48,7 +49,7 @@ function TopFoods({ series }: { series: Series }) {
       {items.map((item) => (
         <li key={item.name}>
           <span>{item.name}</span>
-          <strong>{item.value === 1 ? "once" : `${item.value} times`}</strong>
+          <strong>{timesWords(item.value)}</strong>
         </li>
       ))}
     </ol>

@@ -208,7 +208,7 @@ def test_just_over_the_goal_in_whole_minutes(client: TestClient, tokens: dict[st
     assert send(client, tokens, "android-1", edge)["nudge"] is None
     clock.set(at(14, 1))
     found = send(client, tokens, "android-1", instagram(at(14, 0).replace(second=24), at(14, 1)))["nudge"]  # 61
-    assert found is not None and found["body"].startswith("1 hour 1 minute in social apps today, over your 1 hour goal.")
+    assert found is not None and found["body"].startswith("1 hour 1 minute in social apps today, over your goal of 1 hour.")
 
 
 def test_a_redacted_or_unnamed_app_nudges_no_one(client: TestClient, tokens: dict[str, str], clock: Clock) -> None:
@@ -276,7 +276,7 @@ def test_the_social_limit_uses_the_goal_and_the_streaks_pages_numbers(client: Te
     goal = streaks.evaluation(db, TZ, TZ_NAME, at(14, 3)).goals["social_cap"]
     assert goal.today.value is not None and goal.target is not None and goal.today.value > goal.target
     assert found is not None and found["rule"] == "social_cap" and found["title"] == "Over your social limit"
-    assert found["body"] == f"{duration(goal.today.value)} in social apps today, over your 1 hour goal. Instagram can wait."
+    assert found["body"] == f"{duration(goal.today.value)} in social apps today, over your goal of 1 hour. Instagram can wait."
     assert duration(goal.today.value) == "1 hour 17 minutes"  # 40 + 5 + 30 + 2
 
 

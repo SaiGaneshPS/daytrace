@@ -67,6 +67,8 @@ type Props = {
 
 export default function Timeline({ data, now }: Props) {
   const touch = useMediaQuery("(pointer: coarse)");
+  // On a phone the lane names get a narrow column (cut short: the chips above give them in full), so the day has room.
+  const narrow = useMediaQuery("(max-width: 599px)");
   const view = useRef<View | null>(null);
   const wrapper = useRef<HTMLDivElement>(null);
 
@@ -213,7 +215,20 @@ export default function Timeline({ data, now }: Props) {
         axisLabel: { formatter: (value: number) => clock(value), hideOverlap: true },
         splitLine: { show: true, lineStyle: { color: "var(--border)", type: "dashed" } },
       },
-      yAxis: { type: "category", data: rows.map((row) => row.label), inverse: true, axisLabel: { fontWeight: 600 } },
+      yAxis: {
+        type: "category",
+        data: rows.map((row) => row.label),
+        inverse: true,
+        // useEChart merges options, so the wide labels set every field the narrow ones change. On a phone a browser
+        // extension's lane keeps "sites" on a line of its own, so it still says its time is inside a computer's.
+        axisLabel: narrow
+          ? {
+              fontWeight: 600, fontSize: 11, width: 84, overflow: "truncate",
+              formatter: (label: string) => (label.endsWith(" (sites)") ? `${label.slice(0, -8)}\n{sites|sites}` : label),
+              rich: { sites: { fontSize: 10, fontWeight: 400, color: token("--muted", "#4b5563") } },
+            }
+          : { fontWeight: 600, fontSize: 12, width: undefined, overflow: "none", formatter: (label: string) => label },
+      },
       dataZoom: [
         {
           id: "zoom", type: "inside", xAxisIndex: 0, filterMode: "weakFilter", minValueSpan: 10 * 60_000,
@@ -252,7 +267,7 @@ export default function Timeline({ data, now }: Props) {
         },
       ],
     };
-  }, [blocks, meals, rows, dayStart, dayEnd, now, touch, currentView]);
+  }, [blocks, meals, rows, dayStart, dayEnd, now, touch, narrow, currentView]);
 
   const chart = useEChart(option, `Timeline of ${data.date}, one lane per device`, { merge: true, events: { datazoom: onZoom } });
   const categories = [...new Set(blocks.map((block) => block.category).filter((c): c is Category => c !== null))];
@@ -272,7 +287,9 @@ export default function Timeline({ data, now }: Props) {
           );
         })}
       </ul>
-      <div ref={chart} className="chart timeline-chart" style={{ height: rows.length * ROW_HEIGHT + 70 }} />
+      {/* A new chart when the phone-width rule flips: changing the lane names' width in place would leave the blocks
+          laid out for the old plot area. The zoom is kept (in `view`). */}
+      <div key={narrow ? "narrow" : "wide"} ref={chart} className="chart timeline-chart" style={{ height: rows.length * ROW_HEIGHT + 70 }} />
       {categories.length > 0 && (
         <ul className="palette timeline-legend" aria-label="Categories">
           {categories.map((category) => (
