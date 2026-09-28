@@ -3,12 +3,13 @@
 // theme.
 //
 // - Blocks are colored by category and carry the category's pattern, and wide blocks show the app's name, so color is
-//   never the only clue. Hover or tap shows the app, its start and end, and the exact minutes from the hub.
+//   never the only clue. Hover or tap shows the app, its start and end, and how long it ran (to the second).
 // - Zoom with Ctrl and the wheel, drag to pan, or use the slider (on touch screens, the slider only, so the page still
 //   scrolls). The first view frames the part of the day with activity, and the view you choose is kept, even when
 //   the chart is rebuilt for a theme change.
 // - Live: the page refreshes the data every few seconds; the chart updates in place, so new blocks slide in. A dashed
-//   line marks now, and devices that synced in the last minute get a pulsing dot.
+//   line marks now (never before a block that just came in), and devices that synced in the last minute get a
+//   pulsing dot.
 // Every number is the hub's (GET /timeline); nothing is added up here.
 import type { CustomSeriesRenderItemAPI, CustomSeriesRenderItemParams } from "echarts";
 import * as echarts from "echarts/core";
@@ -17,7 +18,7 @@ import type { components } from "../api/schema";
 import { CATEGORY_DECALS, CATEGORY_LABELS, type Category, type ChartOption, token, useEChart } from "../theme/charts";
 import { useMediaQuery } from "../theme/motion";
 import { formatMinutes } from "./StatCard";
-import { blockWhen, nowMark } from "./timelineText";
+import { blockWhen, clock, nowMark } from "./timelineText";
 
 type TimelineData = components["schemas"]["Timeline"];
 
@@ -40,14 +41,11 @@ type Block = {
   category: Category | null;
   color: string;
   opacity: number;
-  /** A calendar event: planned, so it may run past now. */
-  planned: boolean;
 };
 type Meal = { row: number; time: number; name: string };
 type View = { date: string; start: number; end: number };
 
 const escape = (text: string) => echarts.format.encodeHTML(text);
-const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** Dark or white text, whichever reads better on a block's color. */
 function readableOn(color: unknown): string {
@@ -99,7 +97,7 @@ export default function Timeline({ data, now }: Props) {
         blocks.push({
           row, start: Date.parse(session.start), end: Date.parse(session.end), name: session.app ?? session.app_id ?? "Unknown app",
           detail: CATEGORY_LABELS[category], minutes: session.minutes, estimated: session.estimated, category,
-          color: `var(--cat-${category})`, opacity: lane.counted ? 1 : 0.55, planned: false,
+          color: `var(--cat-${category})`, opacity: lane.counted ? 1 : 0.55,
         });
       }
     });
@@ -111,7 +109,7 @@ export default function Timeline({ data, now }: Props) {
         const end = Date.parse(entry.end);
         blocks.push({
           row, start, end, name: entry.title || "Calendar event", detail: "Calendar", minutes: null, estimated: false,
-          category: null, color: "var(--accent)", opacity: 0.35, planned: true,
+          category: null, color: "var(--accent)", opacity: 0.35,
         });
       }
     }
@@ -125,7 +123,6 @@ export default function Timeline({ data, now }: Props) {
           row, start: Date.parse(entry.start), end: Date.parse(entry.end), name: SLEEP_NAMES[entry.stage ?? "asleep"] ?? "Sleep",
           detail: entry.stage === "in_bed" ? "In bed (not counted as sleep)" : entry.stage === "awake" ? "Awake (not counted as sleep)" : "Sleep",
           minutes: entry.minutes, estimated: entry.estimated, category: null, color: "var(--cat-study)", opacity: background ? 0.22 : 0.55,
-          planned: false,
         });
       }
     }
@@ -140,10 +137,17 @@ export default function Timeline({ data, now }: Props) {
     }
     return { rows, blocks, meals };
   }, [lanes, data.calendar, data.sleep, data.meals]);
-  const line = useMemo(
-    () => (now === undefined ? undefined : nowMark(now, blocks.filter((block) => !block.planned).map((block) => block.end))),
-    [now, blocks],
-  );
+  // The now line: never before a block that just came in, and never back. Calendar events don't count (they're
+  // planned, and the only blocks without minutes).
+  const lastLine = useRef<{ date: string; at: number } | undefined>(undefined);
+  const line = useMemo(() => {
+    if (now === undefined) return undefined;
+    const before = lastLine.current?.date === data.date ? lastLine.current.at : undefined;
+    return nowMark(now, blocks.filter((block) => block.minutes !== null).map((block) => block.end), before);
+  }, [now, blocks, data.date]);
+  useEffect(() => {
+    if (line !== undefined) lastLine.current = { date: data.date, at: line };
+  }, [line, data.date]);
 
   const dayStart = Date.parse(data.meta.range.start);
   const dayEnd = Date.parse(data.meta.range.end);
@@ -212,7 +216,7 @@ export default function Timeline({ data, now }: Props) {
           }
           const block = blocks[item.dataIndex];
           if (!block) return "";
-          const when = blockWhen(block.start, block.end, block.minutes);
+          const when = blockWhen(block.start, block.end, block.minutes !== null);
           return `<strong>${escape(block.name)}</strong><br/>${escape(block.detail)}<br/>${when.times}${when.length ? `<br/>${when.length}` : ""}${block.estimated ? "<br/><em>Estimated</em>" : ""}`;
         },
       },

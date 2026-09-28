@@ -1,32 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { blockWhen, NOW_LEAD_MS, nowMark } from "../components/timelineText";
+import { blockWhen, lengthWords, nowMark } from "../components/timelineText";
 
 const at = (clock: string) => new Date(`2026-09-28T${clock}`).getTime();
-const withSeconds = /\d{1,2}:\d{2}:\d{2}/;
+// The expected times in this machine's own format, whatever its language: the tests check which precision is used.
+const minute = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const second = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 describe("a timeline block's tooltip", () => {
   it("gives a few seconds' use in seconds, with the times to the second", () => {
-    const when = blockWhen(at("10:22:48"), at("10:22:53"), 5 / 60);
-    expect(when.length).toBe("5 seconds");
-    expect(when.times).toMatch(withSeconds);
-    expect(when.times.split(" to ")).toHaveLength(2);
+    const [start, end] = [at("10:22:48"), at("10:22:53")];
+    expect(blockWhen(start, end, true)).toEqual({ times: `${second(start)} to ${second(end)}`, length: "5 seconds" });
   });
 
-  it("never says 0 or 60 seconds", () => {
-    expect(blockWhen(at("10:00:00"), at("10:00:00"), 0.001).length).toBe("1 second");
-    expect(blockWhen(at("10:00:00"), at("10:00:59"), 0.999).length).toBe("59 seconds");
+  it("gives times to the minute from a minute up", () => {
+    const [start, end] = [at("10:22:00"), at("10:23:30")];
+    expect(blockWhen(start, end, true)).toEqual({ times: `${minute(start)} to ${minute(end)}`, length: "1 min 30 s" });
   });
 
-  it("keeps minutes, and times to the minute, from a minute up", () => {
-    const when = blockWhen(at("10:02:00"), at("10:20:00"), 18);
-    expect(when.length).toBe("18 min (18m)");
-    expect(when.times).not.toMatch(withSeconds);
-    expect(blockWhen(at("10:00:00"), at("11:35:00"), 95).length).toBe("95 min (1h 35m)");
+  it("says exactly how long, never a rounded number beside an exact one", () => {
+    expect(lengthWords(0)).toBe("0 seconds");
+    expect(lengthWords(1_000)).toBe("1 second");
+    expect(lengthWords(59_400)).toBe("59 seconds");
+    expect(lengthWords(61_000)).toBe("1 min 1 s");
+    expect(lengthWords(18 * 60_000)).toBe("18 min");
+    expect(lengthWords(59.5 * 60_000)).toBe("59 min 30 s");
+    expect(lengthWords(95 * 60_000)).toBe(`${(95).toLocaleString()} min (1h 35m)`);
   });
 
-  it("has no length for a block the hub gives no minutes (a calendar event)", () => {
-    expect(blockWhen(at("09:00:00"), at("10:30:00"), null)).toEqual({ times: expect.any(String), length: null });
-    expect(blockWhen(at("09:00:00"), at("09:00:30"), null).times).toMatch(withSeconds);
+  it("has no length for a calendar event (planned, not measured)", () => {
+    const [start, end] = [at("09:00:00"), at("10:30:00")];
+    expect(blockWhen(start, end, false)).toEqual({ times: `${minute(start)} to ${minute(end)}`, length: null });
   });
 });
 
@@ -38,12 +41,13 @@ describe("the timeline's now line", () => {
     expect(nowMark(now, [at("12:18:40"), at("09:00:00")])).toBe(now);
   });
 
-  it("moves up to a block that came in after the clock last moved", () => {
+  it("moves up to the newest block, even one far past this clock (this device's clock is behind the hub's)", () => {
     expect(nowMark(now, [at("12:18:40"), at("12:19:20"), at("12:19:08")])).toBe(at("12:19:20"));
+    expect(nowMark(now, [at("12:22:05")])).toBe(at("12:22:05"));
   });
 
-  it("ignores an end far past the clock (a device's wrong clock)", () => {
-    expect(nowMark(now, [now + NOW_LEAD_MS + 1_000, at("12:19:05")])).toBe(at("12:19:05"));
-    expect(nowMark(now, [now + NOW_LEAD_MS])).toBe(now + NOW_LEAD_MS);
+  it("never steps back when a later refresh cuts the newest block shorter", () => {
+    expect(nowMark(now, [at("12:18:10")], at("12:19:25"))).toBe(at("12:19:25"));
+    expect(nowMark(at("12:19:30"), [at("12:18:10")], at("12:19:25"))).toBe(at("12:19:30"));
   });
 });

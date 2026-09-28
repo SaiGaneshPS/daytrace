@@ -7,7 +7,7 @@
 // blocks, and when each device last synced) and GET /insights/day (focus, pickups, the phone and computer split, top
 // apps, sleep, steps). Nothing is added up or estimated here. A refresh never cuts off a request still on its way,
 // and a failed load says so where its numbers would be.
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useApi, useDaily, usePolling } from "../api/client";
 import type { components } from "../api/schema";
@@ -221,6 +221,10 @@ export default function Today() {
   const [now, setNow] = useState(() => Date.now());
   const tick = useCallback(() => setNow(Date.now()), []);
   usePolling(live ? NOW_LINE : null, tick);
+  // The line also moves with every refresh that brings something new, so a block that just came in isn't past it.
+  useEffect(() => {
+    if (live) setNow(Date.now());
+  }, [live, timeline.data]);
 
   // Data for another day (still on screen while the new day loads) must not show under this day's heading.
   const shown = timeline.data?.date === day ? timeline.data : undefined;
@@ -296,7 +300,7 @@ export default function Today() {
                 unit="minutes"
                 estimated={shown?.meta.estimated}
                 loading={!shown && !failed}
-                info="Every session on every device, colored by category, each with its own pattern. Zoom with Ctrl and the wheel or with the slider, drag to pan, and hover or tap a block for its exact minutes. Browser sites show which sites were open; that time is already in the computer's lane."
+                info="Every session on every device, colored by category, each with its own pattern. Zoom with Ctrl and the wheel or with the slider, drag to pan, and hover or tap a block for when it ran and for how long. Browser sites show which sites were open; that time is already in the computer's lane."
               >
                 {failed ? (
                   <p className="muted">The timeline couldn&apos;t load: {timeline.error?.message}</p>
