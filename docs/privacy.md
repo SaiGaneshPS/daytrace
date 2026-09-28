@@ -9,12 +9,14 @@ Only what the collectors send, as events ([event-schema.json](event-schema.json)
 - **Computers** (the desktop tracker): the app in front, its window title, and from when to when. Also away time,
   worked out from how long ago the keyboard or mouse was last used, never from which keys.
 - **Android phones:** each app's name and package, from when to when, and when the screen turned on and off. No
-  titles, and nothing from inside the apps.
+  titles, and nothing from inside the apps. With those permissions, also from Health Connect: sleep and its stages,
+  each day's step total, and the names and meal type of the foods you logged (never calories or other nutrients);
+  and from the calendar, each event's title and times from yesterday to tomorrow (never the place, notes or
+  guests).
 - **Collectors not built yet:**
   - the browser extension sends the active tab's domain only, never the full address or the page (DT-18);
   - iPhone Shortcuts send app opens and closes, sleep, steps, calendar events and the meals you log (DT-26 to
-    DT-28);
-  - the Android app adds sleep, steps, meals and calendar from Health Connect (DT-23).
+    DT-28).
 - **About each device:** its name and type, when it paired and was last seen, and a hash of its token (never the
   token itself).
 - **Your choices:** the categories you set, your goals, your redaction words, and your nudge settings.

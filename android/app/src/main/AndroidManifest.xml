@@ -25,6 +25,8 @@
     <uses-permission android:name="android.permission.health.READ_SLEEP" />
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_NUTRITION" />
+    <!-- Syncs run in the background, and reading there needs this one too (asked where the phone offers it). -->
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
     <queries>
         <!-- The Health Connect app on Android 13 and older. -->

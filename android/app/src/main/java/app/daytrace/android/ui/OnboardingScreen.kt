@@ -84,11 +84,8 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.NutritionRecord
-import androidx.health.connect.client.records.SleepSessionRecord
-import androidx.health.connect.client.records.StepsRecord
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.daytrace.android.health.HealthCollector
 import app.daytrace.android.ui.theme.Blush
 import app.daytrace.android.ui.theme.DaytraceIcons
 import app.daytrace.android.ui.theme.LocalDaytraceExtras
@@ -135,7 +132,8 @@ enum class Step(val title: String, val why: String, val required: Boolean, val i
 
 enum class Status { GRANTED, NEEDED, INSTALL, UNAVAILABLE, CHECKING }
 
-data class StepState(val step: Step, val status: Status)
+/** [note]: something a granted step can still do better, with its own button (DT-23: reading health in the background). */
+data class StepState(val step: Step, val status: Status, val note: String? = null)
 
 /** Onboarding can finish once every required step is granted; the optional ones can wait. */
 fun readyToContinue(states: List<StepState>): Boolean =
@@ -149,12 +147,18 @@ fun possibleCount(states: List<StepState>): Int = states.count { it.status != St
 fun allPossibleGranted(states: List<StepState>): Boolean = grantedCount(states) == possibleCount(states)
 
 object Permissions {
-    val HEALTH: Set<String> = setOf(
-        HealthPermission.getReadPermission(SleepSessionRecord::class),
-        HealthPermission.getReadPermission(StepsRecord::class),
-        HealthPermission.getReadPermission(NutritionRecord::class),
-    )
-    const val HEALTH_CONNECT_PACKAGE = "com.google.android.apps.healthdata"
+    /** What the Health Connect step needs: reading sleep, steps and nutrition. */
+    val HEALTH: Set<String> = HealthCollector.READS
+    const val HEALTH_CONNECT_PACKAGE = HealthCollector.HEALTH_CONNECT_PACKAGE
+
+    /**
+     * What the Health Connect step asks for: [HEALTH], and reading while the app is closed where the phone offers
+     * it (DT-23: syncs run in the background, so without it health data arrives only with the app open).
+     */
+    fun healthRequest(context: Context): Set<String> = HEALTH + setOfNotNull(HealthCollector.backgroundPermission(context))
+
+    const val BACKGROUND_NOTE = "Health data comes in only while Daytrace is open. Allow reading in the background to get it with every sync."
+
     private const val PREFS = "daytrace"
     private const val HEALTH_BLOCKED = "blocked_health"
 
@@ -178,32 +182,43 @@ object Permissions {
     fun calendarGranted(context: Context): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
 
-    /** Never throws: Health Connect is a separate app on Android 10 to 13 and can be updating or killed. */
-    suspend fun healthStatus(context: Context): Status = try {
+    /**
+     * The Health Connect step: done once [HEALTH] is granted. Where the phone offers reading in the background and
+     * it isn't allowed, the step says what that means. Never throws: Health Connect is a separate app on Android 10
+     * to 13 and can be updating or killed.
+     */
+    suspend fun healthState(context: Context): StepState = try {
         when (HealthConnectClient.getSdkStatus(context, HEALTH_CONNECT_PACKAGE)) {
             HealthConnectClient.SDK_AVAILABLE -> {
                 val granted = HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
-                if (granted.containsAll(HEALTH)) Status.GRANTED else Status.NEEDED
+                healthStep(granted, HealthCollector.backgroundPermission(context))
             }
-            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> Status.INSTALL
-            else -> Status.UNAVAILABLE
+            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> StepState(Step.HEALTH, Status.INSTALL)
+            else -> StepState(Step.HEALTH, Status.UNAVAILABLE)
         }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
-        Status.UNAVAILABLE // shown as "Not available"; the next refresh tries again
+        StepState(Step.HEALTH, Status.UNAVAILABLE) // shown as "Not available"; the next refresh tries again
+    }
+
+    /** [background]: the background permission where the phone offers it, else null. */
+    fun healthStep(granted: Set<String>, background: String?): StepState = when {
+        !granted.containsAll(HEALTH) -> StepState(Step.HEALTH, Status.NEEDED)
+        background != null && background !in granted -> StepState(Step.HEALTH, Status.GRANTED, BACKGROUND_NOTE)
+        else -> StepState(Step.HEALTH, Status.GRANTED)
     }
 
     /** Everything that can be checked without waiting (Health Connect is filled in by [snapshot]). */
-    fun quickSnapshot(context: Context, health: Status = Status.CHECKING): List<StepState> = listOf(
+    fun quickSnapshot(context: Context, health: StepState = StepState(Step.HEALTH, Status.CHECKING)): List<StepState> = listOf(
         StepState(Step.USAGE, if (usageGranted(context)) Status.GRANTED else Status.NEEDED),
         StepState(Step.NOTIFICATIONS, if (notificationsGranted(context)) Status.GRANTED else Status.NEEDED),
         StepState(Step.CALENDAR, if (calendarGranted(context)) Status.GRANTED else Status.NEEDED),
-        StepState(Step.HEALTH, health),
+        health,
     )
 
     suspend fun snapshot(context: Context): List<StepState> {
-        val health = healthStatus(context) // read the quick ones after this, so they are the freshest
+        val health = healthState(context) // read the quick ones after this, so they are the freshest
         return quickSnapshot(context, health).also { forgetBlocksOnceGranted(context, it) }
     }
 
@@ -322,7 +337,7 @@ fun rememberPermissionRequester(onChanged: () -> Unit): (StepState) -> Unit {
         onRuntimeResult(Manifest.permission.READ_CALENDAR, granted, listOf(Permissions.appSettingsIntent(context)))
     }
     val healthLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-        val blocked = !granted.containsAll(Permissions.HEALTH) && answeredWithoutDialog()
+        val blocked = !granted.containsAll(Permissions.healthRequest(context)) && answeredWithoutDialog()
         Permissions.setHealthBlocked(context, blocked)
         if (blocked) openFirst(context, activity, Permissions.manageHealthPermissionsIntents(context))
         onChanged()
@@ -360,7 +375,7 @@ fun rememberPermissionRequester(onChanged: () -> Unit): (StepState) -> Unit {
                 Permissions.healthBlocked(context) -> openFirst(context, activity, Permissions.manageHealthPermissionsIntents(context))
                 else -> {
                     askedAt = SystemClock.elapsedRealtime()
-                    healthLauncher.launch(Permissions.HEALTH)
+                    healthLauncher.launch(Permissions.healthRequest(context))
                 }
             }
         }
@@ -481,6 +496,11 @@ fun StepCard(state: StepState, onGrant: (StepState) -> Unit) {
                     FilledTonalButton(onClick = { onGrant(state) }) {
                         Text(if (state.status == Status.INSTALL) "Install or update Health Connect" else "Allow")
                     }
+                } else if (state.note != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(state.note, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(onClick = { onGrant(state) }) { Text("Allow in the background") }
                 }
             }
         }

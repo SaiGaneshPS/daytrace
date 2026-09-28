@@ -121,6 +121,54 @@ class EventStoreTest {
         assertEquals(listOf("yt"), store.sessionsEndingAfter(200).map { it.appId })
     }
 
+    // --- records with their own id (DT-23: health and calendar) ---
+
+    private fun steps(count: Int, end: Long = 900) =
+        PhoneEvent("steps", "health_connect", 0, end, data = "{\"count\":$count}", id = "steps:2026-09-27")
+
+    @Test
+    fun aRecordReadAgainUnchangedAddsNothing() {
+        assertEquals(1, store.add(listOf(steps(4200))))
+        assertEquals(0, store.add(listOf(steps(4200))))
+        assertEquals(listOf(0L), queued().map { it.seq })
+    }
+
+    @Test
+    fun aChangedRecordReplacesItsCopyUnderANewNumberWhateverChanged() {
+        store.add(listOf(steps(4200)))
+        store.markSynced(queued())
+        assertEquals(1, store.add(listOf(steps(5100)))) // more steps, same end
+        assertEquals(listOf(1L to "{\"count\":5100}"), queued().map { it.seq to it.data })
+        assertEquals(1, store.add(listOf(steps(5100, end = 600)))) // an end that moved earlier counts too
+        assertEquals(listOf(2L to 600L), queued().map { it.seq to it.endMs })
+        assertEquals(1, store.counts().waiting)
+    }
+
+    @Test
+    fun aRecordComesBackOutOfTheStoreWithItsIdTitleAndData() {
+        val meeting = PhoneEvent("calendar_event", "calendar", 100, 200, title = "Stand-up", data = "{\"all_day\":false}", id = "cal:9:2026-09-28")
+        store.add(listOf(meeting))
+        val stored = queued().single()
+        assertEquals("cal:9:2026-09-28", stored.key)
+        assertEquals(meeting, stored.toPhoneEvent())
+        assertEquals("Stand-up", stored.title)
+    }
+
+    @Test
+    fun dataThatIsNotJsonIsABugCaughtBeforeAnythingIsStored() {
+        val broken = PhoneEvent("steps", "health_connect", 0, 900, data = "count=12", id = "steps:2026-09-27")
+        val thrown = runCatching { store.add(listOf(steps(10, end = 100).copy(id = "steps:2026-09-26"), broken)) }.exceptionOrNull()
+        assertTrue(thrown is IllegalArgumentException)
+        assertEquals(StoreCounts(waiting = 0, refused = 0), store.counts()) // nothing half-stored either
+    }
+
+    @Test
+    fun usageEventsStillOnlyGrow() {
+        store.add(listOf(session(100, 200)))
+        assertEquals(0, store.add(listOf(session(100, 150)))) // an app session is never shortened by an older copy
+        assertEquals(null, queued().single().toPhoneEvent().id)
+    }
+
     private fun writeLegacyFile(file: File) {
         file.writeText(
             listOf(session(100, 200), session(100, 260), session(300, 400, "ig")).joinToString("") { it.toStoredJson().toString() + "\n" } +

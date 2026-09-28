@@ -30,15 +30,16 @@ desktop notification. The focus nudge rests 20 minutes after it fires, and no nu
 retry in that time stays quiet and says why; `--again` lets it speak now. The start script's re-seeding clears the
 rehearsal's nudges, so the real demo starts rested.
 
-**Until the phone is ready,** steps 2 and 3 always use these two commands: the Android app can't pair until PR #16
-merges, and showing nudges on the phone is DT-24. The checklist's pairing and phone items wait for those too.
+**Until live mode is built,** steps 2 and 3 always use these two commands: the Android app pairs and syncs, but
+only every 15 minutes or on "Sync now", and showing nudges on the phone is DT-24. The checklist's phone battery
+item waits for that too.
 
 ## Before the demo (checklist)
 
 - [ ] **Network.** The PC and the phone are on the same network. Home routers that keep Wi-Fi devices apart (client
       isolation, as the Bell Home Hub does) need the PC on Ethernet or the phone on the PC's Mobile hotspot.
       Check: Devices shows the phone's last contact as "just now".
-- [ ] **Pairing** (once PR #16 is in). The phone is paired to the demo hub (Devices, pairing code or QR), and its lane
+- [ ] **Pairing.** The phone is paired to the demo hub (Devices, pairing code or QR), and its lane
       shows on Today.
 - [ ] **Phone battery** (once DT-24 is in). Above 50%, charger nearby. Daytrace is in Samsung's "Never sleeping
       apps", battery Unrestricted, and live mode is on.
@@ -68,8 +69,8 @@ merges, and showing nudges on the phone is DT-24. The checklist's pairing and ph
 ## 2. Live: phone to PC (30 s)
 
 - **Say:** "Watch: I open Instagram on my phone..."
-- **Do:** open Instagram on the paired phone for a few seconds, then YouTube, then lock it. Until the phone can pair
-  (PR #16), use the fallback.
+- **Do:** open Instagram on the paired phone for a few seconds, then YouTube, then lock it. Until live mode sends
+  within seconds (DT-24), use the fallback.
 - **See:** within a few seconds the Android lane on Today grows up to now, with its live dot.
 - **Fallback:** no phone, or it doesn't sync: run `daytrace_hub demo live` on the PC. The same thing lands on the
   Android lane at once (Today refreshes by itself).

@@ -1,6 +1,7 @@
 // DT-21 / DT-22: sending queued events to the hub, only over Wi-Fi (the phone and the hub on the same Wi-Fi). In the
 // background every 15 minutes on an unmetered network, and right away when you tap "Sync now". Each run collects
-// new usage first, checks the hub proves it paired this phone, then sends 200 events at a time.
+// new usage, health and calendar events first, checks the hub proves it paired this phone, then sends 200 events at
+// a time.
 package app.daytrace.android.sync
 
 import android.content.Context
@@ -8,6 +9,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.util.Log
 import androidx.core.content.edit
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -20,9 +22,12 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkQuery
 import androidx.work.WorkerParameters
+import app.daytrace.android.calendar.CalendarCollector
 import app.daytrace.android.data.EventEntity
 import app.daytrace.android.data.EventStore
+import app.daytrace.android.health.HealthCollector
 import app.daytrace.android.usage.UsageCollector
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -243,8 +248,13 @@ class Syncer(
 
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        // New usage first. A failure there (no usage access, a full disk) never stops what is stored from going.
-        withContext(Dispatchers.IO) { runCatching { UsageCollector(applicationContext).collect() } }
+        // What is new first: usage, then health and the calendar (DT-23). A failure in one (a permission taken
+        // away, Health Connect updating, a full disk) never stops the others, or what is stored from going.
+        withContext(Dispatchers.IO) {
+            collecting { UsageCollector(applicationContext).collect() }
+            collecting { HealthCollector(applicationContext).collect() }
+            collecting { CalendarCollector(applicationContext).collect() }
+        }
         Syncer.get(applicationContext).sync()
         // Always a success, even when the hub was out of reach: a retry would swap the 15-minute period for
         // WorkManager's backoff (up to 5 hours), and the next run tries again anyway. The result is on the screen.
@@ -254,6 +264,23 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     companion object {
         internal const val PERIODIC = "daytrace-sync"
         internal const val NOW = "daytrace-sync-now"
+
+        /**
+         * Runs one collector; its failure is its own, even an Error (a Health Connect that is mid-update can throw
+         * NoSuchMethodError), so what is stored still goes. A stopped worker still stops.
+         */
+        internal suspend fun collecting(collect: suspend () -> Unit) {
+            try {
+                collect()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                // The next sync tries again. The log says what failed (never what was collected).
+                Log.w(TAG, "A collector failed; the next sync tries again", failure)
+            }
+        }
+
+        private const val TAG = "Daytrace"
 
         /** Every 15 minutes (Android's shortest period) while on an unmetered network. Kept across restarts. */
         fun schedule(context: Context) {
