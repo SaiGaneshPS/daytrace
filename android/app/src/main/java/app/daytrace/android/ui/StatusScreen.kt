@@ -2,6 +2,7 @@
 // the last sync, "Sync now" and "Forget this hub"), live mode and the permissions.
 package app.daytrace.android.ui
 
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -467,7 +468,7 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
     val context = LocalContext.current
     val live by LiveModeService.running.collectAsStateWithLifecycle()
     val refused by LiveModeService.refused.collectAsStateWithLifecycle()
-    val timedOut by LiveModeService.timedOut.collectAsStateWithLifecycle()
+    val timedOut by remember(context) { LiveModeService.timedOut(context) }.collectAsStateWithLifecycle()
     val needed = LocalDaytraceExtras.current.needed
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -506,7 +507,7 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
             if (timedOut && !live && !refused) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Android ended live mode: it allows about 6 hours of it a day. Your phone still syncs every 15 minutes, and live mode can start again later.",
+                    "Android stopped live mode at its time limit (6 hours at a time). Start it again whenever you like: until then, this phone syncs every 15 minutes on your hub's Wi-Fi.",
                     style = MaterialTheme.typography.bodySmall,
                     color = needed,
                 )
@@ -514,7 +515,11 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
             if (refused && !live) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Android didn't let live mode start. It allows it only with Daytrace open, and for about 6 hours a day.",
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                        "Android didn't let live mode start. Try again with Daytrace open: Android also stops it after 6 hours in a day."
+                    } else {
+                        "Android didn't let live mode start. Try again with Daytrace open."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = needed,
                 )

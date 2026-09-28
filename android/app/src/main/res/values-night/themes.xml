@@ -3,6 +3,6 @@
      mode (prefers-color-scheme follows the theme's isLightTheme), so the hub's pages match the app around them. -->
 <resources>
     <style name="Theme.Daytrace" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/daytrace_bg_dark</item>
+        <item name="android:windowBackground">@color/daytrace_background_night</item>
     </style>
 </resources>

@@ -10,6 +10,7 @@
 //   own computer (http://localhost:<port>) needs none. A token the hub refuses (revoked) is forgotten and the call
 //   tried once without it, so a stale token never locks out the hub's own computer.
 // - toast() shows a short message, and useApi() loads data with loading and error states.
+import { embedded } from "../embed";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { paths } from "./schema";
 
@@ -114,7 +115,9 @@ async function errorFrom(response: Response): Promise<ApiError> {
   }
   if (response.status === 401) {
     window.dispatchEvent(new Event(UNPAIRED_EVENT));
-    message = "This browser isn't paired with the hub yet. Pair it on the Devices page.";
+    message = embedded
+      ? "Your hub no longer accepts this phone's dashboard. Pair again in the Daytrace app: More, then This phone."
+      : "This browser isn't paired with the hub yet. Pair it on the Devices page.";
   }
   return new ApiError(response.status, code, message);
 }

@@ -32,8 +32,18 @@ test("a browser that never asked keeps its navigation", async ({ page }) => {
 
 test("inside the app, Devices doesn't offer to pair this browser or install the dashboard", async ({ page }) => {
   await mockHub(page);
+  await page.addInitScript(() => localStorage.setItem("daytrace.token", "dt_dashboard_test")); // the app's token
+  await page.route("**/api/v1/devices", (route) => route.fulfill({ json: { devices: [] } }));
   await page.goto("/devices?embed=1");
   await expect(page.getByText("This phone is paired with your hub through the Daytrace app.")).toBeVisible();
   await expect(page.getByText("Get a token for iPhone Shortcuts")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Pair this device" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Samsung Internet" })).toHaveCount(0); // the install help
+});
+
+test("inside the app, a phone the hub no longer accepts is told to pair again in the app", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/devices?embed=1");
+  await expect(page.getByText("Pair again in the Daytrace app: More, then This phone.").first()).toBeVisible();
+  await expect(page.getByText("Pair it above")).toHaveCount(0);
 });

@@ -126,7 +126,7 @@ export function chartTheme(): Record<string, unknown> {
   const axis = {
     axisLine: { lineStyle: { color: border } },
     axisTick: { show: false },
-    axisLabel: { color: muted, fontFamily: font },
+    axisLabel: { color: muted, fontFamily: font, hideOverlap: true }, // on a phone, labels never run into each other
     splitLine: { show: false },
   };
   return {

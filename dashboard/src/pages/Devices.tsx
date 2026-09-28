@@ -748,7 +748,11 @@ function DeviceList({ devices, error, local, reload }: { devices: Device[] | und
 
   // Not (or no longer) paired: an old list must not stay up as if nothing had happened.
   if (error?.status === 401) {
-    return <p className="muted">This browser isn&apos;t paired{devices ? " any more" : ""}. Pair it above to see your devices.</p>;
+    return embedded ? (
+      <p className="muted">Pair again in the Daytrace app (More, then This phone) to see your devices.</p>
+    ) : (
+      <p className="muted">This browser isn&apos;t paired{devices ? " any more" : ""}. Pair it above to see your devices.</p>
+    );
   }
   if (!devices) return error ? <p className="muted">The devices couldn&apos;t load: {error.message}</p> : null;
   const paired = devices.filter((device) => device.revoked_at === null);
@@ -913,8 +917,9 @@ export default function Devices() {
         // where the app's own dashboard token lives, so the page offers none.
         <ChartCard title="This phone" info="The Daytrace app pairs this phone: More, then This phone.">
           <p className="muted">
-            This phone is paired with your hub through the Daytrace app. To pair another device, open Devices on the hub
-            computer.
+            {pairState === "unpaired"
+              ? "Your hub no longer accepts this phone's dashboard. Pair again in the Daytrace app: More, then This phone."
+              : "This phone is paired with your hub through the Daytrace app. To pair another device, open Devices on the hub computer."}
           </p>
         </ChartCard>
       ) : (

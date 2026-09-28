@@ -188,14 +188,13 @@ function StreakStrip({ tz, today }: { tz: string; today: string }) {
 }
 
 /**
- * The hub's app switches per hour of screen time (a move to a different app or site within 5 minutes), said as a
- * person would: a whole number of times, never "16.1 app switches per hour".
+ * The hub's app switches per hour of screen time (a move to a different app or site within 5 minutes), in words: a
+ * whole number, and per hour of screen time (not of the clock), never "16.1 app switches per hour".
  */
-export function switchesWords(perHour: number): string {
-  const times = Math.round(perHour);
-  if (times <= 0) return perHour > 0 ? "Hardly switched apps" : "No app switches yet";
-  if (times === 1) return "Switched apps about once an hour";
-  return `Switched apps about ${times} times an hour`;
+function switchesWords(perHour: number, going: boolean): string {
+  const count = Math.round(perHour);
+  if (count <= 0) return perHour > 0 ? "Less than 1 app switch per hour of screen time" : going ? "No app switches yet" : "No app switches";
+  return `About ${count} app ${count === 1 ? "switch" : "switches"} per hour of screen time`;
 }
 
 export default function Today() {
@@ -278,7 +277,7 @@ export default function Today() {
           value={numbers ? numbers.pickups : undefined}
           error={summaryError}
           tone="social"
-          hint={numbers?.switches_per_hour !== null && numbers?.switches_per_hour !== undefined ? switchesWords(numbers.switches_per_hour) : undefined}
+          hint={numbers?.switches_per_hour !== null && numbers?.switches_per_hour !== undefined ? switchesWords(numbers.switches_per_hour, numbers.in_progress) : undefined}
         />
       </div>
 

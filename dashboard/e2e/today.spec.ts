@@ -97,7 +97,7 @@ test("the hero numbers are the hub's, and the total is the sum of the blocks", a
   await expect(page.getByRole("region", { name: "Focused time so far" })).toContainText("Focus score 71 out of 100");
   await expect(page.getByRole("region", { name: "Phone pickups so far" })).toContainText("4");
   // 1.3 switches per hour of screen time, in words (never "1.3 app switches per hour")
-  await expect(page.getByRole("region", { name: "Phone pickups so far" })).toContainText("Switched apps about once an hour");
+  await expect(page.getByRole("region", { name: "Phone pickups so far" })).toContainText("About 1 app switch per hour of screen time");
   expect(seen.timeline[0].searchParams.get("date")).toBe(DAY);
   expect(seen.timeline[0].searchParams.get("tz")).toBe("America/Toronto");
 });

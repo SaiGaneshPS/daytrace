@@ -219,7 +219,15 @@ export default function Timeline({ data, now }: Props) {
         type: "category",
         data: rows.map((row) => row.label),
         inverse: true,
-        axisLabel: narrow ? { fontWeight: 600, fontSize: 11, width: 84, overflow: "truncate" } : { fontWeight: 600 },
+        // useEChart merges options, so the wide labels set every field the narrow ones change. On a phone a browser
+        // extension's lane keeps "sites" on a line of its own, so it still says its time is inside a computer's.
+        axisLabel: narrow
+          ? {
+              fontWeight: 600, fontSize: 11, width: 84, overflow: "truncate",
+              formatter: (label: string) => (label.endsWith(" (sites)") ? `${label.slice(0, -8)}\n{sites|sites}` : label),
+              rich: { sites: { fontSize: 10, fontWeight: 400, color: token("--muted", "#4b5563") } },
+            }
+          : { fontWeight: 600, fontSize: 12, width: undefined, overflow: "none", formatter: (label: string) => label },
       },
       dataZoom: [
         {
@@ -279,7 +287,9 @@ export default function Timeline({ data, now }: Props) {
           );
         })}
       </ul>
-      <div ref={chart} className="chart timeline-chart" style={{ height: rows.length * ROW_HEIGHT + 70 }} />
+      {/* A new chart when the phone-width rule flips: changing the lane names' width in place would leave the blocks
+          laid out for the old plot area. The zoom is kept (in `view`). */}
+      <div key={narrow ? "narrow" : "wide"} ref={chart} className="chart timeline-chart" style={{ height: rows.length * ROW_HEIGHT + 70 }} />
       {categories.length > 0 && (
         <ul className="palette timeline-legend" aria-label="Categories">
           {categories.map((category) => (
