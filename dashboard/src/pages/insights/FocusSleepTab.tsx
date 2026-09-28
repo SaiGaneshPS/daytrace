@@ -180,7 +180,8 @@ function LateVsFocus({ series }: { series: Series }) {
           escapeHTML(`The night of ${nightWords(params.name, shortDay)}: ${formatMinutes(params.value[0])} after 11 pm, then a focus score of ${params.value[1]}`),
       },
       grid: { left: 8, right: 16, top: 32, bottom: 28, containLabel: true }, // room for the y axis's name
-      xAxis: { type: "value", name: "Minutes after 11 pm", nameLocation: "middle", nameGap: 26, axisLabel: { formatter: (value: number) => formatMinutes(value) } },
+      // hideOverlap: on a phone "1h 20m" and "1h 40m" would run into each other; every other label is dropped instead
+      xAxis: { type: "value", name: "Minutes after 11 pm", nameLocation: "middle", nameGap: 26, axisLabel: { formatter: (value: number) => formatMinutes(value), hideOverlap: true } },
       yAxis: { type: "value", name: "Next day's focus", nameTextStyle: { align: "left" }, min: 0, max: 100 },
       series: [
         {

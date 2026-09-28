@@ -467,6 +467,7 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
     val context = LocalContext.current
     val live by LiveModeService.running.collectAsStateWithLifecycle()
     val refused by LiveModeService.refused.collectAsStateWithLifecycle()
+    val timedOut by LiveModeService.timedOut.collectAsStateWithLifecycle()
     val needed = LocalDaytraceExtras.current.needed
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -502,9 +503,21 @@ private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
                     color = needed,
                 )
             }
+            if (timedOut && !live && !refused) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Android ended live mode: it allows about 6 hours of it a day. Your phone still syncs every 15 minutes, and live mode can start again later.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = needed,
+                )
+            }
             if (refused && !live) {
                 Spacer(Modifier.height(8.dp))
-                Text("Android didn't let live mode start. Try again with Daytrace open.", style = MaterialTheme.typography.bodySmall, color = needed)
+                Text(
+                    "Android didn't let live mode start. It allows it only with Daytrace open, and for about 6 hours a day.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = needed,
+                )
             }
             Spacer(Modifier.height(12.dp))
             when {

@@ -135,6 +135,7 @@ class LiveModeService : Service() {
             return START_NOT_STICKY
         }
         refusedState.value = false
+        timedOutState.value = false
         state.value = true
         if (loop == null) {
             val app = applicationContext
@@ -155,8 +156,11 @@ class LiveModeService : Service() {
         return START_NOT_STICKY // after the app is killed, live mode stays off until you turn it on again
     }
 
-    /** Android 15 and newer end a data-sync service after 6 hours in a day. */
-    override fun onTimeout(startId: Int, fgsType: Int) = shutDown()
+    /** Android 15 and newer end a data-sync service after 6 hours in a day; the status screen then says so. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        timedOutState.value = true
+        shutDown()
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) = shutDown()
 
@@ -207,12 +211,16 @@ class LiveModeService : Service() {
         private const val TAG = "Daytrace"
         private val state = MutableStateFlow(false)
         private val refusedState = MutableStateFlow(false)
+        private val timedOutState = MutableStateFlow(false)
 
         /** True while live mode runs. */
         val running: StateFlow<Boolean> get() = state
 
         /** True when Android refused the last start (shown on the status screen until the next one works). */
         val refused: StateFlow<Boolean> get() = refusedState
+
+        /** True when Android ended live mode at its daily limit (shown on the status screen until the next start). */
+        val timedOut: StateFlow<Boolean> get() = timedOutState
 
         /** From the screen (the app in front): Android lets a foreground service start only then. */
         fun start(context: Context) {

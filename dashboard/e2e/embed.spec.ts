@@ -29,3 +29,11 @@ test("a browser that never asked keeps its navigation", async ({ page }) => {
   await expect(page.locator(".app")).not.toHaveClass(/embedded/);
   expect(await page.locator(".sidebar, .topbar, .bottom-nav").count()).toBeGreaterThan(0);
 });
+
+test("inside the app, Devices doesn't offer to pair this browser or install the dashboard", async ({ page }) => {
+  await mockHub(page);
+  await page.goto("/devices?embed=1");
+  await expect(page.getByText("This phone is paired with your hub through the Daytrace app.")).toBeVisible();
+  await expect(page.getByText("Get a token for iPhone Shortcuts")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Pair this device" })).toHaveCount(0);
+});
