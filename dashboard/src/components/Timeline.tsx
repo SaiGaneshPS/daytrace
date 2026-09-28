@@ -17,6 +17,7 @@ import type { components } from "../api/schema";
 import { CATEGORY_DECALS, CATEGORY_LABELS, type Category, type ChartOption, token, useEChart } from "../theme/charts";
 import { useMediaQuery } from "../theme/motion";
 import { formatMinutes } from "./StatCard";
+import { blockWhen } from "./timelineText";
 
 type TimelineData = components["schemas"]["Timeline"];
 
@@ -204,8 +205,8 @@ export default function Timeline({ data, now }: Props) {
           }
           const block = blocks[item.dataIndex];
           if (!block) return "";
-          const minutes = block.minutes === null ? "" : `<br/>${block.minutes.toLocaleString()} min (${formatMinutes(block.minutes)})`;
-          return `<strong>${escape(block.name)}</strong><br/>${escape(block.detail)}<br/>${clock(block.start)} to ${clock(block.end)}${minutes}${block.estimated ? "<br/><em>Estimated</em>" : ""}`;
+          const when = blockWhen(block.start, block.end, block.minutes);
+          return `<strong>${escape(block.name)}</strong><br/>${escape(block.detail)}<br/>${when.times}${when.length ? `<br/>${when.length}` : ""}${block.estimated ? "<br/><em>Estimated</em>" : ""}`;
         },
       },
       xAxis: {
