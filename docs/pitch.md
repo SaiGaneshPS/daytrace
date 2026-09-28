@@ -61,10 +61,10 @@ Eight steps in three minutes, each with a fallback ([demo-script.md](demo-script
 7. **Wrapped:** the week's card, saved or shared.
 8. **Close:** your devices, your network, your AI.
 
-**What is live today:** the hub, the dashboard and the local model are all real. The phone's part (steps 2 and 3)
-is played by `daytrace_hub demo live` and `demo nudge` on the PC: the Android app pairs and syncs, but sends
-within seconds and shows nudges only with live mode (DT-24). The nudge shows as a desktop notification. The Mac, iPhone and
-browser lanes are seeded demo data.
+**What is live today:** the hub, the dashboard, the local model and the Android phone are all real. With live mode
+on, the phone's app use reaches the PC's timeline within about 5 seconds, and its nudges show on the phone.
+`daytrace_hub demo live` and `demo nudge` on the PC stay as fallbacks. The Mac, iPhone and browser lanes are seeded
+demo data.
 
 **The backup recording**, if the live demo fails: [docs/img/demo.webm](img/demo.webm), about 2 minutes, captioned,
 no sound, on the demo profile. It shows each step's screen. Two things happen off camera: the internet isn't
@@ -106,8 +106,8 @@ The details: [privacy.md](privacy.md).
 
 ## What's next
 
-- **Every device:** live mode and nudges on the phone (DT-24), iPhone Shortcuts and the Mac bridge (DT-26 to
-  DT-29), the macOS tracker (DT-17) and the browser extension (DT-18).
+- **Every device:** iPhone Shortcuts and the Mac bridge (DT-26 to DT-29), the macOS tracker (DT-17) and the
+  browser extension (DT-18).
 - **HTTPS at home** (DT-47): encrypted traffic on the home network, and a dashboard that installs and works offline
   on phones (DT-35). Then a signed Android app on GitHub Releases (DT-25).
 - **Tighter tokens:** collectors that can send events but can't read them back.

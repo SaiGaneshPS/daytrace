@@ -96,15 +96,31 @@ class UsageSessionizerTest {
     }
 
     @Test
-    fun anAppOpenAtTheCheckpointContinuesWithoutGapOrOverlap() {
+    fun anAppOpenAtTheCheckpointGrowsTheSameSessionNextTime() {
         val first = run(ev(3000, "youtube", UsageType.RESUMED), until = 3600)
         assertEquals(listOf(at(3000) to at(3600)), sessions(first).map { it.startMs to it.endMs })
-        assertEquals(mapOf("youtube" to OpenApp(at(3600), setOf("Main"))), first.state.open)
+        assertEquals(mapOf("youtube" to OpenApp(at(3000), setOf("Main"))), first.state.open) // carried with its start
 
         val second = UsageSessionizer.collect(listOf(ev(3900, "youtube", UsageType.PAUSED)), first.state, at(7200), emptySet()) { it }
-        assertEquals(listOf(at(3600) to at(3900)), sessions(second).map { it.startMs to it.endMs })
-        val total = (sessions(first) + sessions(second)).sumOf { it.endMs!! - it.startMs }
-        assertEquals(900_000L, total) // 3000 s to 3900 s, counted exactly once
+        assertEquals(listOf(at(3000) to at(3900)), sessions(second).map { it.startMs to it.endMs })
+        // The same key, longer: the store keeps one copy, 3000 s to 3900 s, and the hub replaces its copy.
+        assertEquals(sessions(first).single().key, sessions(second).single().key)
+        assertTrue(second.state.open.isEmpty())
+    }
+
+    @Test
+    fun liveModeReadingEveryFiveSecondsKeepsOneSession() {
+        var state = UsageState(start)
+        val keys = mutableSetOf<String>()
+        var collected = run(ev(1, "tiktok", UsageType.RESUMED), until = 5, state = state)
+        for (until in 10..60 step 5) {
+            collected.events.forEach { keys += it.key }
+            state = collected.state
+            collected = run(until = until, state = state)
+        }
+        collected.events.forEach { keys += it.key }
+        assertEquals(1, keys.size) // twelve reads, one session
+        assertEquals(listOf(at(1) to at(60)), sessions(collected).map { it.startMs to it.endMs })
     }
 
     @Test
@@ -167,6 +183,14 @@ class UsageSessionizerTest {
         val corrected = ClockCheck.correct(state, nowWallMs = 10_060_000 + 30_000, nowUptimeMs = 560_000) // 60 s later, clock +30 s
         assertEquals(10_030_000L, corrected.checkpointMs)
         assertEquals(10_030_000L, corrected.open.getValue("yt").startMs)
+    }
+
+    @Test
+    fun afterAClockChangeAnOpenAppGoesOnFromTheCheckpoint() {
+        // Open since well before the checkpoint: that part is stored already, in the old clock's times.
+        val state = UsageState(checkpointMs = 10_000_000, open = mapOf("yt" to OpenApp(9_400_000)), checkpointUptimeMs = 500_000)
+        val corrected = ClockCheck.correct(state, nowWallMs = 10_060_000 + 30_000, nowUptimeMs = 560_000)
+        assertEquals(10_030_000L, corrected.open.getValue("yt").startMs) // not 9_430_000: never counted twice
     }
 
     @Test

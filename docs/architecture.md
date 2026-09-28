@@ -112,7 +112,7 @@ All collectors speak one contract: `POST /api/v1/events` with a batch of up to 5
 | Collector | How it works | Status |
 |---|---|---|
 | Windows desktop tracker | Reads the foreground window every 2 s. One span per app and title, growing while it lasts. Away after 3 minutes without input, or at once when locked. Runs inside the hub and writes through the same ingest code. | Built |
-| Android app | Reads `UsageStatsManager` into a Room database on the phone. A WorkManager job syncs every 15 minutes on Wi-Fi, and "Sync now" syncs at once. Sends only to the hub that paired it, on the same Wi-Fi. | Built |
+| Android app | Reads `UsageStatsManager` into a Room database on the phone. A WorkManager job syncs every 15 minutes on Wi-Fi, and "Sync now" syncs at once. Live mode, a foreground service, sends app use within about 5 seconds, and the hub's nudges show as notifications. Sends only to the hub that paired it, on the same Wi-Fi. | Built |
 | Health and calendar on Android | Each sync first reads Health Connect (sleep stages, daily steps, meals: 30 days the first time, then today, yesterday and the days its list of changes names) and the calendar (yesterday to tomorrow, or from the last read). Each record keeps its own key, so reading it again replaces its copy. | Built |
 | macOS desktop tracker | The same tracker on the Mac | DT-17 |
 | Browser extension | The active tab's domain, never the full address | DT-18 |

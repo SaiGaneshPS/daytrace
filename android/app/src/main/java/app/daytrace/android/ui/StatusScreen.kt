@@ -1,5 +1,5 @@
-// DT-19 / DT-21 / DT-22: permission and sync status: today's app time, the hub card (pairing, events waiting, the
-// last sync, "Sync now" and "Forget this hub") and the permissions.
+// DT-19 / DT-21 / DT-22 / DT-24: permission and sync status: today's app time, the hub card (pairing, events waiting,
+// the last sync, "Sync now" and "Forget this hub"), live mode and the permissions.
 package app.daytrace.android.ui
 
 import androidx.compose.animation.AnimatedVisibility
@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -66,6 +67,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.daytrace.android.BuildConfig
 import app.daytrace.android.data.EventStore
 import app.daytrace.android.data.StoreCounts
+import app.daytrace.android.live.LiveModeService
 import app.daytrace.android.sync.PairingInfo
 import app.daytrace.android.sync.PairingStore
 import app.daytrace.android.sync.SyncResult
@@ -96,6 +98,8 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
     val scope = rememberCoroutineScope()
     val usageOn = readyToContinue(states)
     val syncing by remember(context) { SyncWorker.running(context) }.collectAsStateWithLifecycle(initialValue = false)
+    val syncCard = rememberSyncCard()
+    val notificationsOn = states.any { it.step == Step.NOTIFICATIONS && it.status == Status.GRANTED }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
@@ -132,7 +136,7 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
             item(key = "hub") {
                 Box(Modifier.padding(horizontal = 16.dp)) {
                     HubCard(
-                        rememberSyncCard(),
+                        syncCard,
                         syncing,
                         onSyncNow = { SyncWorker.syncNow(context) },
                         onPair = onPair,
@@ -144,6 +148,9 @@ fun StatusScreen(states: List<StepState>, onGrant: (StepState) -> Unit, onShowOn
                         },
                     )
                 }
+            }
+            item(key = "live") {
+                Box(Modifier.padding(horizontal = 16.dp)) { LiveModeCard(paired = syncCard?.pairing != null, notificationsOn = notificationsOn) }
             }
             item(key = "title") {
                 Text(
@@ -449,3 +456,72 @@ private fun HubCard(card: SyncCard?, syncing: Boolean, onSyncNow: () -> Unit, on
 }
 
 private val PROBLEMS = setOf(SyncResult.PAIR_AGAIN, SyncResult.BLOCKED, SyncResult.UNREACHABLE)
+
+/** DT-24: live mode, for demos: on only while you want it, with a notice in the notifications. */
+@Composable
+private fun LiveModeCard(paired: Boolean, notificationsOn: Boolean) {
+    val context = LocalContext.current
+    val live by LiveModeService.running.collectAsStateWithLifecycle()
+    var refused by remember { mutableStateOf(false) }
+    val needed = LocalDaytraceExtras.current.needed
+    val pulse = rememberInfiniteTransition(label = "live").animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "pulse",
+    )
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    ) {
+        Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.Top) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(Blush.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Blush)
+                }
+                Spacer(Modifier.size(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Live mode", style = MaterialTheme.typography.titleMedium)
+                        if (live) {
+                            Spacer(Modifier.size(8.dp))
+                            Box(Modifier.size(8.dp).graphicsLayer { alpha = pulse.value }.clip(CircleShape).background(Blush))
+                            Spacer(Modifier.size(6.dp))
+                            Text("On", style = MaterialTheme.typography.labelLarge, color = Blush)
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "For demos: your hub sees this phone's app use within seconds, and its nudges show here right " +
+                            "away. A notice stays in your notifications while it's on. It uses a little more battery, " +
+                            "and reads once a minute while the screen is off.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (!notificationsOn) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Notifications are off, so nudges and the live-mode notice won't show. Turn them on below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = needed,
+                )
+            }
+            if (refused) {
+                Spacer(Modifier.height(8.dp))
+                Text("Android didn't let live mode start. Try again with Daytrace open.", style = MaterialTheme.typography.bodySmall, color = needed)
+            }
+            Spacer(Modifier.height(12.dp))
+            when {
+                live -> FilledTonalButton(onClick = { LiveModeService.stop(context) }) { Text("Stop live mode") }
+                else -> Button(onClick = { refused = !LiveModeService.start(context) }, enabled = paired) { Text("Start live mode") }
+            }
+            if (!paired) {
+                Spacer(Modifier.height(4.dp))
+                Text("Pair with your hub first.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}

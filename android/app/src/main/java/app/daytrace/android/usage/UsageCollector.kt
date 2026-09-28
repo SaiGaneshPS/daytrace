@@ -52,8 +52,10 @@ object UsageSessionizer {
      * - The screen turning off, or a shutdown, ends every open session: a paused event can be missing then. After
      *   a restart, apps still open from before end at the last event seen before the restart, never counting the
      *   time the phone was off.
-     * - An app still open at [untilMs] is closed there and carried into the returned state, so the next collection
-     *   continues it with no gap and no double count (the hub joins the two pieces back together).
+     * - An app still open at [untilMs] is closed there and carried into the returned state with its start, so the
+     *   next collection sends the same session again, longer (DT-24): the store extends it in place and the hub
+     *   replaces its copy, with no gap and nothing counted twice. Live mode reads every 5 s: one growing session
+     *   instead of a new piece each time.
      * - [ignored] packages (the home screen, the status bar) are not app time.
      */
     fun collect(
@@ -65,7 +67,7 @@ object UsageSessionizer {
     ): Collected {
         val events = mutableListOf<PhoneEvent>()
         val open = LinkedHashMap<String, Open>()
-        state.open.forEach { (pkg, app) -> if (pkg !in ignored) open[pkg] = Open(state.checkpointMs, app.activities.toMutableSet()) }
+        state.open.forEach { (pkg, app) -> if (pkg !in ignored) open[pkg] = Open(app.startMs, app.activities.toMutableSet()) }
         val closing = LinkedHashMap<String, Long>() // app -> when its last activity paused (not final yet)
         var lastSeen = state.checkpointMs
 
@@ -116,7 +118,7 @@ object UsageSessionizer {
             lastSeen = event.timeMs
         }
         closing.keys.toList().forEach(::finish)
-        val carried = open.mapValues { (_, app) -> OpenApp(untilMs, app.activities.toSet()) }
+        val carried = open.mapValues { (_, app) -> OpenApp(app.startMs, app.activities.toSet()) }
         open.forEach { (pkg, app) -> emit(pkg, app.startMs, untilMs) }
         return Collected(events.sortedBy { it.startMs }, UsageState(untilMs, carried))
     }
@@ -128,9 +130,11 @@ object ClockCheck {
 
     /**
      * When the wall clock was changed since the last collection, Android shifts its stored usage events by the
-     * same amount. Shifting the checkpoint (and the open apps) the same way keeps the next window exactly where
-     * the last one ended: nothing is read twice and nothing is skipped. Uptime tells the real time that passed;
-     * after a restart it starts again from zero, so no correction is possible and none is made.
+     * same amount. Shifting the checkpoint the same way keeps the next window exactly where the last one ended:
+     * nothing is read twice and nothing is skipped. An app still open continues as a new session from the shifted
+     * checkpoint (its earlier part is stored in the old clock's times, and must not be counted again). Uptime tells
+     * the real time that passed; after a restart it starts again from zero, so no correction is possible and none
+     * is made.
      */
     fun correct(state: UsageState, nowWallMs: Long, nowUptimeMs: Long): UsageState {
         if (state.checkpointUptimeMs < 0 || nowUptimeMs < state.checkpointUptimeMs) return state
@@ -139,7 +143,7 @@ object ClockCheck {
         if (abs(shift) <= THRESHOLD_MS) return state
         return state.copy(
             checkpointMs = state.checkpointMs + shift,
-            open = state.open.mapValues { (_, app) -> app.copy(startMs = app.startMs + shift) },
+            open = state.open.mapValues { (_, app) -> app.copy(startMs = state.checkpointMs + shift) },
         )
     }
 }
@@ -193,25 +197,31 @@ class UsageCollector(private val context: Context, private val store: EventStore
     private val prefs = context.getSharedPreferences("usage_collector", Context.MODE_PRIVATE)
 
     /**
-     * Collects everything new since the last run, up to [LATENESS_MS] ago: Android records usage events a moment
-     * after they happen, so the newest few seconds are left for the next run instead of being skipped for good.
-     * Returns how many events were stored (0 without usage access).
+     * Collects everything new since the last run, up to [latenessMs] ago: Android records usage events a moment
+     * after they happen, so the newest seconds are left for the next run instead of being skipped for good (live
+     * mode, DT-24, reads 2 s behind; the background sync 15 s). Returns how many events were added or changed
+     * (0 without usage access).
      */
-    fun collect(nowMs: Long = System.currentTimeMillis(), nowUptimeMs: Long = SystemClock.elapsedRealtime()): Int = synchronized(LOCK) {
+    fun collect(
+        nowMs: Long = System.currentTimeMillis(),
+        nowUptimeMs: Long = SystemClock.elapsedRealtime(),
+        latenessMs: Long = LATENESS_MS,
+    ): Int = synchronized(LOCK) {
         if (!Permissions.usageGranted(context)) return 0
-        val untilMs = nowMs - LATENESS_MS
+        val untilMs = nowMs - latenessMs
         val state = ClockCheck.correct(loadState(untilMs), nowMs, nowUptimeMs)
         if (untilMs <= state.checkpointMs) {
-            // Only after a restart combined with a clock set back: start again from here, keeping the open apps.
-            if (untilMs < state.checkpointMs) saveState(state.copy(checkpointMs = untilMs), nowUptimeMs - LATENESS_MS)
+            // Live mode read closer to now a moment ago: nothing new yet. Only a checkpoint ahead of the clock itself
+            // (a restart combined with a clock set back) starts again from here, keeping the open apps.
+            if (state.checkpointMs > nowMs) saveState(state.copy(checkpointMs = untilMs), nowUptimeMs - latenessMs)
             return 0
         }
         val usageStats = context.getSystemService(UsageStatsManager::class.java)
         val raw = read(usageStats.queryEvents(state.checkpointMs, untilMs))
         val collected = UsageSessionizer.collect(raw, state, untilMs, ignoredPackages(), ::label)
-        store.add(collected.events) // committed to disk before the checkpoint moves: a crash repeats work, never loses it
-        saveState(collected.state, nowUptimeMs - LATENESS_MS)
-        return collected.events.size
+        val changed = store.add(collected.events) // on disk before the checkpoint moves: a crash repeats work, never loses it
+        saveState(collected.state, nowUptimeMs - latenessMs)
+        return changed
     }
 
     private fun read(events: UsageEvents): List<RawUsageEvent> {
