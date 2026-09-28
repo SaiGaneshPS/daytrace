@@ -53,6 +53,49 @@ class DashboardRulesTest {
     }
 
     @Test
+    fun thePageTakesTheAppsOwnLightOrDark() {
+        assertTrue(DashboardRules.themeScript(dark = true).contains("var t='dark'"))
+        assertTrue(DashboardRules.themeScript(dark = false).contains("var t='light'"))
+        assertTrue(DashboardRules.themeScript(dark = true).contains("setAttribute('data-theme',t)"))
+        assertFalse(DashboardRules.themeScript(dark = true).contains("\n"))
+    }
+
+    @Test
+    fun thePageScriptIsTheTokenThenTheThemeAsTwoWholeStatements() {
+        val token = "dt_abc'\"-_);}"
+        val script = DashboardRules.pageScript(token, dark = true)
+        assertEquals(DashboardRules.tokenScript(token) + DashboardRules.themeScript(dark = true), script)
+        // Each part closes every bracket it opens (outside its strings) and ends its statement, so neither can swallow
+        // or break the other.
+        for (part in listOf(DashboardRules.tokenScript(token), DashboardRules.themeScript(dark = false), script)) {
+            assertEquals(part, 0, bracketDepth(part))
+            assertTrue(part, part.endsWith("})();"))
+            assertTrue(part, part.startsWith("(function(){try{"))
+        }
+    }
+
+    /** How many brackets are still open at the end, skipping quoted strings (and failing on one that closes too early). */
+    private fun bracketDepth(js: String): Int {
+        var depth = 0
+        var quote: Char? = null
+        var i = 0
+        while (i < js.length) {
+            val c = js[i]
+            when {
+                quote != null && c == '\\' -> i++
+                quote != null && c == quote -> quote = null
+                quote != null -> {}
+                c == '\'' || c == '"' -> quote = c
+                c in "({[" -> depth++
+                c in ")}]" -> { depth--; assertTrue(js, depth >= 0) }
+            }
+            i++
+        }
+        assertEquals(js, null, quote)
+        return depth
+    }
+
+    @Test
     fun theTabsSayWhatNeedsYouOnThisPhone() {
         assertEquals("Usage access is off, so Daytrace can't see which apps you use.", DashboardRules.warning(false, SyncResult.SENT, "Sent 3 events"))
         assertEquals("Your hub no longer accepts this phone. Pair again.", DashboardRules.warning(true, SyncResult.PAIR_AGAIN, "Your hub no longer accepts this phone. Pair again."))
