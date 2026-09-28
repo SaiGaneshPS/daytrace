@@ -135,6 +135,18 @@ object DashboardRules {
         "(function(){try{localStorage.setItem('daytrace.token'," + JSONObject.quote(token) + ")}catch(e){}})();"
 
     /**
+     * The app's own light or dark, as the page's forced theme (tokens.css and the charts honour data-theme), set before
+     * the page runs. The WebView's own guess isn't enough: with Samsung's power saving dark mode on, it told the page
+     * "light" inside a dark app.
+     */
+    fun themeScript(dark: Boolean): String {
+        val theme = if (dark) "dark" else "light"
+        return "(function(){var t='$theme';function s(){var e=document.documentElement;if(!e)return false;" +
+            "e.setAttribute('data-theme',t);e.style.colorScheme=t;return true}" +
+            "if(!s()){new MutationObserver(function(r,o){if(s())o.disconnect()}).observe(document,{childList:true})}})();"
+    }
+
+    /**
      * What needs you on this phone, shown above every tab (before the tabs, the app opened on the status screen,
      * which says these): usage access off, or a last sync that needs you (pair again, or not your hub). Null: nothing.
      */
@@ -398,7 +410,8 @@ private fun DashboardWebView(gate: HubGate.Ready, path: String, visit: Int, onUn
                     settings.setSupportMultipleWindows(false)
                     if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) WebSettingsCompat.setSafeBrowsingEnabled(settings, false)
                 }
-                script[0] = WebViewCompat.addDocumentStartJavaScript(web, DashboardRules.tokenScript(gate.viewerToken), setOf(origin))
+                val pageScript = DashboardRules.tokenScript(gate.viewerToken) + DashboardRules.themeScript(dark)
+                script[0] = WebViewCompat.addDocumentStartJavaScript(web, pageScript, setOf(origin))
                 // A service worker's requests skip the WebView's own checks: they get the same ones. (The dashboard
                 // registers none inside the app, and removes one an earlier version registered.)
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&

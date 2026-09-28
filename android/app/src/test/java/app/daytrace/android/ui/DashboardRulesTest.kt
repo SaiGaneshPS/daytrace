@@ -53,6 +53,14 @@ class DashboardRulesTest {
     }
 
     @Test
+    fun thePageTakesTheAppsOwnLightOrDark() {
+        assertTrue(DashboardRules.themeScript(dark = true).contains("var t='dark'"))
+        assertTrue(DashboardRules.themeScript(dark = false).contains("var t='light'"))
+        assertTrue(DashboardRules.themeScript(dark = true).contains("setAttribute('data-theme',t)"))
+        assertFalse(DashboardRules.themeScript(dark = true).contains("\n"))
+    }
+
+    @Test
     fun theTabsSayWhatNeedsYouOnThisPhone() {
         assertEquals("Usage access is off, so Daytrace can't see which apps you use.", DashboardRules.warning(false, SyncResult.SENT, "Sent 3 events"))
         assertEquals("Your hub no longer accepts this phone. Pair again.", DashboardRules.warning(true, SyncResult.PAIR_AGAIN, "Your hub no longer accepts this phone. Pair again."))
